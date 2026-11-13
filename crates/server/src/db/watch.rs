@@ -151,6 +151,17 @@ impl Db {
         .await?)
     }
 
+    /// Whether a WATCH job for `target` is queued or running.
+    pub async fn watch_target_active(&self, target: &str) -> Result<bool, DbError> {
+        let n: i64 = sqlx::query_scalar(self.sql(
+            "SELECT COUNT(*) FROM scan_jobs WHERE kind = 'WATCH' AND status <> 'FINISHED' AND target = ?",
+        ))
+        .bind(target)
+        .fetch_one(self.pool())
+        .await?;
+        Ok(n > 0)
+    }
+
     /// Forget every file recorded under a folder (after its watch is removed).
     pub async fn forget_processed_under(&self, dir: &str) -> Result<u64, DbError> {
         let esc: String = dir

@@ -68,12 +68,29 @@ pub struct ResultRequest {
     pub failure: Option<Failure>,
 }
 
+/// Something the agent saw on its own: a real-time scan or a touched canary.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum AgentEvent {
+    Scan {
+        path: String,
+        #[serde(default)]
+        report: Option<Report>,
+        #[serde(default)]
+        failure: Option<Failure>,
+    },
+    Canary {
+        path: String,
+        what: String,
+    },
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ErrorBody<'a> {
     pub error: &'a str,
 }
 
-fn clean(s: &str, n: usize) -> String {
+pub fn clean(s: &str, n: usize) -> String {
     s.chars().filter(|c| !c.is_control()).take(n).collect()
 }
 

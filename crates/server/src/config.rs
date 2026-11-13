@@ -125,6 +125,24 @@ pub struct Config {
     #[arg(long, env = "WATCH_POLL_SECS", default_value_t = 60, global = true)]
     pub watch_poll_secs: u64,
 
+    /// Scan files in watched folders (server) or REALTIME_PATHS (agent) as soon as they are written (Linux inotify).
+    #[arg(
+        long,
+        env = "WATCH_REALTIME",
+        default_value_t = true,
+        action = clap::ArgAction::Set,
+        global = true
+    )]
+    pub watch_realtime: bool,
+
+    /// Agent mode: comma-separated folders inside SCAN_ROOTS scanned as soon as files are written.
+    #[arg(long, env = "REALTIME_PATHS", value_delimiter = ',', global = true)]
+    pub realtime_paths: Vec<std::path::PathBuf>,
+
+    /// Comma-separated decoy files; any access raises an alert. Keep them outside scanned folders.
+    #[arg(long, env = "CANARY_FILES", value_delimiter = ',', global = true)]
+    pub canary_files: Vec<std::path::PathBuf>,
+
     /// Webhook called when a scan finishes (Discord URLs get a chat message).
     #[arg(long, env = "WEBHOOK_URL", hide_env_values = true, global = true)]
     pub webhook_url: Option<String>,

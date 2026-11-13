@@ -348,6 +348,12 @@ fn discord_text(e: &Event) -> String {
     let clean = |s: &str| s.replace('`', "'");
     let head = match (e.event, e.verdict.as_str()) {
         ("test", _) => "Test message from clamv-webui.".to_owned(),
+        ("canary.tripped", _) => format!(
+            "**Canary file touched** on `{}`: `{}` ({}). Someone may be inside.",
+            clean(&e.endpoint),
+            clean(&e.target),
+            e.error.as_deref().unwrap_or("accessed")
+        ),
         ("eicar.control_failed", _) => format!(
             "**EICAR check failed** on `{}`: scan results cannot be trusted.",
             clean(&e.endpoint)

@@ -9,7 +9,8 @@ Forked from an earlier Java application, which has been replaced entirely. Licen
 
 - **Scans**: upload scans (in-memory stream to clamd), path scans limited to `SCAN_ROOTS`, job history with per-file results.
 - **Schedules**: cron schedules per path. Each run first scans an EICAR control, so a run against a broken clamd reports a failure, not a clean result.
-- **Watched folders**: new or changed files under a watched path are scanned automatically.
+- **Watched folders**: files are scanned the moment they are written (Linux inotify), with periodic polling as a safety net.
+- **Canary files**: decoys that raise an alert (log, audit, webhook) the moment anything opens, changes or deletes them.
 - **Agents**: run the same image with `agent` on other hosts. Each agent scans its own folders with its own clamd and reports back, so one UI covers every machine. Agents connect out to the server, so they need no open port.
 - **Multiple clamd endpoints**, with a status page (signature age, threads, queue) and alerts when clamd goes down or signatures go stale.
 - **Users and roles**: Viewer, Operator, Admin. Local accounts, OIDC single sign-on, and LDAP with roles taken from groups on every sign-in.
@@ -49,7 +50,9 @@ The agent enforces its own `SCAN_ROOTS`. Jobs queued for an offline agent wait (
 | `AGENT_SERVER_FINGERPRINT` | SHA-256 of the server certificate (logged at server start); trust exactly that certificate |
 | `AGENT_CA_FILE` | Or: a PEM CA bundle for the server certificate |
 
-`CLAMD_ENDPOINT`, `SCAN_ROOTS`, `SCAN_CONCURRENCY`, `CLAMD_MAX_STREAM_MB` and `LOG_*` apply to the agent as they do to the server. Plain `http://` works but sends the token unencrypted, so use it only over a VPN or mesh.
+| `REALTIME_PATHS` | Folders inside `SCAN_ROOTS` scanned as soon as files are written; results show up as watch jobs on the server |
+
+`CLAMD_ENDPOINT`, `SCAN_ROOTS`, `SCAN_CONCURRENCY`, `CLAMD_MAX_STREAM_MB`, `CLAMD_CONF_FILE` (its `ExcludePath` rules), `CANARY_FILES`, `WATCH_REALTIME` and `LOG_*` apply to the agent as they do to the server. Plain `http://` works but sends the token unencrypted, so use it only over a VPN or mesh.
 
 ## Configuration
 
@@ -77,6 +80,8 @@ Every option is an environment variable (or a `--flag`; run `clamv-webui --help`
 | `SCAN_CONCURRENCY` | `2` | Path scans running at once |
 | `UPLOAD_MAX_FILES` | `10` | Files per upload |
 | `WATCH_POLL_SECS` | `60` | Seconds between looks at watched folders |
+| `WATCH_REALTIME` | `true` | Scan files in watched folders as soon as they are written |
+| `CANARY_FILES` | empty | Comma-separated decoy files; any access logs `canary.tripped` at ERROR, adds a `CANARY_TRIPPED` audit entry and calls the webhook |
 | `JOB_RETENTION_DAYS` | `90` | `0` keeps jobs forever |
 | `AUDIT_RETENTION_DAYS` | `365` | `0` keeps audit events forever |
 | `DETECTION_RETENTION_DAYS` | `365` | Jobs that found malware are kept at least this long; `0` keeps them forever |
@@ -87,6 +92,10 @@ clamd refuses streams over its `StreamMaxLength` (25 MB by default in many build
 |---|---|
 | `CLAMD_CONF_FILE` | Mounted clamd.conf. Shown read-only under **Admin > clamd Config** with checks against the upload limit; its `ExcludePath` rules also apply to watched folders and single-file scans |
 | `FRESHCLAM_CONF_FILE` | Mounted freshclam.conf, shown read-only |
+
+Real-time watching sees writes made on the same machine (bind mounts included, NFS or SMB mounts written from elsewhere are not); polling covers the rest. It needs one inotify watch per folder; for very large trees raise `fs.inotify.max_user_watches` on the host. Folders past the limit still get polled.
+
+Canary files: put a tempting decoy (say `/srv/secrets/passwords.kdbx`) somewhere nothing legitimate reads, and mount it read-only into the container. Keep it outside scanned folders, or add an `ExcludePath` for it, since a scan opening it would trip it; a warning is logged at start when that can happen. Alerts repeat at most once a minute per file, and a deleted canary is watched again once it is back.
 
 ### Web, sessions and TLS
 

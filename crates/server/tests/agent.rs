@@ -13,7 +13,7 @@ use clap::Parser;
 use tower::ServiceExt;
 
 mod common;
-use common::fake_clamd;
+use common::{EICAR, fake_clamd};
 
 struct Server {
     st: Arc<AppState>,
@@ -371,4 +371,86 @@ async fn agent_pins_the_server_certificate() {
     h.abort();
     assert!(seen, "right pin connects");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn agent_scans_in_real_time_and_reports_canaries() {
+    let srv = server().await;
+    let clamd = fake_clamd().await;
+    let root = std::env::temp_dir().join(format!("clamv-agrt-{}", clamv_webui::db::new_id()));
+    std::fs::create_dir_all(root.join("drop")).expect("mkdir");
+    let root_s = root.to_str().expect("utf8").to_owned();
+    let drop_s = format!("{root_s}/drop");
+    let decoy = std::env::temp_dir().join(format!("clamv-agdecoy-{}", clamv_webui::db::new_id()));
+    std::fs::write(&decoy, b"decoy").expect("write");
+    let (agent, token) = srv
+        .st
+        .db
+        .create_agent("edge", "admin")
+        .await
+        .expect("agent");
+    let mut cli = agent_cli(&srv.url, &token, clamd, &root_s);
+    cli.config.realtime_paths = vec![drop_s.clone().into()];
+    cli.config.canary_files = vec![decoy.clone()];
+    let h = tokio::spawn(clamv_webui::agent::client::run(cli.config));
+    // Wait until the agent has reported its roots.
+    for _ in 0..100 {
+        let a = srv.st.db.agent(agent.id).await.expect("q").expect("a");
+        if !a.roots.is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    std::fs::write(root.join("drop").join("x.com"), EICAR).expect("write");
+    let mut job = None;
+    for _ in 0..200 {
+        let done = srv
+            .st
+            .db
+            .agent_jobs(agent.id, jobs::FINISHED)
+            .await
+            .expect("q");
+        if let Some(j) = done.into_iter().next() {
+            job = Some(j);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let j = job.expect("real-time result");
+    assert_eq!(j.kind, "WATCH");
+    assert_eq!(j.target, format!("{drop_s}/x.com"));
+    assert_eq!(j.verdict.as_deref(), Some(jobs::VIRUS_FOUND));
+
+    let _ = std::fs::read(&decoy).expect("read");
+    let mut tripped = false;
+    for _ in 0..200 {
+        let (rows, _) = srv.st.db.audit_page(0, 20).await.expect("audit");
+        if rows.iter().any(|a| a.action == "CANARY_TRIPPED") {
+            tripped = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(tripped, "canary reported to the server");
+
+    // The server refuses results for paths outside the agent's roots.
+    let res = srv
+        .app
+        .clone()
+        .oneshot(
+            Request::post("/agent/v1/events")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(
+                    r#"{"type":"scan","path":"/etc/passwd","report":{"ok":1}}"#,
+                ))
+                .expect("req"),
+        )
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    h.abort();
+    let _ = std::fs::remove_dir_all(&root);
+    let _ = std::fs::remove_file(&decoy);
 }

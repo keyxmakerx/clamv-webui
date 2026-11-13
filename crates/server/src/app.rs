@@ -210,6 +210,8 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     crate::scan::start(state.clone()).await;
     crate::schedule::spawn(state.clone());
     crate::watch::spawn(state.clone());
+    crate::watch::spawn_realtime(state.clone());
+    crate::canary::spawn(state.clone());
     crate::webhook::spawn(state.clone());
     crate::metrics::spawn(state.clone());
     crate::agent::spawn_monitor(state.clone());

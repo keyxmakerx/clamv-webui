@@ -690,3 +690,85 @@ async fn body(res: axum::response::Response) -> String {
     )
     .into_owned()
 }
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn realtime_scans_files_as_they_are_written() {
+    let base = std::env::temp_dir().join(format!("clamv-rt-{}", clamv_webui::db::new_id()));
+    let dir = base.join("incoming");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let roots = base.to_str().expect("utf8").to_owned();
+    let (app, st, c, t) = app(&["--scan-roots", &roots]).await;
+    let body = format!("_csrf={t}&path={}", dir.display());
+    let res = app
+        .clone()
+        .oneshot(form("/admin/watch", &body, &c))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::OK);
+    clamv_webui::scan::start(st.clone()).await;
+    clamv_webui::watch::spawn_realtime(st.clone());
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Fresh files (no settle time) are scanned without a polling pass.
+    std::fs::write(dir.join("payload.com"), EICAR).expect("write");
+    let mut found = None;
+    for _ in 0..200 {
+        let (jobs, _) = st
+            .db
+            .list_jobs(&JobFilter::default(), 0, 10)
+            .await
+            .expect("list");
+        if let Some(j) = jobs.into_iter().find(|j| j.kind == "WATCH") {
+            found = Some(j);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let job = wait_finished(&st, &found.expect("queued in real time").id).await;
+    assert!(
+        job.target.ends_with("/incoming/payload.com"),
+        "{}",
+        job.target
+    );
+    assert_eq!(job.verdict.as_deref(), Some("VIRUS_FOUND"));
+    assert_eq!(
+        clamv_webui::watch::pass(&st).await,
+        0,
+        "recorded, not rescanned"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn touching_a_canary_alerts() {
+    let (port, mut rx) = hook_receiver().await;
+    let url = format!("http://127.0.0.1:{port}/hook");
+    let dir = std::env::temp_dir().join(format!("clamv-canary-{}", clamv_webui::db::new_id()));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let decoy = dir.join("passwords.kdbx");
+    std::fs::write(&decoy, b"decoy").expect("write");
+    let decoy_s = decoy.to_str().expect("utf8").to_owned();
+    let (_app, st, _c, _t) = app(&[
+        "--webhook-url",
+        &url,
+        "--webhook-allowed-cidrs",
+        "127.0.0.1/32",
+        "--canary-files",
+        &decoy_s,
+    ])
+    .await;
+    clamv_webui::webhook::spawn(st.clone());
+    clamv_webui::canary::spawn(st.clone());
+    let _ = std::fs::read(&decoy).expect("read");
+    let body = tokio::time::timeout(Duration::from_secs(10), rx.recv())
+        .await
+        .expect("delivered")
+        .expect("body");
+    assert_eq!(body["event"], "canary.tripped");
+    assert_eq!(body["target"], decoy_s.as_str());
+    assert_eq!(body["error"], "opened");
+    let audit = st.db.audit_page(0, 10).await.expect("audit");
+    assert!(audit.0.iter().any(|a| a.action == "CANARY_TRIPPED"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

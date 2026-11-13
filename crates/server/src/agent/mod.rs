@@ -26,7 +26,7 @@ use crate::db::agents::{Agent, Heartbeat};
 use crate::db::jobs::{self, Job};
 use crate::db::now_ms;
 use crate::scan;
-use proto::{Assignment, Failure, PollRequest, PollResponse, ResultRequest};
+use proto::{AgentEvent, Assignment, Failure, PollRequest, PollResponse, ResultRequest};
 
 /// An agent that has not polled for this long is offline.
 pub const OFFLINE_AFTER_MS: i64 = 90_000;
@@ -95,6 +95,7 @@ pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/agent/v1/poll", post(poll))
         .route("/agent/v1/jobs/{id}/result", post(result))
+        .route("/agent/v1/events", post(events))
 }
 
 fn reply(status: StatusCode, msg: &'static str) -> Response {
@@ -256,6 +257,62 @@ async fn result(
         (None, None) => scan::failure(scan::SCAN_FAILED, "The agent sent an empty result."),
     };
     scan::finish(&st, &job, &c.agent.name, o).await;
+    StatusCode::NO_CONTENT.into_response()
+}
+
+/// A real-time scan becomes a finished WATCH job; a canary raises an alert.
+async fn events(
+    State(st): State<Arc<AppState>>,
+    c: Caller,
+    Json(ev): Json<AgentEvent>,
+) -> Response {
+    match ev {
+        AgentEvent::Canary { path, what } => {
+            let path = proto::clean(&path, 4096);
+            let what = proto::clean(&what, 64);
+            crate::canary::tripped(&st, &c.agent.name, &path, &what).await;
+        }
+        AgentEvent::Scan {
+            path,
+            report,
+            failure,
+        } => {
+            let path = proto::clean(&path, 4096);
+            // Raw (non-UTF-8) keys carry the folder as readable text before the mark.
+            let readable = path.split(crate::watch::RAW_MARK).next().unwrap_or(&path);
+            if !path_in_roots(&c.agent.roots, readable) {
+                return reply(StatusCode::BAD_REQUEST, "path outside this agent's roots");
+            }
+            let submitted = format!("agent:{}", c.agent.name);
+            let job = match st
+                .db
+                .create_job(jobs::NewJob {
+                    kind: scan::KIND_WATCH,
+                    target: &path,
+                    endpoint_id: None,
+                    schedule_id: None,
+                    agent_id: Some(c.agent.id),
+                    submitted_by: Some(&submitted),
+                    transport: "AGENT_REALTIME",
+                    running: true,
+                })
+                .await
+            {
+                Ok(j) => j,
+                Err(_) => return reply(StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+            };
+            let o = match (report, failure) {
+                (Some(r), _) => scan::outcome(r.into_report()),
+                (None, Some(f)) if f.code == scan::LIMIT_EXCEEDED => scan::failure(
+                    scan::LIMIT_EXCEEDED,
+                    "The file is larger than the agent's CLAMD_MAX_STREAM_MB.",
+                ),
+                (None, Some(f)) => failure_outcome(&f),
+                (None, None) => scan::failure(scan::SCAN_FAILED, "The agent sent an empty result."),
+            };
+            scan::finish(&st, &job, &c.agent.name, o).await;
+        }
+    }
     StatusCode::NO_CONTENT.into_response()
 }
 

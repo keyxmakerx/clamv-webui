@@ -196,41 +196,11 @@ pub async fn pass(st: &AppState) -> usize {
                 );
                 break 'outer;
             }
-            if inflight.contains(&path)
-                || now - stamp.0 < SETTLE_MS
-                || st.watcher.is_known(&path, stamp)
-            {
+            if inflight.contains(&path) || now - stamp.0 < SETTLE_MS {
                 continue;
             }
-            match st.db.processed(&path).await {
-                Ok(Some(p)) if (p.modified_ms, p.size_bytes) == stamp => {
-                    if p.verdict != jobs::ERROR {
-                        st.watcher.remember(&path, stamp);
-                        continue;
-                    }
-                    if now - p.processed_at < RETRY_ERROR_MS {
-                        continue;
-                    }
-                }
-                Ok(_) => {}
-                Err(_) => continue,
-            }
-            let job = st
-                .db
-                .create_job(NewJob {
-                    kind: scan::KIND_WATCH,
-                    target: &path,
-                    endpoint_id: Some(ep.id),
-                    schedule_id: None,
-                    agent_id: None,
-                    submitted_by: Some("watcher"),
-                    transport: "WATCH",
-                    running: false,
-                })
-                .await;
-            match job {
-                Ok(_) => queued += 1,
-                Err(e) => tracing::warn!(error = %e, path = %path, "could not queue watched file"),
+            if queue_file(st, ep.id, &path, stamp, now).await {
+                queued += 1;
             }
         }
     }
@@ -241,6 +211,141 @@ pub async fn pass(st: &AppState) -> usize {
             "new or changed files queued"
         );
         st.runner.poke();
+    }
+    queued
+}
+
+/// Queue a WATCH job for `path` unless it is already handled. True when queued.
+async fn queue_file(st: &AppState, ep_id: i64, path: &str, stamp: (i64, i64), now: i64) -> bool {
+    if st.watcher.is_known(path, stamp) {
+        return false;
+    }
+    match st.db.processed(path).await {
+        Ok(Some(p)) if (p.modified_ms, p.size_bytes) == stamp => {
+            if p.verdict != jobs::ERROR {
+                st.watcher.remember(path, stamp);
+                return false;
+            }
+            if now - p.processed_at < RETRY_ERROR_MS {
+                return false;
+            }
+        }
+        Ok(_) => {}
+        Err(_) => return false,
+    }
+    let job = st
+        .db
+        .create_job(NewJob {
+            kind: scan::KIND_WATCH,
+            target: path,
+            endpoint_id: Some(ep_id),
+            schedule_id: None,
+            agent_id: None,
+            submitted_by: Some("watcher"),
+            transport: "WATCH",
+            running: false,
+        })
+        .await;
+    match job {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::warn!(error = %e, path = %path, "could not queue watched file");
+            false
+        }
+    }
+}
+
+/// Enabled watched folders, resolved, with their endpoint choice. Longest first.
+async fn realtime_roots(st: &AppState) -> Vec<(PathBuf, Option<i64>)> {
+    let Ok(watches) = st.db.list_watches().await else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for w in watches.into_iter().filter(|w| w.enabled) {
+        if let Ok(r) = scan::resolve_path(&st.cfg.scan_roots, &w.path).await {
+            out.push((r, w.endpoint_id));
+        }
+    }
+    out.sort_by(|a, b| {
+        b.0.as_os_str()
+            .len()
+            .cmp(&a.0.as_os_str().len())
+            .then(a.0.cmp(&b.0))
+    });
+    out.dedup_by(|a, b| a.0 == b.0);
+    out
+}
+
+/// Scan files in watched folders as soon as they are written. Polling stays as the safety net.
+pub fn spawn_realtime(st: Arc<AppState>) {
+    if !st.cfg.watch_realtime {
+        return;
+    }
+    tokio::spawn(async move {
+        let mut roots: Vec<(PathBuf, Option<i64>)> = Vec::new();
+        let mut rx: Option<tokio::sync::mpsc::Receiver<PathBuf>> = None;
+        let mut tick = tokio::time::interval(Duration::from_secs(60));
+        loop {
+            tokio::select! {
+                _ = tick.tick() => {
+                    let now_roots = realtime_roots(&st).await;
+                    if now_roots != roots || (rx.is_none() && !now_roots.is_empty()) {
+                        roots = now_roots;
+                        let dirs: Vec<PathBuf> = roots.iter().map(|(p, _)| p.clone()).collect();
+                        rx = None;
+                        if !dirs.is_empty() {
+                            match crate::fsevents::files(dirs) {
+                                Ok(r) => {
+                                    tracing::info!(event = "realtime.started", folders = roots.len(), "real-time scanning on");
+                                    rx = Some(r);
+                                }
+                                Err(e) => tracing::warn!(event = "realtime.unavailable", error = %e, "real-time scanning off; polling only"),
+                            }
+                        }
+                    }
+                }
+                got = async {
+                    match rx.as_mut() {
+                        Some(r) => r.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => match got {
+                    Some(p) => {
+                        if realtime_one(&st, &roots, &p).await {
+                            st.runner.poke();
+                        }
+                    }
+                    None => rx = None,
+                },
+            }
+        }
+    });
+}
+
+/// Queue one file reported by the real-time watcher. True when queued.
+pub async fn realtime_one(st: &AppState, roots: &[(PathBuf, Option<i64>)], p: &Path) -> bool {
+    let Some((_, ep_id)) = roots.iter().find(|(r, _)| p.starts_with(r)) else {
+        return false;
+    };
+    let Ok(m) = tokio::fs::symlink_metadata(p).await else {
+        return false;
+    };
+    if !m.is_file() {
+        return false;
+    }
+    let key = p.to_str().map_or_else(|| raw_key(p), str::to_owned);
+    if st.excluded(&p.to_string_lossy()) {
+        return false;
+    }
+    let Some(ep) = scan::pick_endpoint(st, *ep_id).await else {
+        return false;
+    };
+    if st.db.watch_target_active(&key).await.unwrap_or(true) {
+        return false;
+    }
+    let queued = queue_file(st, ep.id, &key, stamp(&m), now_ms()).await;
+    if queued {
+        tracing::debug!(event = "realtime.queued", path = %key, "written file queued");
     }
     queued
 }

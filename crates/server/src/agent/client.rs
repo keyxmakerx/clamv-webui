@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore};
 
 use super::proto::{
-    Assignment, Failure, PROTOCOL, PollRequest, PollResponse, Report, ResultRequest,
+    AgentEvent, Assignment, Failure, PROTOCOL, PollRequest, PollResponse, Report, ResultRequest,
 };
 use crate::config::Config;
 use crate::db::now_ms;
@@ -33,6 +33,7 @@ struct Agent {
     running: Mutex<HashSet<String>>,
     last_ok: AtomicI64,
     clamd_version: Mutex<(i64, Option<String>)>,
+    conf: crate::clamdconf::Cache,
 }
 
 /// Check the agent settings and build the HTTP client, without connecting.
@@ -56,6 +57,14 @@ fn build(cfg: Config) -> anyhow::Result<Agent> {
     }
     if cfg.scan_roots.is_empty() {
         anyhow::bail!("set SCAN_ROOTS to the folders this agent may scan");
+    }
+    for p in &cfg.realtime_paths {
+        if !super::path_in_roots(&roots_text(&cfg), &p.to_string_lossy()) {
+            anyhow::bail!(
+                "REALTIME_PATHS entry {} is not inside SCAN_ROOTS",
+                p.display()
+            );
+        }
     }
     if base.scheme() == "http" {
         tracing::warn!(
@@ -88,6 +97,7 @@ fn build(cfg: Config) -> anyhow::Result<Agent> {
         running: Mutex::new(HashSet::new()),
         last_ok: AtomicI64::new(0),
         clamd_version: Mutex::new((0, None)),
+        conf: crate::clamdconf::Cache::default(),
         cfg,
     })
 }
@@ -96,6 +106,8 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     let a = Arc::new(build(cfg)?);
     spawn_health(a.clone()).await?;
     tracing::info!(event = "agent.started", server = %a.base, clamd = %a.cfg.clamd_endpoint, roots = ?a.cfg.scan_roots, slots = a.cfg.scan_concurrency.max(1), version = env!("CARGO_PKG_VERSION"), "agent started");
+    spawn_realtime(a.clone()).await;
+    spawn_canaries(a.clone());
     tokio::select! {
         () = poll_loop(a) => {}
         () = shutdown() => tracing::info!("agent stopping"),
@@ -147,12 +159,7 @@ async fn poll_loop(a: Arc<Agent>) {
             protocol: PROTOCOL,
             version: env!("CARGO_PKG_VERSION").to_owned(),
             clamd_version: clamd_version(&a).await,
-            roots: a
-                .cfg
-                .scan_roots
-                .iter()
-                .map(|r| r.display().to_string())
-                .collect(),
+            roots: roots_text(&a.cfg),
             slots: u32::try_from(a.cfg.scan_concurrency.max(1)).unwrap_or(u32::MAX),
             free,
             running: a.running.lock().await.iter().cloned().collect(),
@@ -358,6 +365,197 @@ async fn deliver(a: &Agent, id: &str, body: &ResultRequest) {
         wait = (wait * 2).min(Duration::from_secs(120));
     }
     tracing::error!(event = "agent.result_lost", job_id = %id, "gave up sending a scan result");
+}
+
+fn roots_text(cfg: &Config) -> Vec<String> {
+    cfg.scan_roots
+        .iter()
+        .map(|r| r.display().to_string())
+        .collect()
+}
+
+/// Scan files under REALTIME_PATHS as soon as they are written, one at a time.
+async fn spawn_realtime(a: Arc<Agent>) {
+    if !a.cfg.watch_realtime || a.cfg.realtime_paths.is_empty() {
+        return;
+    }
+    let mut dirs = Vec::new();
+    for p in &a.cfg.realtime_paths {
+        match scan::resolve_path(&a.cfg.scan_roots, &p.to_string_lossy()).await {
+            Ok(d) => dirs.push(d),
+            Err(_) => {
+                tracing::warn!(event = "realtime.path_rejected", path = %p.display(), "real-time folder is missing or outside SCAN_ROOTS")
+            }
+        }
+    }
+    if dirs.is_empty() {
+        return;
+    }
+    let mut rx = match crate::fsevents::files(dirs.clone()) {
+        Ok(rx) => rx,
+        Err(e) => {
+            tracing::warn!(event = "realtime.unavailable", error = %e, "real-time scanning off");
+            return;
+        }
+    };
+    tracing::info!(
+        event = "realtime.started",
+        folders = dirs.len(),
+        "real-time scanning on"
+    );
+    tokio::spawn(async move {
+        let mut seen: std::collections::HashMap<std::path::PathBuf, (i64, i64)> =
+            std::collections::HashMap::new();
+        while let Some(p) = rx.recv().await {
+            let Ok(m) = tokio::fs::symlink_metadata(&p).await else {
+                continue;
+            };
+            if !m.is_file() || !dirs.iter().any(|d| p.starts_with(d)) {
+                continue;
+            }
+            let stamp = crate::watch::stamp(&m);
+            if seen.get(&p) == Some(&stamp) {
+                continue;
+            }
+            let conf = a.conf.load(a.cfg.clamd_conf_file.as_deref()).ok().flatten();
+            if conf.is_some_and(|c| c.excluded(&p.to_string_lossy())) {
+                continue;
+            }
+            if seen.len() > 100_000 {
+                seen.clear();
+            }
+            seen.insert(p.clone(), stamp);
+            let body = realtime_scan(&a, &p).await;
+            send_event(&a, &body).await;
+        }
+    });
+}
+
+async fn realtime_scan(a: &Agent, p: &std::path::Path) -> AgentEvent {
+    let (key, result) = match p.to_str() {
+        Some(s) => (s.to_owned(), a.clamd.multiscan(p).await),
+        None => {
+            // clamd names files as text; stream it so the name never matters.
+            let key = crate::watch::raw_key(p);
+            let r = match tokio::fs::File::open(p).await {
+                Ok(f) => a
+                    .clamd
+                    .instream(tokio::io::BufReader::new(f))
+                    .await
+                    .map(|mut r| {
+                        for d in &mut r.detections {
+                            d.path.clone_from(&key);
+                        }
+                        for e in &mut r.errors {
+                            e.path.clone_from(&key);
+                        }
+                        r
+                    }),
+                Err(e) => Err(clamd::Error::Io(e)),
+            };
+            (key, r)
+        }
+    };
+    let (report, failure) = match result {
+        Ok(rep) => {
+            for d in &rep.detections {
+                if !d.is_limit_exceeded() {
+                    tracing::warn!(event = "scan.detected", kind = scan::KIND_WATCH, path = %d.path, signature = %d.signature, "malware detected");
+                }
+            }
+            (Some(Report::from_clamd(rep)), None)
+        }
+        Err(clamd::Error::StreamTooLarge(_)) => (
+            None,
+            Some(Failure {
+                code: scan::LIMIT_EXCEEDED.to_owned(),
+            }),
+        ),
+        Err(e) => {
+            tracing::warn!(event = "scan.failed", path = %key, error = %e, "clamd real-time scan failed");
+            (
+                None,
+                Some(Failure {
+                    code: scan::SCAN_FAILED.to_owned(),
+                }),
+            )
+        }
+    };
+    AgentEvent::Scan {
+        path: key,
+        report,
+        failure,
+    }
+}
+
+/// Watch CANARY_FILES on this host and report any access to the server.
+fn spawn_canaries(a: Arc<Agent>) {
+    let files = a.cfg.canary_files.clone();
+    if files.is_empty() {
+        return;
+    }
+    let conf = a.conf.load(a.cfg.clamd_conf_file.as_deref()).ok().flatten();
+    crate::canary::check_placement(&files, &a.cfg.scan_roots, conf.as_deref());
+    let mut rx = match crate::fsevents::canaries(files) {
+        Ok(rx) => rx,
+        Err(e) => {
+            tracing::error!(event = "canary.unavailable", error = %e, "canary files cannot be watched");
+            return;
+        }
+    };
+    tokio::spawn(async move {
+        while let Some((p, what)) = rx.recv().await {
+            // Logged here too, so the alert survives a server outage.
+            tracing::error!(event = "canary.tripped", path = %p.display(), what, "canary file touched");
+            let ev = AgentEvent::Canary {
+                path: p.to_string_lossy().into_owned(),
+                what: what.to_owned(),
+            };
+            send_event(&a, &ev).await;
+        }
+    });
+}
+
+/// Post an event, retrying for a few minutes.
+async fn send_event(a: &Agent, ev: &AgentEvent) {
+    let Ok(url) = a.base.join("agent/v1/events") else {
+        return;
+    };
+    let mut wait = Duration::from_secs(2);
+    for attempt in 1..=6 {
+        match a
+            .http
+            .post(url.clone())
+            .bearer_auth(&a.token)
+            .json(ev)
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() => return,
+            Ok(r) if r.status().is_client_error() => {
+                tracing::warn!(
+                    event = "agent.event_refused",
+                    status = r.status().as_u16(),
+                    "server refused an event"
+                );
+                return;
+            }
+            Ok(r) => tracing::debug!(
+                attempt,
+                status = r.status().as_u16(),
+                "event not accepted; retrying"
+            ),
+            Err(e) => {
+                tracing::debug!(attempt, error = %without_url(&e), "could not send event; retrying")
+            }
+        }
+        tokio::time::sleep(wait).await;
+        wait = (wait * 2).min(Duration::from_secs(60));
+    }
+    tracing::error!(
+        event = "agent.event_lost",
+        "gave up sending an event to the server"
+    );
 }
 
 /// Trust exactly the server certificate with this SHA-256, as the server logs at start.
