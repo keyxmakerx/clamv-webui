@@ -17,21 +17,49 @@ use crate::db::{Db, redact_url};
 
 pub struct AppState {
     pub cfg: Config,
-    pub clamd: clamd::Client,
     pub db: Db,
     pub lockout: Lockout,
 }
 
 impl AppState {
     pub fn new(cfg: Config, db: Db) -> Self {
-        let clamd = clamd::Client::new(cfg.clamd_endpoint.clone(), clamd::Limits::default());
         Self {
             cfg,
-            clamd,
             db,
             lockout: Lockout::new(LockoutPolicy::default()),
         }
     }
+
+    pub fn clamd(&self, ep: clamd::Endpoint) -> clamd::Client {
+        let limits = clamd::Limits {
+            max_stream_bytes: self.cfg.clamd_max_stream_mb.saturating_mul(1024 * 1024),
+            ..clamd::Limits::default()
+        };
+        clamd::Client::new(ep, limits)
+    }
+
+    /// Admin-supplied endpoints must be on the allowlist when one is set (S10).
+    pub fn endpoint_allowed(&self, ep: &clamd::Endpoint) -> bool {
+        let list = &self.cfg.clamd_host_allowlist;
+        if list.iter().all(|h| h.trim().is_empty()) {
+            return true;
+        }
+        let key = match ep {
+            clamd::Endpoint::Tcp { host, .. } => host.to_ascii_lowercase(),
+            clamd::Endpoint::Unix(p) => p.display().to_string(),
+        };
+        list.iter().any(|h| h.trim().eq_ignore_ascii_case(&key))
+    }
+}
+
+/// First start: make CLAMD_ENDPOINT the default endpoint.
+pub async fn seed_endpoint(db: &Db, cfg: &Config) -> anyhow::Result<()> {
+    if db.list_endpoints().await?.is_empty() {
+        db.create_endpoint("default", &cfg.clamd_endpoint.to_string(), true)
+            .await?;
+        tracing::info!(endpoint = %cfg.clamd_endpoint, "created default clamd endpoint");
+    }
+    Ok(())
 }
 
 /// Headers sent on every response (S7). Inline scripts and styles are not allowed.
@@ -87,6 +115,7 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
         cfg.bootstrap_admin_password.as_deref(),
     )
     .await?;
+    seed_endpoint(&db, &cfg).await?;
     let state = Arc::new(AppState::new(cfg.clone(), db.clone()));
     spawn_housekeeping(state.clone());
     let app = router(state, &cfg).into_make_service_with_connect_info::<std::net::SocketAddr>();
@@ -160,10 +189,21 @@ async fn readyz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         tracing::warn!(error = %e, "database not reachable");
         return (StatusCode::SERVICE_UNAVAILABLE, "database unavailable");
     }
-    match state.clamd.ping().await {
+    let ep = match state.db.default_endpoint().await {
+        Ok(Some(ep)) => ep,
+        Ok(None) => return (StatusCode::SERVICE_UNAVAILABLE, "no clamd endpoint"),
+        Err(e) => {
+            tracing::warn!(error = %e, "endpoint lookup failed");
+            return (StatusCode::SERVICE_UNAVAILABLE, "database unavailable");
+        }
+    };
+    let Ok(addr) = ep.parsed() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "clamd unavailable");
+    };
+    match state.clamd(addr).ping().await {
         Ok(()) => (StatusCode::OK, "ready"),
         Err(e) => {
-            tracing::warn!(error = %e, endpoint = %state.clamd.endpoint(), "clamd not reachable");
+            tracing::warn!(error = %e, endpoint = %ep.address, "clamd not reachable");
             (StatusCode::SERVICE_UNAVAILABLE, "clamd unavailable")
         }
     }
@@ -184,6 +224,7 @@ mod tests {
             "tcp://127.0.0.1:1",
         ]);
         let db = Db::open("sqlite::memory:", 1).await.expect("db");
+        seed_endpoint(&db, &cli.config).await.expect("seed");
         router(Arc::new(AppState::new(cli.config.clone(), db)), &cli.config)
     }
 

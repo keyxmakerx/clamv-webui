@@ -23,12 +23,21 @@ fn new_pw() -> &'static str {
 }
 
 async fn app() -> (Router, Arc<AppState>) {
-    let cli = Cli::parse_from(["clamv-webui", "--clamd-endpoint", "tcp://127.0.0.1:1"]);
+    app_with(&[]).await
+}
+
+async fn app_with(extra: &[&str]) -> (Router, Arc<AppState>) {
+    let mut args = vec!["clamv-webui", "--clamd-endpoint", "tcp://127.0.0.1:1"];
+    args.extend_from_slice(extra);
+    let cli = Cli::parse_from(args);
     let db = Db::open("sqlite::memory:", 1).await.expect("db");
     let dir = std::env::temp_dir();
     clamv_webui::auth::bootstrap::ensure_admin(&db, &dir, Some(pw()))
         .await
         .expect("bootstrap");
+    clamv_webui::app::seed_endpoint(&db, &cli.config)
+        .await
+        .expect("seed");
     let st = Arc::new(AppState::new(cli.config.clone(), db));
     (router(st.clone(), &cli.config), st)
 }
@@ -278,12 +287,18 @@ async fn route_table_by_role() {
         ("/dashboard", Role::Viewer),
         ("/admin/users", Role::Admin),
         ("/admin/audit", Role::Admin),
+        ("/admin/endpoints", Role::Admin),
     ];
     let posts: &[(&str, Role)] = &[
         ("/admin/users", Role::Admin),
         ("/admin/users/x/role", Role::Admin),
         ("/admin/users/x/password", Role::Admin),
         ("/admin/users/x/delete", Role::Admin),
+        ("/admin/endpoints", Role::Admin),
+        ("/admin/endpoints/x/default", Role::Admin),
+        ("/admin/endpoints/x/enabled", Role::Admin),
+        ("/admin/endpoints/x/delete", Role::Admin),
+        ("/admin/endpoints/x/test", Role::Admin),
     ];
     for role in [Role::Viewer, Role::Operator, Role::Admin] {
         let h = password::hash(&clamv_webui::auth::token::random_secret()).expect("hash");
@@ -368,4 +383,84 @@ async fn last_admin_cannot_be_removed() {
     );
     let still = st.db.user_by_id(&admin.id).await.expect("q").expect("u");
     assert_eq!(still.role, Role::Admin);
+}
+
+/// Signed-in admin with the forced password change cleared.
+async fn admin_cookie(st: &AppState) -> (String, String) {
+    let admin = st
+        .db
+        .user_by_username("admin")
+        .await
+        .expect("q")
+        .expect("admin");
+    st.db
+        .set_password(&admin.id, &admin.password_hash, false, false)
+        .await
+        .expect("clear flag");
+    let (raw, s) = st
+        .db
+        .create_session(&admin.id, 3_600_000, None, None)
+        .await
+        .expect("session");
+    (format!("clamv_session={raw}"), s.csrf_token)
+}
+
+#[tokio::test]
+async fn endpoints_are_validated_and_allowlisted() {
+    let (app, st) = app_with(&["--clamd-host-allowlist", "clamav,127.0.0.1"]).await;
+    let (c, t) = admin_cookie(&st).await;
+    let post = |body: String| {
+        let app = app.clone();
+        let c = c.clone();
+        async move {
+            app.oneshot(form("/admin/endpoints", &body, Some(&c)))
+                .await
+                .expect("res")
+        }
+    };
+    let res = post(format!("_csrf={t}&name=evil&address=tcp://10.0.0.9:3310")).await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert!(body(res).await.contains("CLAMD_HOST_ALLOWLIST"));
+    let res = post(format!("_csrf={t}&name=bad&address=tcp://a/b:3310")).await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let res = post(format!("_csrf={t}&name=nas&address=CLAMAV:3310")).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(body(res).await.contains("tcp://CLAMAV:3310"));
+    let res = post(format!("_csrf={t}&name=nas&address=clamav:3310")).await;
+    assert!(body(res).await.contains("already taken"));
+
+    // The default cannot be deleted; a non-default can.
+    let list = st.db.list_endpoints().await.expect("list");
+    let def = list.iter().find(|e| e.is_default).expect("default");
+    let other = list.iter().find(|e| !e.is_default).expect("other");
+    let res = app
+        .clone()
+        .oneshot(form(
+            &format!("/admin/endpoints/{}/delete", def.id),
+            &format!("_csrf={t}"),
+            Some(&c),
+        ))
+        .await
+        .expect("res");
+    assert!(body(res).await.contains("Pick another default"));
+    let res = app
+        .clone()
+        .oneshot(form(
+            &format!("/admin/endpoints/{}/delete", other.id),
+            &format!("_csrf={t}"),
+            Some(&c),
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(st.db.list_endpoints().await.expect("list").len(), 1);
+
+    // Dashboard lists the unreachable default without leaking the raw error.
+    let res = app
+        .clone()
+        .oneshot(get("/dashboard", Some(&c)))
+        .await
+        .expect("res");
+    let html = body(res).await;
+    assert!(html.contains("unreachable") && html.contains("no response"));
 }

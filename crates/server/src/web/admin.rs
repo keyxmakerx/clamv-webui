@@ -28,7 +28,7 @@ pub fn routes() -> Router<Arc<AppState>> {
 }
 
 /// Admin + valid CSRF token, or an error response.
-fn admin_post(auth: Auth, token: Option<&str>) -> Result<(Session, User), Response> {
+pub(super) fn admin_post(auth: Auth, token: Option<&str>) -> Result<(Session, User), Response> {
     let (s, u) = auth.require(Role::Admin)?;
     if !csrf::token_ok(&s.csrf_token, token) {
         return Err(error_page(
@@ -378,7 +378,7 @@ async fn delete_user(
     .await
 }
 
-async fn audit(
+pub(super) async fn audit(
     st: &AppState,
     me: &User,
     info: &RequestInfo,

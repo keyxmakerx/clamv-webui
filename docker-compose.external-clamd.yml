@@ -6,6 +6,7 @@ services:
     restart: unless-stopped
     environment:
       CLAMD_ENDPOINT: tcp://clamav:3310  # existing clamd container on the shared network
+      CLAMD_HOST_ALLOWLIST: clamav  # admins can only add endpoints on these hosts
       LOG_FORMAT: json  # one JSON object per line for fluent-bit
     ports:
       - "8080:8080"  # bind to the mesh IP in production, e.g. 100.82.x.y:8080:8080

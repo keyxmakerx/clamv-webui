@@ -215,3 +215,38 @@ async fn audit_round_trip() {
         db.close().await;
     }
 }
+
+#[tokio::test]
+async fn endpoints_keep_one_default() {
+    for db in databases().await {
+        let kind = db.kind();
+        sqlx::query(db.sql("DELETE FROM endpoints"))
+            .execute(db.pool())
+            .await
+            .expect("clear");
+        let a = db
+            .create_endpoint(&format!("a-{}", &new_id()[..8]), "tcp://a:3310", false)
+            .await
+            .expect("a");
+        assert!(a.is_default, "{kind:?}: first endpoint becomes default");
+        let b = db
+            .create_endpoint(&format!("b-{}", &new_id()[..8]), "tcp://b:3310", true)
+            .await
+            .expect("b");
+        assert!(b.is_default);
+        let list = db.list_endpoints().await.expect("list");
+        assert_eq!(list.iter().filter(|e| e.is_default).count(), 1, "{kind:?}");
+        assert!(
+            !db.delete_endpoint(&b.id).await.expect("del default"),
+            "{kind:?}: default deleted"
+        );
+        db.set_default_endpoint(&a.id).await.expect("set");
+        assert_eq!(
+            db.default_endpoint().await.expect("q").map(|e| e.id),
+            Some(a.id.clone()),
+            "{kind:?}"
+        );
+        assert!(db.delete_endpoint(&b.id).await.expect("del"));
+        db.close().await;
+    }
+}

@@ -5,6 +5,7 @@
 //! booleans are 0/1 integers, so every column decodes the same on every backend.
 
 pub mod audit;
+pub mod endpoints;
 pub mod sessions;
 pub mod settings;
 pub mod users;

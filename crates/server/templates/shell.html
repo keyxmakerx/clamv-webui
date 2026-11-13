@@ -11,6 +11,7 @@
 <div class="sidebar-divider"></div>
 <nav class="sidebar-section tabs" aria-label="Administration"><div class="sidebar-section__title">Administration</div>
 <a class="nav-btn tab-link{% if nav.page == "users" %} active{% endif %}" href="/admin/users"{% if nav.page == "users" %} aria-current="page"{% endif %}><i class="fas fa-users" aria-hidden="true"></i>Users</a>
+<a class="nav-btn tab-link{% if nav.page == "endpoints" %} active{% endif %}" href="/admin/endpoints"{% if nav.page == "endpoints" %} aria-current="page"{% endif %}><i class="fas fa-server" aria-hidden="true"></i>clamd Endpoints</a>
 <a class="nav-btn tab-link{% if nav.page == "audit" %} active{% endif %}" href="/admin/audit"{% if nav.page == "audit" %} aria-current="page"{% endif %}><i class="fas fa-clipboard-list" aria-hidden="true"></i>Audit Log</a>
 </nav>
 {% endif %}

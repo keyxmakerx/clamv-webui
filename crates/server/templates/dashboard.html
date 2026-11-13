@@ -2,12 +2,21 @@
 {% block title %}Dashboard · ClamAV Web UI{% endblock %}
 {% block content %}
 <h1 class="h3">Dashboard</h1>
-<section class="card mt-3"><div class="card-body">
-<h2 class="h5">Default clamd endpoint</h2>
-<p><code>{{ endpoint }}</code></p>
-{% match clamd %}
-{% when Ok with (version) %}<p><span class="badge bg-success">reachable</span> {{ version }}</p>
-{% when Err with (e) %}<p><span class="badge bg-danger">unreachable</span> {{ e }}</p>
-{% endmatch %}
+<section class="card mt-3"><div class="card-body table-responsive">
+<h2 class="h5">clamd endpoints</h2>
+{% if endpoints.is_empty() %}<p class="muted">No endpoints configured.</p>{% else %}
+<table class="table align-middle">
+<thead><tr><th>Name</th><th>Address</th><th>Status</th></tr></thead>
+<tbody>
+{% for e in endpoints %}
+<tr><td><strong>{{ e.name }}</strong>{% if e.is_default %} <span class="badge bg-primary">default</span>{% endif %}</td>
+<td><code>{{ e.address }}</code></td>
+<td>{% match e.status %}
+{% when Status::Up with (v) %}<span class="badge bg-success">reachable</span> <span class="small">{{ v }}</span>
+{% when Status::Down with (m) %}<span class="badge bg-danger">unreachable</span> <span class="small">{{ m }}</span>
+{% when Status::Disabled %}<span class="badge bg-secondary">disabled</span>
+{% endmatch %}</td></tr>
+{% endfor %}
+</tbody></table>{% endif %}
 </div></section>
 {% endblock %}

@@ -74,7 +74,7 @@ pub struct Config {
     )]
     pub database_max_connections: u32,
 
-    /// Default clamd endpoint: tcp://host:port or unix:///path.
+    /// clamd endpoint created as the default on first start: tcp://host:port or unix:///path.
     #[arg(
         long,
         env = "CLAMD_ENDPOINT",
@@ -82,6 +82,24 @@ pub struct Config {
         global = true
     )]
     pub clamd_endpoint: clamd::Endpoint,
+
+    /// Optional comma-separated hosts (or unix socket paths) admins may add as endpoints (S10). Empty allows any.
+    #[arg(
+        long,
+        env = "CLAMD_HOST_ALLOWLIST",
+        value_delimiter = ',',
+        global = true
+    )]
+    pub clamd_host_allowlist: Vec<String>,
+
+    /// Largest stream sent to clamd, in MiB; keep at or below clamd's StreamMaxLength.
+    #[arg(
+        long,
+        env = "CLAMD_MAX_STREAM_MB",
+        default_value_t = 256,
+        global = true
+    )]
+    pub clamd_max_stream_mb: u64,
 
     /// Mark the session cookie Secure. Leave false only when served over plain HTTP on a private network.
     #[arg(long, env = "COOKIE_SECURE", default_value_t = false, global = true)]

@@ -2,7 +2,10 @@
 
 pub mod admin;
 pub mod csrf;
+pub mod endpoints;
 pub mod session;
+
+use endpoints::Status;
 
 use std::sync::Arc;
 
@@ -36,6 +39,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         )
         .route("/dashboard", get(dashboard))
         .merge(admin::routes())
+        .merge(endpoints::routes())
         .route("/{*path}", get(asset))
 }
 
@@ -393,8 +397,7 @@ async fn change_password(
 #[template(path = "dashboard.html")]
 struct DashboardPage {
     nav: Nav,
-    endpoint: String,
-    clamd: Result<String, String>,
+    endpoints: Vec<endpoints::EndpointView>,
 }
 
 async fn dashboard(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
@@ -402,16 +405,25 @@ async fn dashboard(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
         Ok(x) => x,
         Err(r) => return r,
     };
-    let clamd = st.clamd.version().await.map_err(|e| {
-        tracing::warn!(error = %e, "clamd VERSION failed");
-        "no response".to_owned()
-    });
+    let list = match st.db.list_endpoints().await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!(error = %e, "list endpoints failed");
+            return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+        }
+    };
+    // Raw clamd errors go to the log; the page shows a short reason.
+    let mut endpoints = endpoints::probe_all(&st, list).await;
+    for e in &mut endpoints {
+        if let Status::Down(m) = &mut e.status {
+            *m = "no response".to_owned();
+        }
+    }
     render(
         StatusCode::OK,
         &DashboardPage {
             nav: Nav::new("dashboard", &s, &u),
-            endpoint: st.clamd.endpoint().to_string(),
-            clamd,
+            endpoints,
         },
     )
 }
