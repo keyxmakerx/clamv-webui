@@ -294,6 +294,7 @@ async fn route_table_by_role() {
         ("/admin/schedules", Role::Admin),
         ("/admin/watch", Role::Admin),
         ("/admin/integrations", Role::Admin),
+        ("/admin/settings", Role::Admin),
     ];
     let posts: &[(&str, Role)] = &[
         ("/admin/users", Role::Admin),
@@ -317,6 +318,8 @@ async fn route_table_by_role() {
         ("/admin/watch/x/enabled", Role::Admin),
         ("/admin/watch/x/delete", Role::Admin),
         ("/admin/integrations/webhook/test", Role::Admin),
+        ("/admin/settings/review", Role::Admin),
+        ("/admin/settings/apply", Role::Admin),
     ];
     for role in [Role::Viewer, Role::Operator, Role::Admin] {
         let h = password::hash(&clamv_webui::auth::token::random_secret()).expect("hash");
@@ -531,4 +534,86 @@ async fn admin_issues_and_revokes_tokens() {
         .await
         .expect("res");
     assert!(body(res).await.contains("Token revoked."));
+}
+
+#[tokio::test]
+async fn settings_are_reviewed_then_saved() {
+    let (app, st) = app().await;
+    let (c, t) = admin_cookie(&st).await;
+    let post = |uri: &'static str, body: String| {
+        let app = app.clone();
+        let c = c.clone();
+        async move { app.oneshot(form(uri, &body, Some(&c))).await.expect("res") }
+    };
+    let res = app
+        .clone()
+        .oneshot(get("/admin/settings", Some(&c)))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::OK);
+    let html = body(res).await;
+    assert!(html.contains("SCAN_CONCURRENCY") && html.contains("Deployment"));
+    let res = post(
+        "/admin/settings/review",
+        format!("_csrf={t}&SCAN_CONCURRENCY=0"),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let res = post(
+        "/admin/settings/review",
+        format!("_csrf={t}&SCAN_CONCURRENCY=5&WEBHOOK_EVENTS=all&JOB_RETENTION_DAYS="),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let html = body(res).await;
+    assert!(html.contains("Review changes"), "{html}");
+    assert!(
+        !html.contains("JOB_RETENTION_DAYS"),
+        "unchanged fields are left out"
+    );
+    let rev = html
+        .split("name=\"_revision\" value=\"")
+        .nth(1)
+        .and_then(|s| s.split('"').next())
+        .expect("revision")
+        .to_owned();
+    let apply = format!("_csrf={t}&_revision={rev}&SCAN_CONCURRENCY=5&WEBHOOK_EVENTS=all");
+    let res = post("/admin/settings/apply", apply.clone()).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(body(res).await.contains("applies after restart"));
+    let saved: Vec<(String, String)> = st
+        .db
+        .list_settings()
+        .await
+        .expect("list")
+        .into_iter()
+        .map(|s| (s.name, s.value))
+        .collect();
+    assert_eq!(
+        saved,
+        vec![
+            ("SCAN_CONCURRENCY".into(), "5".into()),
+            ("WEBHOOK_EVENTS".into(), "all".into())
+        ]
+    );
+    // A stale review is refused.
+    let res = post(
+        "/admin/settings/apply",
+        format!("_csrf={t}&_revision={rev}&SCAN_CONCURRENCY=6"),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    // Stored values reach the config on the next start.
+    let rows = st.db.list_settings().await.expect("list");
+    let cfg = clamv_webui::settings::overlay(st.cfg.clone(), &rows);
+    assert_eq!(cfg.scan_concurrency, 5);
+    // Clearing a field goes back to the default.
+    let rev = clamv_webui::db::settings::revision(&rows);
+    let res = post(
+        "/admin/settings/apply",
+        format!("_csrf={t}&_revision={rev}&SCAN_CONCURRENCY="),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(st.db.list_settings().await.expect("list").len(), 1);
 }

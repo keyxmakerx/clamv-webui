@@ -88,6 +88,11 @@ impl Cidr {
     }
 }
 
+/// Check one CIDR or address for the settings page.
+pub fn parse_cidr(s: &str) -> Result<(), String> {
+    Cidr::parse(s).map(|_| ())
+}
+
 /// IPv4-mapped IPv6 addresses are judged as IPv4.
 fn canonical(ip: IpAddr) -> IpAddr {
     match ip {

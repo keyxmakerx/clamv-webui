@@ -131,11 +131,8 @@ pub fn router(state: Arc<AppState>, cfg: &Config) -> Router {
     app.layer(TraceLayer::new_for_http())
 }
 
-pub async fn serve(mut cfg: Config) -> anyhow::Result<()> {
+pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     prepare_data_dir(&cfg.data_dir)?;
-    if cfg.tls_enabled() {
-        cfg.cookie_secure = true;
-    }
     crate::webhook::Target::from_config(&cfg)?;
     if let Some(p) = &cfg.metrics_token_file {
         std::fs::read_to_string(p)
@@ -149,6 +146,10 @@ pub async fn serve(mut cfg: Config) -> anyhow::Result<()> {
         .await
         .map_err(|e| anyhow::anyhow!("database {}: {e}", redact_url(&url)))?;
     tracing::info!(database = %redact_url(&url), "database ready");
+    let mut cfg = crate::settings::overlay(cfg, &db.list_settings().await.unwrap_or_default());
+    if cfg.tls_enabled() {
+        cfg.cookie_secure = true;
+    }
     crate::auth::bootstrap::ensure_admin(
         &db,
         &cfg.data_dir,

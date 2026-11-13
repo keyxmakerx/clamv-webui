@@ -7,6 +7,7 @@ pub mod integrations;
 pub mod scan;
 pub mod schedules;
 pub mod session;
+pub mod settings;
 pub mod tokens;
 pub mod watch;
 
@@ -50,6 +51,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(schedules::routes())
         .merge(watch::routes())
         .merge(integrations::routes())
+        .merge(settings::routes())
         .route("/{*path}", get(asset))
 }
 

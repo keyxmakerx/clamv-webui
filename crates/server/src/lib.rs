@@ -14,6 +14,7 @@ pub mod logging;
 pub mod metrics;
 pub mod scan;
 pub mod schedule;
+pub mod settings;
 pub mod timefmt;
 pub mod tls;
 pub mod watch;

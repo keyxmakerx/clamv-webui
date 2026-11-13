@@ -1,0 +1,40 @@
+{% extends "shell.html" %}
+{% block title %}Settings · ClamAV Web UI{% endblock %}
+{% block content %}
+<h1 class="h3">Settings</h1>
+<p class="muted">Saved values apply after a restart. Environment variables win over values saved here. Leave a field empty to use the default.</p>
+<form method="post" action="/admin/settings/review">
+<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
+{% for s in sections %}
+<section class="card mt-3"><div class="card-body">
+<h2 class="h5">{{ s.name }}</h2>
+{% for r in s.rows %}
+<div class="row g-2 align-items-center py-2 border-bottom">
+<div class="col-md-5"><label class="form-label mb-0" for="f-{{ r.env }}"><strong>{{ r.label }}</strong></label><div class="small muted">{{ r.help }} <code>{{ r.env }}</code></div></div>
+<div class="col-md-4">
+{% if let Some(v) = r.locked %}<input class="form-control" id="f-{{ r.env }}" value="{{ v }}" disabled>
+{% else if r.kind == "bool" %}<select class="form-select" id="f-{{ r.env }}" name="{{ r.env }}">
+<option value=""{% if r.value.is_empty() %} selected{% endif %}>Default ({% if r.default == "true" %}yes{% else %}no{% endif %})</option>
+<option value="true"{% if r.value == "true" %} selected{% endif %}>Yes</option>
+<option value="false"{% if r.value == "false" %} selected{% endif %}>No</option></select>
+{% else if r.kind == "select" %}<select class="form-select" id="f-{{ r.env }}" name="{{ r.env }}">
+<option value=""{% if r.value.is_empty() %} selected{% endif %}>Default ({{ r.default }})</option>
+{% for o in r.options %}<option value="{{ o }}"{% if r.value == **o %} selected{% endif %}>{{ o }}</option>{% endfor %}</select>
+{% else if r.kind == "number" %}<input class="form-control" type="number" id="f-{{ r.env }}" name="{{ r.env }}" min="{{ r.min }}" max="{{ r.max }}" value="{{ r.value }}" placeholder="{{ r.default }}">
+{% else %}<input class="form-control" id="f-{{ r.env }}" name="{{ r.env }}" value="{{ r.value }}" placeholder="{{ r.default }}" maxlength="2048" autocomplete="off">{% endif %}
+</div>
+<div class="col-md-3 small">{% if r.locked.is_some() %}<span class="badge bg-secondary">set by environment</span>{% else if r.pending %}<span class="badge bg-warning text-dark">applies after restart</span>{% else if !r.value.is_empty() %}<span class="badge bg-success">saved</span>{% endif %}</div>
+</div>
+{% endfor %}
+</div></section>
+{% endfor %}
+<div class="mt-3"><button class="btn btn-primary" type="submit">Review changes</button></div>
+</form>
+<section class="card mt-4"><div class="card-body">
+<h2 class="h5">Deployment</h2>
+<p class="small muted">Set only through the environment, because they hold secrets or security boundaries.</p>
+<dl class="row mb-0">
+{% for d in deployment %}<dt class="col-sm-4">{{ d.0 }}</dt><dd class="col-sm-8 text-break">{{ d.1 }}</dd>{% endfor %}
+</dl>
+</div></section>
+{% endblock %}
