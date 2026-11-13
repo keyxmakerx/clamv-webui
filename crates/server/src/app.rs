@@ -28,6 +28,8 @@ pub struct AppState {
     pub oidc: Option<crate::auth::oidc::Oidc>,
     pub ldap: Option<crate::auth::ldap::Ldap>,
     pub agents: crate::agent::Hub,
+    pub clamd_conf: crate::clamdconf::Cache,
+    pub freshclam_conf: crate::clamdconf::Cache,
 }
 
 impl AppState {
@@ -53,7 +55,18 @@ impl AppState {
             lockout: Lockout::new(LockoutPolicy::default()),
             watcher: crate::watch::Watcher::default(),
             agents: crate::agent::Hub::default(),
+            clamd_conf: crate::clamdconf::Cache::default(),
+            freshclam_conf: crate::clamdconf::Cache::default(),
         }
+    }
+
+    /// True if the mounted clamd.conf excludes `path` (ExcludePath).
+    pub fn excluded(&self, path: &str) -> bool {
+        self.clamd_conf
+            .load(self.cfg.clamd_conf_file.as_deref())
+            .ok()
+            .flatten()
+            .is_some_and(|c| c.excluded(path))
     }
 
     pub fn clamd(&self, ep: clamd::Endpoint) -> clamd::Client {

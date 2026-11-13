@@ -24,6 +24,9 @@ pub const CONFIGURATION_UNAVAILABLE: &str = "CONFIGURATION_UNAVAILABLE";
 pub const LIMIT_EXCEEDED: &str = "LIMIT_EXCEEDED";
 pub const SCAN_FAILED: &str = "SCAN_FAILED";
 
+/// The path matches an ExcludePath rule in the mounted clamd.conf.
+pub const PATH_EXCLUDED: &str = "That path is excluded by ExcludePath in clamd.conf.";
+
 /// One generic answer for "outside the roots" and "does not exist" (no existence oracle, S9).
 pub const PATH_REJECTED: &str = "That path is not allowed or does not exist.";
 

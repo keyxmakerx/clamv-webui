@@ -194,6 +194,9 @@ async fn create(
                 }
                 match scan::resolve_path(&st.cfg.scan_roots, line).await {
                     Ok(p) => match p.to_str() {
+                        Some(p) if st.excluded(p) => {
+                            return fail(format!("{line}: {}", scan::PATH_EXCLUDED)).await;
+                        }
                         Some(p) => p.to_owned(),
                         None => {
                             return fail(format!("{line}: only UTF-8 paths can be scheduled."))

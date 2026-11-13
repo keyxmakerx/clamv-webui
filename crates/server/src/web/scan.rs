@@ -223,6 +223,9 @@ async fn scan_path(
             let Some(target) = real.to_str() else {
                 return scan_error(&st, &s, &u, "Only UTF-8 paths can be queued.", input).await;
             };
+            if st.excluded(target) {
+                return scan_error(&st, &s, &u, scan::PATH_EXCLUDED, input).await;
+            }
             (target.to_owned(), Some(ep.id), None)
         }
     };

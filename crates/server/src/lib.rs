@@ -7,6 +7,7 @@ pub mod agent;
 pub mod api;
 pub mod app;
 pub mod auth;
+pub mod clamdconf;
 pub mod config;
 pub mod cron;
 pub mod db;

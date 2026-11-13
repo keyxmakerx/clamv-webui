@@ -179,7 +179,16 @@ pub async fn pass(st: &AppState) -> usize {
         let files = tokio::task::spawn_blocking(move || walk(&root))
             .await
             .unwrap_or_default();
+        let conf = st
+            .clamd_conf
+            .load(st.cfg.clamd_conf_file.as_deref())
+            .ok()
+            .flatten();
         for (path, stamp) in files {
+            let readable = path.split(RAW_MARK).next().unwrap_or(&path);
+            if conf.as_ref().is_some_and(|c| c.excluded(readable)) {
+                continue;
+            }
             if queued >= MAX_NEW_PER_PASS {
                 tracing::info!(
                     event = "watch.backlog",

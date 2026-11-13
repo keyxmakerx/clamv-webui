@@ -618,3 +618,75 @@ async fn metrics_need_the_token_and_count_scans() {
     let res = plain.oneshot(scrape(Some("Bearer x"))).await.expect("res");
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn clamd_conf_excludes_and_is_shown() {
+    let base = std::env::temp_dir().join(format!("clamv-conf-{}", clamv_webui::db::new_id()));
+    let dir = base.join("data");
+    std::fs::create_dir_all(dir.join("cache")).expect("mkdir");
+    let dir = std::fs::canonicalize(&dir).expect("real");
+    let conf = base.join("clamd.conf");
+    std::fs::write(
+        &conf,
+        format!(
+            "StreamMaxLength 100M\nExcludePath ^{}/cache/\n",
+            dir.display()
+        ),
+    )
+    .expect("conf");
+    let roots = dir.to_str().expect("utf8").to_owned();
+    let (app, st, c, t) = app(&[
+        "--scan-roots",
+        &roots,
+        "--clamd-conf-file",
+        conf.to_str().expect("utf8"),
+    ])
+    .await;
+    let skipped = dir.join("cache").join("x.bin");
+    std::fs::write(&skipped, b"x").expect("write");
+    let res = app
+        .clone()
+        .oneshot(form(
+            "/scan/path",
+            &format!("_csrf={t}&path={}", skipped.display()),
+            &c,
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert!(body(res).await.contains("excluded by ExcludePath"));
+    // The watcher skips it too.
+    let past = std::time::SystemTime::now() - Duration::from_secs(120);
+    std::fs::File::options()
+        .write(true)
+        .open(&skipped)
+        .expect("open")
+        .set_modified(past)
+        .expect("mtime");
+    st.db.create_watch(&roots, None).await.expect("watch");
+    assert_eq!(clamv_webui::watch::pass(&st).await, 0);
+    let res = app
+        .clone()
+        .oneshot(
+            Request::get("/admin/clamd-config")
+                .header(header::COOKIE, &c)
+                .body(Body::empty())
+                .expect("req"),
+        )
+        .await
+        .expect("res");
+    let html = body(res).await;
+    assert!(html.contains("Raise StreamMaxLength to 1024M"), "{html}");
+    assert!(html.contains("/cache/"));
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+async fn body(res: axum::response::Response) -> String {
+    String::from_utf8_lossy(
+        &http_body_util::BodyExt::collect(res.into_body())
+            .await
+            .expect("b")
+            .to_bytes(),
+    )
+    .into_owned()
+}

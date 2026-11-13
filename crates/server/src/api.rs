@@ -818,6 +818,9 @@ async fn scan_path(
     let Some(target) = real.to_str() else {
         return bad("Only UTF-8 paths can be queued.");
     };
+    if st.excluded(target) {
+        return bad(scan::PATH_EXCLUDED);
+    }
     let name = p.name();
     let job = match st
         .db

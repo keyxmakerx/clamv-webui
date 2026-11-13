@@ -2,6 +2,7 @@
 
 pub mod admin;
 pub mod agents;
+pub mod clamdconf;
 pub mod csrf;
 pub mod endpoints;
 pub mod integrations;
@@ -52,6 +53,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(scan::routes())
         .merge(tokens::routes())
         .merge(agents::routes())
+        .merge(clamdconf::routes())
         .merge(schedules::routes())
         .merge(watch::routes())
         .merge(integrations::routes())

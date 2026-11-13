@@ -306,6 +306,7 @@ async fn route_table_by_role() {
         ("/admin/integrations", Role::Admin),
         ("/admin/settings", Role::Admin),
         ("/admin/agents", Role::Admin),
+        ("/admin/clamd-config", Role::Admin),
     ];
     let posts: &[(&str, Role)] = &[
         ("/admin/users", Role::Admin),

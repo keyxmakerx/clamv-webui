@@ -1,0 +1,21 @@
+{% extends "shell.html" %}
+{% block title %}clamd config · ClamAV Web UI{% endblock %}
+{% block content %}
+<h1 class="h3">clamd configuration</h1>
+<p class="muted">Read-only. Mount the files into this container and point <code>CLAMD_CONF_FILE</code> and <code>FRESHCLAM_CONF_FILE</code> at them. ExcludePath rules also apply to watched folders and single-file scans here.</p>
+{% if !checks.is_empty() %}<section class="card mt-3"><div class="card-body">
+<h2 class="h5">Checks</h2>
+<ul class="mb-0">{% for c in checks %}<li>{% if c.0 %}<span class="badge bg-success">ok</span>{% else %}<span class="badge bg-warning text-dark">fix</span>{% endif %} {{ c.1 }}</li>{% endfor %}</ul>
+{% if !excludes.is_empty() %}<h3 class="h6 mt-3">ExcludePath</h3><ul class="small mb-0">{% for e in excludes %}<li><code>{{ e }}</code></li>{% endfor %}</ul>{% endif %}
+</div></section>{% endif %}
+{% for f in files %}<section class="card mt-3"><div class="card-body">
+<h2 class="h5">{{ f.title }}</h2>
+{% if f.path.is_empty() %}<p class="muted mb-0">Not configured. Set <code>{{ f.env }}</code>.</p>
+{% else if let Some(e) = f.error %}<p class="text-danger mb-0">{{ e }}</p>
+{% else %}<p class="small muted"><code>{{ f.path }}</code>{% if !f.modified.is_empty() %} · changed {{ f.modified }}{% endif %}</p>
+<div class="table-responsive"><table class="table table-sm small"><thead><tr><th>Directive</th><th>Value</th></tr></thead><tbody>
+{% for d in f.directives %}<tr><td><code>{{ d.0 }}</code></td><td class="text-break">{{ d.1 }}</td></tr>{% else %}<tr><td colspan="2" class="muted">No directives.</td></tr>{% endfor %}
+</tbody></table></div>
+<details><summary class="small">Raw file</summary><pre class="small mt-2 mb-0">{{ f.text }}</pre></details>{% endif %}
+</div></section>{% endfor %}
+{% endblock %}

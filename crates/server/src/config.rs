@@ -406,6 +406,14 @@ pub struct Config {
     )]
     pub request_timeout_secs: u64,
 
+    /// Mounted clamd.conf, shown read-only; its ExcludePath rules also apply to watched folders.
+    #[arg(long, env = "CLAMD_CONF_FILE", global = true)]
+    pub clamd_conf_file: Option<std::path::PathBuf>,
+
+    /// Mounted freshclam.conf, shown read-only.
+    #[arg(long, env = "FRESHCLAM_CONF_FILE", global = true)]
+    pub freshclam_conf_file: Option<std::path::PathBuf>,
+
     /// Agent mode: the server to take jobs from, e.g. https://100.82.0.5:8080.
     #[arg(long, env = "AGENT_SERVER_URL", global = true)]
     pub agent_server_url: Option<url::Url>,

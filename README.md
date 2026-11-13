@@ -83,6 +83,11 @@ Every option is an environment variable (or a `--flag`; run `clamv-webui --help`
 
 clamd refuses streams over its `StreamMaxLength` (25 MB by default in many builds), so set it to at least `CLAMD_MAX_STREAM_MB` in clamd.conf, e.g. `StreamMaxLength 1024M`, and keep `MaxFileSize` and `MaxScanSize` at or above it. Files with names that are not UTF-8 in watched folders are streamed to clamd, so they are scanned too.
 
+| Variable | Purpose |
+|---|---|
+| `CLAMD_CONF_FILE` | Mounted clamd.conf. Shown read-only under **Admin > clamd Config** with checks against the upload limit; its `ExcludePath` rules also apply to watched folders and single-file scans |
+| `FRESHCLAM_CONF_FILE` | Mounted freshclam.conf, shown read-only |
+
 ### Web, sessions and TLS
 
 | Variable | Default | Purpose |
