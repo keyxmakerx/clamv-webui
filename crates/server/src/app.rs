@@ -22,6 +22,7 @@ pub struct AppState {
     pub runner: crate::scan::Runner,
     /// Scan submissions per credential (Java `api.v1.scan-rate-limit-per-minute`).
     pub scan_rate: crate::auth::ratelimit::RateLimit,
+    pub watcher: crate::watch::Watcher,
 }
 
 impl AppState {
@@ -35,6 +36,7 @@ impl AppState {
             cfg,
             db,
             lockout: Lockout::new(LockoutPolicy::default()),
+            watcher: crate::watch::Watcher::default(),
         }
     }
 
@@ -145,6 +147,7 @@ pub async fn serve(mut cfg: Config) -> anyhow::Result<()> {
     spawn_housekeeping(state.clone());
     crate::scan::start(state.clone()).await;
     crate::schedule::spawn(state.clone());
+    crate::watch::spawn(state.clone());
     let app = router(state, &cfg).into_make_service_with_connect_info::<std::net::SocketAddr>();
     let scheme = if cfg.tls_enabled() { "https" } else { "http" };
     tracing::info!(listen = %cfg.listen, scheme, clamd = %cfg.clamd_endpoint, data_dir = %cfg.data_dir.display(), version = env!("CARGO_PKG_VERSION"), "started");

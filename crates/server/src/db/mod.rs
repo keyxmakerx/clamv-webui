@@ -12,6 +12,7 @@ pub mod sessions;
 pub mod settings;
 pub mod tokens;
 pub mod users;
+pub mod watch;
 
 use std::borrow::Cow;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

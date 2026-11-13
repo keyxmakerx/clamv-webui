@@ -15,4 +15,5 @@ pub mod scan;
 pub mod schedule;
 pub mod timefmt;
 pub mod tls;
+pub mod watch;
 pub mod web;

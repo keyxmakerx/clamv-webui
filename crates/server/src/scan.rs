@@ -16,6 +16,7 @@ use crate::db::jobs::{self, Job, JobFileError, Outcome};
 
 pub const KIND_UPLOAD: &str = "UPLOAD";
 pub const KIND_PATH: &str = "PATH";
+pub const KIND_WATCH: &str = "WATCH";
 
 /// Error codes shared with `/api/v1` (`JobError.code`).
 pub const POLICY_REJECTED: &str = "POLICY_REJECTED";
@@ -233,7 +234,7 @@ async fn run(st: Arc<AppState>, id: String, _permit: OwnedSemaphorePermit) {
         _ => return,
     };
     match job.kind.as_str() {
-        KIND_PATH => run_path(&st, &job).await,
+        KIND_PATH | KIND_WATCH => run_path(&st, &job).await,
         other => {
             let o = failure(SCAN_FAILED, "This job type cannot be run.");
             tracing::error!(job_id = %id, kind = other, "unknown job kind");
@@ -266,6 +267,15 @@ async fn run_path(st: &AppState, job: &Job) {
         )
         .await;
     };
+    // Watched files: remember size and mtime as seen before the scan.
+    let seen = if job.kind == KIND_WATCH {
+        tokio::fs::metadata(&path)
+            .await
+            .ok()
+            .map(|m| crate::watch::stamp(&m))
+    } else {
+        None
+    };
     let o = match st.clamd(addr).multiscan(&path).await {
         Ok(report) => outcome(report),
         Err(e) => {
@@ -273,6 +283,9 @@ async fn run_path(st: &AppState, job: &Job) {
             failure(SCAN_FAILED, "clamd did not complete the scan.")
         }
     };
+    if let Some((mtime, size)) = seen {
+        crate::watch::record(st, &job.target, mtime, size, &o).await;
+    }
     finish(st, job, Some(&ep), o).await;
 }
 

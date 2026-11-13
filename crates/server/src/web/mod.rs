@@ -7,6 +7,7 @@ pub mod scan;
 pub mod schedules;
 pub mod session;
 pub mod tokens;
+pub mod watch;
 
 use endpoints::Status;
 
@@ -46,6 +47,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(scan::routes())
         .merge(tokens::routes())
         .merge(schedules::routes())
+        .merge(watch::routes())
         .route("/{*path}", get(asset))
 }
 

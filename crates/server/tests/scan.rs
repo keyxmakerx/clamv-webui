@@ -412,3 +412,70 @@ async fn eicar_control_failure_is_recorded() {
     assert_eq!(j.error_code.as_deref(), Some("SCAN_FAILED"));
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[tokio::test]
+async fn watcher_queues_new_files_once() {
+    let base = std::env::temp_dir().join(format!("clamv-watch-{}", clamv_webui::db::new_id()));
+    let dir = base.join("downloads");
+    std::fs::create_dir_all(dir.join("sub")).expect("mkdir");
+    let old = dir.join("old.bin");
+    std::fs::write(&old, b"old").expect("write");
+    let roots = base.to_str().expect("utf8").to_owned();
+    let (app, st, c, t) = app(&["--scan-roots", &roots]).await;
+    // Baseline: existing files are recorded, not scanned.
+    let body = format!("_csrf={t}&path={}", dir.display());
+    let res = app
+        .clone()
+        .oneshot(form("/admin/watch", &body, &c))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::OK);
+    let real_old = std::fs::canonicalize(&old).expect("real");
+    assert_eq!(
+        st.db
+            .processed(real_old.to_str().expect("utf8"))
+            .await
+            .expect("q")
+            .map(|p| p.verdict),
+        Some("BASELINE".to_owned())
+    );
+    // A new file that has settled (mtime pushed back) is queued; a fresh one waits.
+    let new = dir.join("sub").join("new.bin");
+    std::fs::write(&new, b"new").expect("write");
+    let past = std::time::SystemTime::now() - Duration::from_secs(120);
+    std::fs::File::options()
+        .write(true)
+        .open(&new)
+        .expect("open")
+        .set_modified(past)
+        .expect("mtime");
+    std::fs::write(dir.join("fresh.bin"), b"still copying").expect("write");
+    assert_eq!(clamv_webui::watch::pass(&st).await, 1);
+    assert_eq!(
+        clamv_webui::watch::pass(&st).await,
+        0,
+        "not queued twice while pending"
+    );
+    clamv_webui::scan::start(st.clone()).await;
+    let (jobs, _) = st
+        .db
+        .list_jobs(&JobFilter::default(), 0, 10)
+        .await
+        .expect("list");
+    let job = wait_finished(&st, &jobs[0].id).await;
+    assert_eq!(job.kind, "WATCH");
+    let real_new = std::fs::canonicalize(&new).expect("real");
+    let rec = st
+        .db
+        .processed(real_new.to_str().expect("utf8"))
+        .await
+        .expect("q")
+        .expect("recorded");
+    assert_eq!(rec.verdict, "VIRUS_FOUND", "recorded after the scan (N6)");
+    assert_eq!(
+        clamv_webui::watch::pass(&st).await,
+        0,
+        "unchanged files are not rescanned"
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}

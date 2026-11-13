@@ -109,6 +109,10 @@ pub struct Config {
     #[arg(long, env = "SCAN_CONCURRENCY", default_value_t = 2, global = true)]
     pub scan_concurrency: usize,
 
+    /// Seconds between looks at watched folders.
+    #[arg(long, env = "WATCH_POLL_SECS", default_value_t = 60, global = true)]
+    pub watch_poll_secs: u64,
+
     /// Files accepted in one upload request.
     #[arg(long, env = "UPLOAD_MAX_FILES", default_value_t = 10, global = true)]
     pub upload_max_files: usize,

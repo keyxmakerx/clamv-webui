@@ -130,6 +130,7 @@ CREATE TABLE processed_files (
     path TEXT NOT NULL,
     modified_ms BIGINT NOT NULL,
     size_bytes BIGINT NOT NULL,
+    verdict VARCHAR(16) NOT NULL,
     processed_at BIGINT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
