@@ -88,16 +88,34 @@ pub struct Detection {
     pub signature: String,
 }
 
-/// Result of a scan that clamd completed.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Verdict {
-    Clean,
-    Infected(Vec<Detection>),
+impl Detection {
+    /// `AlertExceedsMax` hits: the file was too big or deep to scan fully,
+    /// which is not the same as malware.
+    pub fn is_limit_exceeded(&self) -> bool {
+        self.signature.starts_with("Heuristics.Limits.Exceeded")
+    }
 }
 
-impl Verdict {
+/// A file clamd could not scan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileError {
+    pub path: String,
+    pub message: String,
+}
+
+/// Every per-file result of a scan. Errors are kept even when there are
+/// detections, so a partial failure is never reported as a clean or plain hit.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ScanReport {
+    pub detections: Vec<Detection>,
+    pub errors: Vec<FileError>,
+    /// Files clamd reported as OK (MULTISCAN reports only the root when all are clean).
+    pub ok: u64,
+}
+
+impl ScanReport {
     pub fn is_clean(&self) -> bool {
-        matches!(self, Verdict::Clean)
+        self.detections.is_empty() && self.errors.is_empty()
     }
 }
 
@@ -176,7 +194,7 @@ impl Client {
 
     /// Stream `data` to clamd. Fails with [`Error::StreamTooLarge`] if it is
     /// longer than `max_stream_bytes` or clamd's own StreamMaxLength.
-    pub async fn instream<R: AsyncRead + Unpin>(&self, mut data: R) -> Result<Verdict, Error> {
+    pub async fn instream<R: AsyncRead + Unpin>(&self, mut data: R) -> Result<ScanReport, Error> {
         let mut conn = self.connect().await?;
         self.write(&mut conn, b"zINSTREAM\0").await?;
         let mut buf = vec![0u8; self.limits.chunk_bytes.max(1)];
@@ -212,30 +230,44 @@ impl Client {
             return self.early_reply(&mut conn).await;
         }
         let reply = self.read_reply(&mut conn, self.limits.scan_timeout).await?;
-        parse_scan(&reply)
+        self.instream_result(&reply)
+    }
+
+    fn instream_result(&self, reply: &[u8]) -> Result<ScanReport, Error> {
+        match parse_scan(reply, "stream") {
+            Err(Error::Clamd(m)) if m.contains("size limit exceeded") => {
+                Err(Error::StreamTooLarge(self.limits.max_stream_bytes))
+            }
+            other => other,
+        }
     }
 
     /// Ask clamd to scan a path it can see, using its worker threads.
     /// The caller must have checked the path against the allowed roots.
-    pub async fn multiscan(&self, path: &Path) -> Result<Verdict, Error> {
+    pub async fn multiscan(&self, path: &Path) -> Result<ScanReport, Error> {
         self.path_command("MULTISCAN", path).await
     }
 
     /// Like [`Client::multiscan`] but single-threaded inside clamd (lower disk load).
-    pub async fn contscan(&self, path: &Path) -> Result<Verdict, Error> {
+    pub async fn contscan(&self, path: &Path) -> Result<ScanReport, Error> {
         self.path_command("CONTSCAN", path).await
     }
 
-    async fn path_command(&self, cmd: &str, path: &Path) -> Result<Verdict, Error> {
-        let p = path.to_str().ok_or(Error::InvalidPath)?;
-        if p.is_empty() || p.contains(['\0', '\n', '\r']) {
+    async fn path_command(&self, cmd: &str, path: &Path) -> Result<ScanReport, Error> {
+        let raw = path_bytes(path)?;
+        if raw.is_empty() || raw.iter().any(|b| matches!(b, 0 | b'\n' | b'\r')) {
             return Err(Error::InvalidPath);
         }
+        let mut line = Vec::with_capacity(raw.len() + cmd.len() + 3);
+        line.push(b'z');
+        line.extend_from_slice(cmd.as_bytes());
+        line.push(b' ');
+        line.extend_from_slice(raw);
+        line.push(0);
         let mut conn = self.connect().await?;
-        self.write(&mut conn, format!("z{cmd} {p}\0").as_bytes())
-            .await?;
+        self.write(&mut conn, &line).await?;
         let reply = self.read_reply(&mut conn, self.limits.scan_timeout).await?;
-        parse_scan(&reply)
+        parse_scan(&reply, &String::from_utf8_lossy(raw))
     }
 
     async fn simple(&self, cmd: &str) -> Result<String, Error> {
@@ -243,6 +275,7 @@ impl Client {
         self.write(&mut conn, format!("z{cmd}\0").as_bytes())
             .await?;
         let r = self.read_reply(&mut conn, self.limits.io_timeout).await?;
+        let r = String::from_utf8_lossy(&r).replace('\0', "\n");
         let r = r.trim();
         if r.is_empty() {
             return Err(Error::Protocol("empty response".into()));
@@ -250,14 +283,9 @@ impl Client {
         Ok(r.to_owned())
     }
 
-    async fn early_reply(&self, conn: &mut Box<dyn Conn>) -> Result<Verdict, Error> {
+    async fn early_reply(&self, conn: &mut Box<dyn Conn>) -> Result<ScanReport, Error> {
         let reply = self.read_reply(conn, self.limits.io_timeout).await?;
-        match parse_scan(&reply) {
-            Err(Error::Clamd(m)) if m.contains("size limit exceeded") => {
-                Err(Error::StreamTooLarge(self.limits.max_stream_bytes))
-            }
-            other => other,
-        }
+        self.instream_result(&reply)
     }
 
     async fn connect(&self) -> Result<Box<dyn Conn>, Error> {
@@ -288,7 +316,7 @@ impl Client {
     }
 
     /// clamd closes the connection after each non-session command, so read to EOF.
-    async fn read_reply(&self, conn: &mut Box<dyn Conn>, idle: Duration) -> Result<String, Error> {
+    async fn read_reply(&self, conn: &mut Box<dyn Conn>, idle: Duration) -> Result<Vec<u8>, Error> {
         let mut out = Vec::new();
         let mut buf = [0u8; 8192];
         loop {
@@ -303,39 +331,77 @@ impl Client {
                 return Err(Error::ResponseTooLarge);
             }
         }
-        let text = String::from_utf8_lossy(&out).replace('\0', "\n");
-        Ok(text)
+        Ok(out)
     }
 }
 
-/// Parse a scan reply. Any line that is neither `OK` nor `FOUND` is an error.
-pub fn parse_scan(reply: &str) -> Result<Verdict, Error> {
-    let mut found = Vec::new();
-    let mut ok = false;
-    for line in reply.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        if let Some(rest) = line.strip_suffix(" FOUND") {
+#[cfg(unix)]
+fn path_bytes(path: &Path) -> Result<&[u8], Error> {
+    use std::os::unix::ffi::OsStrExt;
+    Ok(path.as_os_str().as_bytes())
+}
+
+#[cfg(not(unix))]
+fn path_bytes(path: &Path) -> Result<&[u8], Error> {
+    path.to_str().map(str::as_bytes).ok_or(Error::InvalidPath)
+}
+
+/// Parse a `z`-mode scan reply: one NUL-terminated result per file, so file
+/// names containing newlines cannot split a result. `base` is the scanned
+/// path (or `stream`); it locates the `path: message` split in ERROR lines
+/// whose message itself contains `: `.
+///
+/// Results naming a file get recorded; an ERROR not tied to a file (e.g.
+/// `UNKNOWN COMMAND`, size limit) fails the whole scan. Anything else is a
+/// protocol error. Nothing is ever dropped.
+pub fn parse_scan(reply: &[u8], base: &str) -> Result<ScanReport, Error> {
+    let text = String::from_utf8_lossy(reply);
+    let sep = if text.contains('\0') { '\0' } else { '\n' };
+    let mut report = ScanReport::default();
+    let mut any = false;
+    for item in text.split(sep) {
+        let item = item.trim_end_matches(['\n', '\r']);
+        if item.trim().is_empty() {
+            continue;
+        }
+        any = true;
+        if let Some(rest) = item.strip_suffix(" FOUND") {
             let (path, sig) = rest
                 .rsplit_once(": ")
-                .ok_or_else(|| Error::Protocol(line.to_owned()))?;
-            found.push(Detection {
+                .ok_or_else(|| Error::Protocol(item.to_owned()))?;
+            report.detections.push(Detection {
                 path: path.to_owned(),
                 signature: sig.to_owned(),
             });
-        } else if line.ends_with(" OK") {
-            ok = true;
-        } else if let Some(msg) = line.strip_suffix(" ERROR") {
-            return Err(Error::Clamd(msg.to_owned()));
+        } else if item.ends_with(": OK") {
+            report.ok += 1;
+        } else if let Some(rest) = item.strip_suffix(" ERROR") {
+            match split_path(rest, base) {
+                Some((path, message)) => report.errors.push(FileError {
+                    path: path.to_owned(),
+                    message: message.to_owned(),
+                }),
+                None => return Err(Error::Clamd(rest.to_owned())),
+            }
+        } else if item.ends_with(": Excluded") {
+            // ExcludePath match inside clamd: not scanned by design.
         } else {
-            return Err(Error::Protocol(line.to_owned()));
+            return Err(Error::Protocol(item.to_owned()));
         }
     }
-    if !found.is_empty() {
-        Ok(Verdict::Infected(found))
-    } else if ok {
-        Ok(Verdict::Clean)
-    } else {
-        Err(Error::Protocol("no scan verdict".into()))
+    if !any {
+        return Err(Error::Protocol("no scan verdict".into()));
     }
+    Ok(report)
+}
+
+/// Split `path: message` where the path starts with `base`.
+fn split_path<'a>(line: &'a str, base: &str) -> Option<(&'a str, &'a str)> {
+    if !line.starts_with(base) {
+        return None;
+    }
+    let idx = line.get(base.len()..)?.find(": ")? + base.len();
+    Some((&line[..idx], &line[idx + 2..]))
 }
 
 #[cfg(test)]
@@ -367,21 +433,56 @@ mod tests {
     }
 
     #[test]
-    fn parses_verdicts() {
-        assert_eq!(parse_scan("stream: OK\n").ok(), Some(Verdict::Clean));
-        let v = parse_scan("stream: Eicar-Test-Signature FOUND").ok();
+    fn parses_instream_results() {
+        let clean = parse_scan(b"stream: OK\0", "stream").ok();
+        assert_eq!(clean.map(|r| r.is_clean()), Some(true));
+        let hit = parse_scan(b"stream: Eicar-Test-Signature FOUND\0", "stream").ok();
         assert_eq!(
-            v,
-            Some(Verdict::Infected(vec![Detection {
+            hit.map(|r| r.detections),
+            Some(vec![Detection {
                 path: "stream".into(),
                 signature: "Eicar-Test-Signature".into()
-            }]))
+            }])
         );
         assert!(matches!(
-            parse_scan("INSTREAM size limit exceeded. ERROR"),
+            parse_scan(b"INSTREAM size limit exceeded. ERROR\0", "stream"),
             Err(Error::Clamd(_))
         ));
-        assert!(parse_scan("").is_err());
-        assert!(parse_scan("/data/x: lstat() failed: No such file").is_err());
+        assert!(parse_scan(b"", "stream").is_err());
+        assert!(parse_scan(b"something odd\0", "stream").is_err());
+    }
+
+    #[test]
+    fn keeps_errors_alongside_detections() {
+        let reply = b"/data/a.exe: Win.Trojan.X FOUND\0\
+/data/b: lstat() failed: Permission denied. ERROR\0\
+/data/big.mkv: Heuristics.Limits.Exceeded.MaxFileSize FOUND\0";
+        let r = parse_scan(reply, "/data").expect("parsed");
+        assert_eq!(r.detections.len(), 2);
+        assert!(r.detections[1].is_limit_exceeded());
+        assert_eq!(
+            r.errors,
+            vec![FileError {
+                path: "/data/b".into(),
+                message: "lstat() failed: Permission denied.".into()
+            }]
+        );
+        assert!(!r.is_clean());
+    }
+
+    #[test]
+    fn errors_only_is_a_report_not_a_failure() {
+        let reply = b"/data/x: Can't open file. ERROR\0/data/y: Can't open file. ERROR\0";
+        let r = parse_scan(reply, "/data").expect("parsed");
+        assert_eq!(r.errors.len(), 2);
+        assert!(r.detections.is_empty());
+    }
+
+    #[test]
+    fn non_ascii_and_newline_names_survive() {
+        let reply = "/data/Amélie/日本.mkv: Eicar-Test-Signature FOUND\0/data/odd\nname: OK\0";
+        let r = parse_scan(reply.as_bytes(), "/data").expect("parsed");
+        assert_eq!(r.detections[0].path, "/data/Amélie/日本.mkv");
+        assert_eq!(r.ok, 1);
     }
 }

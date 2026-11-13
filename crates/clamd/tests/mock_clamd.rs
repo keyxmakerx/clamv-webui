@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use clamd::{Client, Endpoint, Error, Limits, Verdict};
+use clamd::{Client, Endpoint, Error, Limits};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -54,6 +54,15 @@ async fn fake_clamd(stream_max: usize) -> Endpoint {
                             b"stream: OK\0".to_vec()
                         }
                     }
+                    // Echo the raw path bytes back: proves they arrive unmangled.
+                    c if c.starts_with(b"zMULTISCAN ") => {
+                        let path = &c[b"zMULTISCAN ".len()..];
+                        let mut r = path.to_vec();
+                        r.extend_from_slice(b"/eicar.com: Eicar-Test-Signature FOUND\0");
+                        r.extend_from_slice(path);
+                        r.extend_from_slice(b"/locked: Can't open file or directory ERROR\0");
+                        r
+                    }
                     _ => b"UNKNOWN COMMAND\0".to_vec(),
                 };
                 let _ = s.write_all(&reply).await;
@@ -87,10 +96,7 @@ async fn ping_and_version() {
 async fn detects_eicar_and_passes_clean() {
     let c = Client::new(fake_clamd(1 << 20).await, limits(1 << 20));
     assert!(!c.instream(EICAR).await.expect("scan").is_clean());
-    assert_eq!(
-        c.instream(&b"hello"[..]).await.expect("scan"),
-        Verdict::Clean
-    );
+    assert!(c.instream(&b"hello"[..]).await.expect("scan").is_clean());
 }
 
 #[tokio::test]
@@ -123,4 +129,20 @@ async fn connect_failure_is_error() {
         limits(1024),
     );
     assert!(c.ping().await.is_err());
+}
+
+#[tokio::test]
+async fn multiscan_sends_utf8_and_keeps_errors() {
+    let c = Client::new(fake_clamd(1 << 20).await, limits(1 << 20));
+    let r = c
+        .multiscan(std::path::Path::new("/data/Amélie"))
+        .await
+        .expect("scan");
+    assert_eq!(r.detections[0].path, "/data/Amélie/eicar.com");
+    assert_eq!(r.errors[0].path, "/data/Amélie/locked");
+    assert!(
+        c.multiscan(std::path::Path::new("/data/a\nb"))
+            .await
+            .is_err()
+    );
 }
