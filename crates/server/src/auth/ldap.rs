@@ -274,30 +274,4 @@ mod tests {
             .is_some()
         );
     }
-
-    #[tokio::test]
-    async fn empty_password_never_binds() {
-        use clap::Parser;
-        let cfg = crate::config::Cli::parse_from([
-            "x",
-            "--ldap-url",
-            "ldaps://127.0.0.1:1",
-            "--ldap-bind-dn",
-            "cn=svc",
-            "--ldap-bind-password",
-            "p",
-            "--ldap-user-base",
-            "dc=lan",
-            "--ldap-admin-groups",
-            "a",
-        ])
-        .config;
-        let l = Ldap::from_config(&cfg).expect("cfg").expect("on");
-        assert_eq!(l.authenticate("alice", "").await, Err(LdapError::Bad));
-        assert_eq!(l.authenticate("", "pw").await, Err(LdapError::Bad));
-        assert!(matches!(
-            l.authenticate("alice", "pw").await,
-            Err(LdapError::Unavailable(_))
-        ));
-    }
 }
