@@ -18,7 +18,7 @@
 <tbody>
 {% for u in users %}
 <tr>
-<td><strong>{{ u.username }}</strong>{% if u.is_self %} <span class="badge bg-secondary">you</span>{% endif %}{% if u.must_change %} <span class="badge bg-warning text-dark">must change password</span>{% endif %}</td>
+<td><strong>{{ u.username }}</strong>{% if u.is_self %} <span class="badge bg-secondary">you</span>{% endif %}{% if u.must_change %} <span class="badge bg-warning text-dark">must change password</span>{% endif %}{% if u.sso %} <span class="badge bg-info text-dark">SSO</span>{% endif %}</td>
 <td><form method="post" action="/admin/users/{{ u.id }}/role" class="d-flex gap-2 align-items-center">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
 <select class="form-select form-select-sm w-auto" name="role" aria-label="Role for {{ u.username }}">{% for r in roles %}<option value="{{ r }}"{% if *r == u.role %} selected{% endif %}>{{ r }}</option>{% endfor %}</select>

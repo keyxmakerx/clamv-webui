@@ -14,6 +14,8 @@ services:
       # WEBHOOK_URL_FILE: /run/secrets/webhook_url  # alerts by POST; Discord URLs get a chat message
       # WEBHOOK_ALLOWED_CIDRS: 100.82.0.0/16  # needed when the receiver is on the mesh
       # METRICS_TOKEN_FILE: /run/secrets/metrics_token  # enables /metrics for Prometheus
+      # OIDC_ISSUER: https://auth.example.lan  # SSO; also set OIDC_CLIENT_ID, OIDC_CLIENT_SECRET_FILE, OIDC_REDIRECT_URI
+      # OIDC_ADMIN_GROUPS: clamav-admins  # nobody without a listed group can sign in via SSO
     ports:
       - "8080:8080"  # bind to the mesh IP in production, e.g. 100.82.x.y:8080:8080
     networks:

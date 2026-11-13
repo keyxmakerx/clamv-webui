@@ -159,6 +159,88 @@ pub struct Config {
     #[arg(long, env = "METRICS_TOKEN_FILE", global = true)]
     pub metrics_token_file: Option<std::path::PathBuf>,
 
+    /// OpenID Connect issuer URL (https). With a client id and secret, enables SSO.
+    #[arg(long, env = "OIDC_ISSUER", global = true)]
+    pub oidc_issuer: Option<String>,
+
+    /// OIDC client id.
+    #[arg(long, env = "OIDC_CLIENT_ID", global = true)]
+    pub oidc_client_id: Option<String>,
+
+    /// OIDC client secret.
+    #[arg(
+        long,
+        env = "OIDC_CLIENT_SECRET",
+        hide_env_values = true,
+        global = true
+    )]
+    pub oidc_client_secret: Option<String>,
+
+    /// File holding the OIDC client secret (Docker secret). Wins over OIDC_CLIENT_SECRET.
+    #[arg(long, env = "OIDC_CLIENT_SECRET_FILE", global = true)]
+    pub oidc_client_secret_file: Option<std::path::PathBuf>,
+
+    /// Callback URL registered at the provider, ending in /login/oauth2/code/clamav.
+    #[arg(long, env = "OIDC_REDIRECT_URI", global = true)]
+    pub oidc_redirect_uri: Option<String>,
+
+    /// Scopes to request.
+    #[arg(
+        long,
+        env = "OIDC_SCOPES",
+        default_value = "openid profile email",
+        global = true
+    )]
+    pub oidc_scopes: String,
+
+    /// Claim holding group names; dots walk into objects (e.g. realm_access.roles).
+    #[arg(
+        long,
+        env = "OIDC_GROUPS_CLAIM",
+        default_value = "groups",
+        global = true
+    )]
+    pub oidc_groups_claim: String,
+
+    /// Comma-separated groups that get the admin role.
+    #[arg(long, env = "OIDC_ADMIN_GROUPS", value_delimiter = ',', global = true)]
+    pub oidc_admin_groups: Vec<String>,
+
+    /// Comma-separated groups that get the operator role.
+    #[arg(
+        long,
+        env = "OIDC_OPERATOR_GROUPS",
+        value_delimiter = ',',
+        global = true
+    )]
+    pub oidc_operator_groups: Vec<String>,
+
+    /// Comma-separated groups that get the viewer role.
+    #[arg(long, env = "OIDC_VIEWER_GROUPS", value_delimiter = ',', global = true)]
+    pub oidc_viewer_groups: Vec<String>,
+
+    /// Text on the SSO button.
+    #[arg(
+        long,
+        env = "OIDC_BUTTON_LABEL",
+        default_value = "Sign in with SSO",
+        global = true
+    )]
+    pub oidc_button_label: String,
+
+    /// Extra PEM CA bundle for a provider with a private certificate.
+    #[arg(long, env = "OIDC_CA_FILE", global = true)]
+    pub oidc_ca_file: Option<std::path::PathBuf>,
+
+    /// Also sign out at the provider when an SSO user signs out.
+    #[arg(
+        long,
+        env = "OIDC_PROVIDER_LOGOUT",
+        default_value_t = false,
+        global = true
+    )]
+    pub oidc_provider_logout: bool,
+
     /// Files accepted in one upload request.
     #[arg(long, env = "UPLOAD_MAX_FILES", default_value_t = 10, global = true)]
     pub upload_max_files: usize,

@@ -136,11 +136,13 @@ CREATE TABLE processed_files (
 
 CREATE TABLE external_identities (
     principal_name VARCHAR(64) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL,
     source VARCHAR(8) NOT NULL,
     issuer VARCHAR(512) NOT NULL,
     subject VARCHAR(512) NOT NULL,
     first_seen_at BIGINT NOT NULL,
-    last_seen_at BIGINT NOT NULL
+    last_seen_at BIGINT NOT NULL,
+    CONSTRAINT fk_identity_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE auth_provider_settings (

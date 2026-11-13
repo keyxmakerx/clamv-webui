@@ -4,6 +4,7 @@ pub mod admin;
 pub mod csrf;
 pub mod endpoints;
 pub mod integrations;
+pub mod oidc;
 pub mod scan;
 pub mod schedules;
 pub mod session;
@@ -52,6 +53,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(watch::routes())
         .merge(integrations::routes())
         .merge(settings::routes())
+        .merge(oidc::routes())
         .route("/{*path}", get(asset))
 }
 
@@ -132,10 +134,11 @@ async fn asset(Path(path): Path<String>) -> Response {
 
 #[derive(Template)]
 #[template(path = "login.html")]
-struct LoginPage {
-    error: Option<&'static str>,
-    info: Option<&'static str>,
-    username: String,
+pub(crate) struct LoginPage {
+    pub error: Option<&'static str>,
+    pub info: Option<&'static str>,
+    pub username: String,
+    pub sso: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -144,7 +147,11 @@ struct LoginQuery {
     changed: Option<String>,
 }
 
-async fn login_page(auth: Auth, Query(q): Query<LoginQuery>) -> Response {
+async fn login_page(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    Query(q): Query<LoginQuery>,
+) -> Response {
     if auth.0.is_some() {
         return Redirect::to("/dashboard").into_response();
     }
@@ -161,6 +168,7 @@ async fn login_page(auth: Auth, Query(q): Query<LoginQuery>) -> Response {
             error: None,
             info,
             username: String::new(),
+            sso: st.oidc.as_ref().map(|o| o.label().to_owned()),
         },
     )
 }
@@ -188,6 +196,7 @@ async fn login(
                 error: Some(error),
                 info: None,
                 username: username.clone(),
+                sso: st.oidc.as_ref().map(|o| o.label().to_owned()),
             },
         )
     };
@@ -213,21 +222,41 @@ async fn login(
             return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
         }
     };
-    // Fresh session id on every login (no fixation); drop any old one.
+    match begin_session(&st, auth, &user, &req_parts, "UI").await {
+        Ok((cookie, to)) => ([(header::SET_COOKIE, cookie)], Redirect::to(to)).into_response(),
+        Err(r) => r,
+    }
+}
+
+/// Create a fresh session (no fixation), audit the login, and return the cookie and landing page.
+pub(crate) async fn begin_session(
+    st: &AppState,
+    auth: Auth,
+    user: &User,
+    info: &RequestInfo,
+    transport: &'static str,
+) -> Result<(String, &'static str), Response> {
     if let Some((old, _)) = auth.0 {
         let _ = st.db.delete_session_by_hash(&old.id_hash).await;
     }
-    let ua = req_parts.user_agent.as_deref();
-    let ip_s = ip.to_string();
+    let ip_s = info.ip.to_string();
     let (raw, _) = match st
         .db
-        .create_session(&user.id, st.cfg.session_max_ms(), Some(&ip_s), ua)
+        .create_session(
+            &user.id,
+            st.cfg.session_max_ms(),
+            Some(&ip_s),
+            info.user_agent.as_deref(),
+        )
         .await
     {
         Ok(s) => s,
         Err(e) => {
             tracing::error!(error = %e, "session create failed");
-            return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+            return Err(error_page(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Service unavailable.",
+            ));
         }
     };
     let _ = st.db.touch_login(&user.id).await;
@@ -236,20 +265,22 @@ async fn login(
             username: Some(user.username.clone()),
             action: "LOGIN",
             outcome: "OK",
-            transport: Some("UI"),
-            ip: Some(ip.to_string()),
-            user_agent: req_parts.user_agent.clone(),
+            transport: Some(transport),
+            ip: Some(ip_s),
+            user_agent: info.user_agent.clone(),
             ..Default::default()
         })
         .await;
-    tracing::info!(event = "auth.login", user = %user.username, ip = %ip, "signed in");
+    tracing::info!(event = "auth.login", user = %user.username, ip = %info.ip, transport, "signed in");
     let to = if user.must_change_password {
         "/account/password"
     } else {
         "/dashboard"
     };
-    let cookie = set_cookie(&raw, st.cfg.session_max_ms() / 1000, st.cfg.cookie_secure);
-    ([(header::SET_COOKIE, cookie)], Redirect::to(to)).into_response()
+    Ok((
+        set_cookie(&raw, st.cfg.session_max_ms() / 1000, st.cfg.cookie_secure),
+        to,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -268,6 +299,16 @@ async fn logout(State(st): State<Arc<AppState>>, auth: Auth, Form(f): Form<CsrfO
         }
         let _ = st.db.delete_session_by_hash(&s.id_hash).await;
         tracing::info!(event = "auth.logout", user = %u.username, "signed out");
+        if u.is_external()
+            && let Some(o) = &st.oidc
+            && let Some(url) = o.logout_url().await
+        {
+            return (
+                [(header::SET_COOKIE, clear_cookie(st.cfg.cookie_secure))],
+                Redirect::to(&url),
+            )
+                .into_response();
+        }
     }
     (
         [(header::SET_COOKIE, clear_cookie(st.cfg.cookie_secure))],
@@ -290,12 +331,15 @@ async fn password_page(auth: Auth) -> Response {
     let Some((s, u)) = auth.0 else {
         return Redirect::to("/login").into_response();
     };
+    let error = u
+        .is_external()
+        .then(|| "Your password is managed by your sign-in provider.".to_owned());
     render(
         StatusCode::OK,
         &PasswordPage {
             csrf: s.csrf_token,
             must_change: u.must_change_password,
-            error: None,
+            error,
         },
     )
 }

@@ -292,14 +292,46 @@ impl Target {
 }
 
 fn tls() -> rustls::ClientConfig {
-    let roots = rustls::RootCertStore {
+    client_tls(None).unwrap_or_else(|_| client_tls_roots(webpki_roots_store()))
+}
+
+fn webpki_roots_store() -> rustls::RootCertStore {
+    rustls::RootCertStore {
         roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-    };
+    }
+}
+
+fn client_tls_roots(roots: rustls::RootCertStore) -> rustls::ClientConfig {
     rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
         .with_safe_default_protocol_versions()
         .expect("ring supports the default TLS versions")
         .with_root_certificates(roots)
         .with_no_client_auth()
+}
+
+/// Client TLS with the public web roots plus an optional PEM bundle.
+pub(crate) fn client_tls(
+    extra_ca: Option<&std::path::Path>,
+) -> anyhow::Result<rustls::ClientConfig> {
+    use rustls::pki_types::CertificateDer;
+    use rustls::pki_types::pem::PemObject;
+    let mut roots = webpki_roots_store();
+    if let Some(p) = extra_ca {
+        let mut n = 0;
+        for c in CertificateDer::pem_file_iter(p)
+            .map_err(|e| anyhow::anyhow!("cannot read CA file {}: {e}", p.display()))?
+        {
+            let c = c.map_err(|e| anyhow::anyhow!("bad certificate in {}: {e}", p.display()))?;
+            roots
+                .add(c)
+                .map_err(|e| anyhow::anyhow!("bad certificate in {}: {e}", p.display()))?;
+            n += 1;
+        }
+        if n == 0 {
+            anyhow::bail!("no certificates in {}", p.display());
+        }
+    }
+    Ok(client_tls_roots(roots))
 }
 
 fn clip(s: &str, n: usize) -> String {

@@ -19,6 +19,16 @@ pub struct User {
     pub last_login_at: Option<i64>,
 }
 
+/// Stored instead of a hash for SSO users; it never verifies.
+pub const NO_PASSWORD: &str = "!";
+
+impl User {
+    /// Signs in through an external provider and has no local password.
+    pub fn is_external(&self) -> bool {
+        self.password_hash == NO_PASSWORD
+    }
+}
+
 fn from_row(r: &AnyRow) -> Result<User, DbError> {
     let role: String = r.try_get("role")?;
     Ok(User {

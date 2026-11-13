@@ -6,6 +6,7 @@
 
 pub mod audit;
 pub mod endpoints;
+pub mod identities;
 pub mod jobs;
 pub mod schedules;
 pub mod sessions;

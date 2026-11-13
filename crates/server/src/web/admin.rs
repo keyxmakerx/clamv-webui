@@ -51,6 +51,7 @@ struct UserView {
     role: Role,
     enabled: bool,
     must_change: bool,
+    sso: bool,
     last_login: String,
     is_self: bool,
 }
@@ -88,6 +89,7 @@ async fn show_users(st: &AppState, nav: Nav, me: &User) -> Response {
             role: x.role,
             enabled: x.enabled,
             must_change: x.must_change_password,
+            sso: x.password_hash == crate::db::users::NO_PASSWORD,
             last_login: x.last_login_at.map_or_else(|| "never".to_owned(), fmt_ts),
         })
         .collect();
@@ -283,6 +285,16 @@ async fn reset_password(
     let Ok(Some(target)) = st.db.user_by_id(&id).await else {
         return users_result(&st, &s, &me, Some("No such user.".into()), None).await;
     };
+    if target.is_external() {
+        return users_result(
+            &st,
+            &s,
+            &me,
+            Some("This user signs in through SSO and has no password here.".into()),
+            None,
+        )
+        .await;
+    }
     let hash = match password::hash(&f.password) {
         Ok(h) => h,
         Err(e) => return users_result(&st, &s, &me, Some(e.to_string()), None).await,

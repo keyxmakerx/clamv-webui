@@ -428,3 +428,41 @@ async fn schedules_claim_once() {
         db.close().await;
     }
 }
+
+#[tokio::test]
+async fn identities_link_and_cascade() {
+    use clamv_webui::auth::Role;
+    for db in databases().await {
+        let kind = db.kind();
+        let name = format!("sso:t-{}", &new_id()[..8]);
+        let u = db
+            .create_user(
+                &name,
+                clamv_webui::db::users::NO_PASSWORD,
+                Role::Viewer,
+                false,
+            )
+            .await
+            .expect("user");
+        let principal = format!("oidc:{}", &new_id().replace('-', "")[..24]);
+        assert_eq!(
+            db.identity_user(&principal).await.expect("q"),
+            None,
+            "{kind:?}"
+        );
+        db.link_identity(&principal, &u.id, "OIDC", "https://idp", "sub-1")
+            .await
+            .expect("link");
+        assert_eq!(
+            db.identity_user(&principal).await.expect("q"),
+            Some(u.id.clone())
+        );
+        assert!(db.is_external_user(&u.id).await.expect("q"));
+        assert!(db.delete_user(&u.id).await.expect("delete"));
+        assert_eq!(
+            db.identity_user(&principal).await.expect("q"),
+            None,
+            "{kind:?} cascade"
+        );
+    }
+}

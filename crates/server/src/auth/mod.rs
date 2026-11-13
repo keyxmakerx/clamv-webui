@@ -3,6 +3,7 @@
 pub mod bootstrap;
 pub mod lockout;
 pub mod login;
+pub mod oidc;
 pub mod password;
 pub mod ratelimit;
 pub mod token;
