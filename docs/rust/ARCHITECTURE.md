@@ -54,7 +54,7 @@ Rust has no H2 driver. Supported: **SQLite (default, replaces H2), PostgreSQL, M
 
 ## Image
 
-`rust:1-bookworm` builder, `gcr.io/distroless/cc-debian12:nonroot` runtime, UID 10001 (same as the Java image). No shell, no package manager, no clamav-daemon. clamdtop needs the ncurses `clamdtop` binary, so it ships as a separate `:latest-clamdtop` variant later, if wanted.
+`rust:1-alpine` builder producing a static musl binary, `gcr.io/distroless/static-debian12:nonroot` runtime (about 23 MB), UID 10001 (same as the Java image). No shell, no package manager, no libc or OpenSSL, no clamav-daemon. clamdtop needs the ncurses `clamdtop` binary, so it ships as a separate `:latest-clamdtop` variant later, if wanted.
 
 ## Agents (after parity)
 
