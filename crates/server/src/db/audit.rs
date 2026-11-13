@@ -12,7 +12,7 @@ pub struct AuditEntry {
     pub details: Option<String>,
     pub job_id: Option<String>,
     pub transport: Option<&'static str>,
-    pub endpoint_id: Option<String>,
+    pub endpoint_id: Option<i64>,
     pub ip: Option<String>,
     pub user_agent: Option<String>,
 }

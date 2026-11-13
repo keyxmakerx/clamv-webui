@@ -1,7 +1,7 @@
 -- Initial schema. Portable types only: ids are UUIDv7 text, times are unix milliseconds, booleans are 0/1.
 
 CREATE TABLE endpoints (
-    id VARCHAR(36) PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     name VARCHAR(64) NOT NULL,
     address VARCHAR(512) NOT NULL,
     enabled BIGINT NOT NULL,
@@ -37,7 +37,7 @@ CREATE INDEX idx_sessions_user ON sessions(user_id);
 CREATE INDEX idx_sessions_expires ON sessions(expires_at);
 
 CREATE TABLE api_tokens (
-    id VARCHAR(36) PRIMARY KEY,
+    id BIGINT PRIMARY KEY,
     label VARCHAR(100) NOT NULL,
     token_hash VARCHAR(64) NOT NULL,
     prefix VARCHAR(16) NOT NULL,
@@ -61,7 +61,7 @@ CREATE TABLE audit_events (
     details TEXT,
     job_id VARCHAR(36),
     transport VARCHAR(32),
-    endpoint_id VARCHAR(36),
+    endpoint_id BIGINT,
     ip VARCHAR(64),
     user_agent VARCHAR(255)
 );
@@ -74,7 +74,7 @@ CREATE TABLE scan_schedules (
     cron VARCHAR(128) NOT NULL,
     paths_json TEXT NOT NULL,
     exclusions_json TEXT NOT NULL,
-    endpoint_id VARCHAR(36),
+    endpoint_id BIGINT,
     enabled BIGINT NOT NULL,
     window_start_min BIGINT,
     window_end_min BIGINT,
@@ -96,7 +96,7 @@ CREATE TABLE scan_jobs (
     target TEXT NOT NULL,
     sha256 VARCHAR(64),
     size_bytes BIGINT,
-    endpoint_id VARCHAR(36),
+    endpoint_id BIGINT,
     schedule_id VARCHAR(36),
     submitted_by VARCHAR(64),
     transport VARCHAR(32),
@@ -106,6 +106,7 @@ CREATE TABLE scan_jobs (
     files_scanned BIGINT NOT NULL,
     detections_json TEXT,
     error_message TEXT,
+    errors_json TEXT,
     quarantine_path TEXT,
     CONSTRAINT fk_jobs_endpoint FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE SET NULL,
     CONSTRAINT fk_jobs_schedule FOREIGN KEY (schedule_id) REFERENCES scan_schedules(id) ON DELETE SET NULL
@@ -117,7 +118,7 @@ CREATE INDEX idx_jobs_schedule ON scan_jobs(schedule_id);
 CREATE TABLE watched_directories (
     id VARCHAR(36) PRIMARY KEY,
     path TEXT NOT NULL,
-    endpoint_id VARCHAR(36),
+    endpoint_id BIGINT,
     enabled BIGINT NOT NULL,
     created_at BIGINT NOT NULL,
     CONSTRAINT fk_watch_endpoint FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE SET NULL

@@ -40,7 +40,7 @@ pub enum Status {
 }
 
 pub struct EndpointView {
-    pub id: String,
+    pub id: i64,
     pub name: String,
     pub address: String,
     pub enabled: bool,
@@ -318,7 +318,11 @@ async fn target(
     id: &str,
 ) -> Result<(Session, User, Endpoint), Response> {
     let (s, me) = admin_post(auth, csrf)?;
-    match st.db.endpoint(id).await {
+    let found = match id.parse::<i64>() {
+        Ok(n) => st.db.endpoint(n).await,
+        Err(_) => Ok(None),
+    };
+    match found {
         Ok(Some(e)) => Ok((s, me, e)),
         _ => Err(result(st, &s, &me, Some("No such endpoint.".into()), None).await),
     }
@@ -335,7 +339,7 @@ async fn make_default(
         Ok(x) => x,
         Err(r) => return r,
     };
-    if st.db.set_default_endpoint(&e.id).await.is_err() {
+    if st.db.set_default_endpoint(e.id).await.is_err() {
         return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
     }
     audit(&st, &me, &info, "ENDPOINT_DEFAULT", e.name.clone()).await;
@@ -371,7 +375,7 @@ async fn toggle(
         .await;
     }
     let enabled = f.enabled.is_some();
-    if st.db.set_endpoint_enabled(&e.id, enabled).await.is_err() {
+    if st.db.set_endpoint_enabled(e.id, enabled).await.is_err() {
         return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
     }
     audit(
@@ -397,7 +401,7 @@ async fn delete(
         Ok(x) => x,
         Err(r) => return r,
     };
-    match st.db.delete_endpoint(&e.id).await {
+    match st.db.delete_endpoint(e.id).await {
         Ok(true) => {
             audit(
                 &st,

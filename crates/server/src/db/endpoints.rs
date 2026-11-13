@@ -3,11 +3,11 @@
 use sqlx::Row;
 use sqlx::any::AnyRow;
 
-use super::{Db, DbError, new_id, now_ms};
+use super::{Db, DbError, now_ms};
 
 #[derive(Debug, Clone)]
 pub struct Endpoint {
-    pub id: String,
+    pub id: i64,
     pub name: String,
     pub address: String,
     pub enabled: bool,
@@ -40,7 +40,7 @@ impl Db {
         rows.iter().map(from_row).collect()
     }
 
-    pub async fn endpoint(&self, id: &str) -> Result<Option<Endpoint>, DbError> {
+    pub async fn endpoint(&self, id: i64) -> Result<Option<Endpoint>, DbError> {
         let row = sqlx::query(
             self.sql("SELECT id, name, address, enabled, is_default FROM endpoints WHERE id = ?"),
         )
@@ -76,8 +76,13 @@ impl Db {
                 .execute(&mut *tx)
                 .await?;
         }
+        // Integer ids keep /api/v1 compatible with clamctl.
+        let id: i64 =
+            sqlx::query_scalar(self.sql("SELECT COALESCE(MAX(id), 0) + 1 FROM endpoints"))
+                .fetch_one(&mut *tx)
+                .await?;
         let e = Endpoint {
-            id: new_id(),
+            id,
             name: name.to_owned(),
             address: address.to_owned(),
             enabled: true,
@@ -86,7 +91,7 @@ impl Db {
         sqlx::query(self.sql(
             "INSERT INTO endpoints (id, name, address, enabled, is_default, created_at) VALUES (?, ?, ?, 1, ?, ?)",
         ))
-        .bind(&e.id)
+        .bind(e.id)
         .bind(&e.name)
         .bind(&e.address)
         .bind(i64::from(is_default))
@@ -97,7 +102,7 @@ impl Db {
         Ok(e)
     }
 
-    pub async fn set_default_endpoint(&self, id: &str) -> Result<(), DbError> {
+    pub async fn set_default_endpoint(&self, id: i64) -> Result<(), DbError> {
         let mut tx = self.pool().begin().await?;
         sqlx::query(self.sql("UPDATE endpoints SET is_default = 0"))
             .execute(&mut *tx)
@@ -110,7 +115,7 @@ impl Db {
         Ok(())
     }
 
-    pub async fn set_endpoint_enabled(&self, id: &str, enabled: bool) -> Result<(), DbError> {
+    pub async fn set_endpoint_enabled(&self, id: i64, enabled: bool) -> Result<(), DbError> {
         sqlx::query(self.sql("UPDATE endpoints SET enabled = ? WHERE id = ? AND is_default = 0"))
             .bind(i64::from(enabled))
             .bind(id)
@@ -120,7 +125,7 @@ impl Db {
     }
 
     /// The default endpoint cannot be deleted; pick another default first.
-    pub async fn delete_endpoint(&self, id: &str) -> Result<bool, DbError> {
+    pub async fn delete_endpoint(&self, id: i64) -> Result<bool, DbError> {
         let r = sqlx::query(self.sql("DELETE FROM endpoints WHERE id = ? AND is_default = 0"))
             .bind(id)
             .execute(self.pool())

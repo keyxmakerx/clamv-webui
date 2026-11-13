@@ -64,12 +64,12 @@ async fn migrations_are_idempotent_and_settings_upsert() {
 async fn portable_types_decode_everywhere() {
     for db in databases().await {
         let kind = db.kind();
-        let id = new_id();
         let now = now_ms();
+        let id = now;
         sqlx::query(db.sql(
             "INSERT INTO endpoints (id, name, address, enabled, is_default, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         ))
-        .bind(&id)
+        .bind(id)
         .bind(format!("ep-{id}"))
         .bind("tcp://clamav:3310")
         .bind(1_i64)
@@ -80,7 +80,7 @@ async fn portable_types_decode_everywhere() {
         .expect("insert");
         let (enabled, created): (i64, i64) =
             sqlx::query_as(db.sql("SELECT enabled, created_at FROM endpoints WHERE id = ?"))
-                .bind(&id)
+                .bind(id)
                 .fetch_one(db.pool())
                 .await
                 .unwrap_or_else(|e| panic!("{kind:?}: {e}"));
@@ -237,16 +237,16 @@ async fn endpoints_keep_one_default() {
         let list = db.list_endpoints().await.expect("list");
         assert_eq!(list.iter().filter(|e| e.is_default).count(), 1, "{kind:?}");
         assert!(
-            !db.delete_endpoint(&b.id).await.expect("del default"),
+            !db.delete_endpoint(b.id).await.expect("del default"),
             "{kind:?}: default deleted"
         );
-        db.set_default_endpoint(&a.id).await.expect("set");
+        db.set_default_endpoint(a.id).await.expect("set");
         assert_eq!(
             db.default_endpoint().await.expect("q").map(|e| e.id),
-            Some(a.id.clone()),
+            Some(a.id),
             "{kind:?}"
         );
-        assert!(db.delete_endpoint(&b.id).await.expect("del"));
+        assert!(db.delete_endpoint(b.id).await.expect("del"));
         db.close().await;
     }
 }
