@@ -78,7 +78,7 @@ job_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["jobIds"][0])'
 echo "Queued EICAR scan job: $job_id"
 for attempt in $(seq 1 90); do
   result="$(curl -fsS --max-time 10 -b "$cookie_file" "$BASE_URL/api/jobs/$job_id")"
-  if python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("verdict")=="VIRUS_FOUND" and "eicar" in str(d.get("foundVirusesJson", "")).lower() else 1)' <<< "$result"; then
+  if python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("verdict")=="VIRUS_FOUND" and "eicar" in str(d.get("signatures") or "").lower() else 1)' <<< "$result"; then
     echo 'PASS: EICAR detected and persisted with its signature.'
     curl -fsS -b "$cookie_file" "$BASE_URL/admin/audit" | grep -q 'SCAN_UPLOAD' || { echo 'Audit event not visible' >&2; exit 1; }
     echo 'PASS: SCAN_UPLOAD audit entry visible in admin UI.'

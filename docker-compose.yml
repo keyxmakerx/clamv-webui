@@ -6,7 +6,7 @@ services:
     pull_policy: build
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.java  # Java build until the Rust port reaches parity
       pull: false
 
     container_name: clamav-web-client
