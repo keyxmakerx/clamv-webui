@@ -290,6 +290,7 @@ async fn route_table_by_role() {
         ("/admin/endpoints", Role::Admin),
         ("/scan", Role::Operator),
         ("/jobs", Role::Operator),
+        ("/admin/api-tokens", Role::Admin),
     ];
     let posts: &[(&str, Role)] = &[
         ("/admin/users", Role::Admin),
@@ -303,6 +304,8 @@ async fn route_table_by_role() {
         ("/admin/endpoints/x/test", Role::Admin),
         ("/scan/path", Role::Operator),
         ("/scan/upload", Role::Operator),
+        ("/admin/api-tokens", Role::Admin),
+        ("/admin/api-tokens/x/revoke", Role::Admin),
     ];
     for role in [Role::Viewer, Role::Operator, Role::Admin] {
         let h = password::hash(&clamv_webui::auth::token::random_secret()).expect("hash");
@@ -467,4 +470,54 @@ async fn endpoints_are_validated_and_allowlisted() {
         .expect("res");
     let html = body(res).await;
     assert!(html.contains("unreachable") && html.contains("no response"));
+}
+
+#[tokio::test]
+async fn admin_issues_and_revokes_tokens() {
+    let (app, st) = app().await;
+    let (c, t) = admin_cookie(&st).await;
+    let res = app
+        .clone()
+        .oneshot(form(
+            "/admin/api-tokens",
+            &format!("_csrf={t}&label=ci&scope=jobs%3Aread&scope=health%3Aread&days=30"),
+            Some(&c),
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::OK);
+    let html = body(res).await;
+    assert!(html.contains("New token secret") && html.contains("cvw_"));
+    let list = st.db.list_tokens().await.expect("list");
+    assert_eq!(
+        list[0].scopes,
+        vec!["jobs:read".to_owned(), "health:read".to_owned()]
+    );
+    assert!(list[0].expires_at.is_some());
+    let res = app
+        .clone()
+        .oneshot(get("/admin/api-tokens", Some(&c)))
+        .await
+        .expect("res");
+    assert!(!body(res).await.contains("New token secret"), "shown once");
+    let res = app
+        .clone()
+        .oneshot(form(
+            "/admin/api-tokens",
+            &format!("_csrf={t}&label=bad&scope=root"),
+            Some(&c),
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let res = app
+        .clone()
+        .oneshot(form(
+            &format!("/admin/api-tokens/{}/revoke", list[0].id),
+            &format!("_csrf={t}"),
+            Some(&c),
+        ))
+        .await
+        .expect("res");
+    assert!(body(res).await.contains("Token revoked."));
 }

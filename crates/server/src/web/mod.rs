@@ -5,6 +5,7 @@ pub mod csrf;
 pub mod endpoints;
 pub mod scan;
 pub mod session;
+pub mod tokens;
 
 use endpoints::Status;
 
@@ -42,6 +43,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(admin::routes())
         .merge(endpoints::routes())
         .merge(scan::routes())
+        .merge(tokens::routes())
         .route("/{*path}", get(asset))
 }
 
