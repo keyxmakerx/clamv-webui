@@ -13,7 +13,6 @@
 <dt class="col-sm-3">Submitted</dt><dd class="col-sm-9">{{ j.submitted }} by {{ j.submitted_by }}</dd>
 {% if !started.is_empty() %}<dt class="col-sm-3">Started</dt><dd class="col-sm-9">{{ started }}</dd>{% endif %}
 {% if !finished.is_empty() %}<dt class="col-sm-3">Finished</dt><dd class="col-sm-9">{{ finished }} ({{ j.duration }})</dd>{% endif %}
-{% if !finished.is_empty() %}<dt class="col-sm-3">Results</dt><dd class="col-sm-9">{{ files }} result line(s) from clamd; a clean folder reports one</dd>{% endif %}
 {% if !size.is_empty() %}<dt class="col-sm-3">Size</dt><dd class="col-sm-9">{{ size }}</dd>{% endif %}
 {% if !sha256.is_empty() %}<dt class="col-sm-3">SHA-256</dt><dd class="col-sm-9"><code class="text-break">{{ sha256 }}</code></dd>{% endif %}
 {% if !error_code.is_empty() %}<dt class="col-sm-3">Error code</dt><dd class="col-sm-9"><code>{{ error_code }}</code></dd>{% endif %}

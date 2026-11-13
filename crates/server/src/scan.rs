@@ -131,10 +131,10 @@ pub async fn finish(st: &AppState, job: &Job, endpoint: Option<&Endpoint>, o: Ou
     }
     match o.error_code {
         Some(code) if o.detections.is_empty() && o.errors.is_empty() => {
-            tracing::error!(event = "scan.failed", job_id = %job.id, kind = %job.kind, endpoint = ep, target = %job.target, code, reason = o.error_message.as_deref().unwrap_or(""), "scan failed");
+            tracing::error!(event = "scan.failed", job_id = %job.id, kind = %job.kind, endpoint = ep, scan_target = %job.target, code, reason = o.error_message.as_deref().unwrap_or(""), "scan failed");
         }
         _ => {
-            tracing::info!(event = "scan.finished", job_id = %job.id, kind = %job.kind, endpoint = ep, target = %job.target, verdict = o.verdict, files = o.files_scanned, detections = o.detections.len(), errors = o.errors.len(), "scan finished");
+            tracing::info!(event = "scan.finished", job_id = %job.id, kind = %job.kind, endpoint = ep, scan_target = %job.target, verdict = o.verdict, files = o.files_scanned, detections = o.detections.len(), errors = o.errors.len(), "scan finished");
         }
     }
     if let Err(e) = st.db.finish_job(&job.id, &o).await {
