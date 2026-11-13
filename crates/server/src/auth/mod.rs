@@ -1,6 +1,8 @@
 //! Authentication and authorisation primitives.
 
 pub mod bootstrap;
+pub mod external;
+pub mod ldap;
 pub mod lockout;
 pub mod login;
 pub mod oidc;

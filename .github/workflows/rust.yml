@@ -57,6 +57,28 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - run: cargo test --locked -p clamv-webui --test db
 
+  ldap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Start OpenLDAP with TLS
+        run: |
+          docker run -d --name ldap --hostname localhost -p 13389:389 -p 13636:636 \
+            -e LDAP_DOMAIN=lan.test -e LDAP_ADMIN_PASSWORD=adminpw -e LDAP_TLS_VERIFY_CLIENT=never \
+            osixia/openldap:1.5.0
+          for i in $(seq 60); do docker exec ldap ldapsearch -x -H ldap://localhost -D cn=admin,dc=lan,dc=test -w adminpw -b dc=lan,dc=test -s base >/dev/null 2>&1 && break; sleep 2; done
+          docker cp crates/server/tests/fixtures/ldap-seed.ldif ldap:/tmp/seed.ldif
+          docker exec ldap ldapadd -x -H ldap://localhost -D cn=admin,dc=lan,dc=test -w adminpw -f /tmp/seed.ldif
+          docker exec ldap cat /container/service/:ssl-tools/assets/default-ca/default-ca.pem > "$RUNNER_TEMP/ldap-ca.pem"
+      - run: cargo test --locked -p clamv-webui --test ldap -- --nocapture
+        env:
+          TEST_LDAP_CA: ${{ runner.temp }}/ldap-ca.pem
+
   deny:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -67,7 +89,7 @@ jobs:
           command: check advisories bans licenses sources
 
   image:
-    needs: [check, db, deny]
+    needs: [check, db, ldap, deny]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:

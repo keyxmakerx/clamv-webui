@@ -241,6 +241,74 @@ pub struct Config {
     )]
     pub oidc_provider_logout: bool,
 
+    /// Directory URL, ldaps://host:636 (or ldap:// with LDAP_STARTTLS). Enables directory sign-in.
+    #[arg(long, env = "LDAP_URL", global = true)]
+    pub ldap_url: Option<String>,
+
+    /// Upgrade an ldap:// connection with StartTLS. Plain LDAP is never used.
+    #[arg(long, env = "LDAP_STARTTLS", default_value_t = false, global = true)]
+    pub ldap_starttls: bool,
+
+    /// Service account DN used to find users.
+    #[arg(long, env = "LDAP_BIND_DN", global = true)]
+    pub ldap_bind_dn: Option<String>,
+
+    /// Service account password.
+    #[arg(
+        long,
+        env = "LDAP_BIND_PASSWORD",
+        hide_env_values = true,
+        global = true
+    )]
+    pub ldap_bind_password: Option<String>,
+
+    /// File holding the service account password (Docker secret). Wins over LDAP_BIND_PASSWORD.
+    #[arg(long, env = "LDAP_BIND_PASSWORD_FILE", global = true)]
+    pub ldap_bind_password_file: Option<std::path::PathBuf>,
+
+    /// Search base for users.
+    #[arg(long, env = "LDAP_USER_BASE", global = true)]
+    pub ldap_user_base: Option<String>,
+
+    /// User filter; {username} is replaced with the escaped login name.
+    #[arg(
+        long,
+        env = "LDAP_USER_FILTER",
+        default_value = "(&(objectClass=person)(uid={username}))",
+        global = true
+    )]
+    pub ldap_user_filter: String,
+
+    /// Attribute on the user entry that lists groups.
+    #[arg(
+        long,
+        env = "LDAP_GROUP_ATTRIBUTE",
+        default_value = "memberOf",
+        global = true
+    )]
+    pub ldap_group_attribute: String,
+
+    /// Comma-separated group names or DNs that get the admin role.
+    #[arg(long, env = "LDAP_ADMIN_GROUPS", value_delimiter = ',', global = true)]
+    pub ldap_admin_groups: Vec<String>,
+
+    /// Comma-separated group names or DNs that get the operator role.
+    #[arg(
+        long,
+        env = "LDAP_OPERATOR_GROUPS",
+        value_delimiter = ',',
+        global = true
+    )]
+    pub ldap_operator_groups: Vec<String>,
+
+    /// Comma-separated group names or DNs that get the viewer role.
+    #[arg(long, env = "LDAP_VIEWER_GROUPS", value_delimiter = ',', global = true)]
+    pub ldap_viewer_groups: Vec<String>,
+
+    /// Extra PEM CA bundle for the directory's certificate.
+    #[arg(long, env = "LDAP_CA_FILE", global = true)]
+    pub ldap_ca_file: Option<std::path::PathBuf>,
+
     /// Files accepted in one upload request.
     #[arg(long, env = "UPLOAD_MAX_FILES", default_value_t = 10, global = true)]
     pub upload_max_files: usize,

@@ -13,9 +13,9 @@ use subtle::ConstantTimeEq;
 use super::session::Auth;
 use super::{LoginPage, RequestInfo, render};
 use crate::app::AppState;
-use crate::auth::oidc::{CALLBACK_PATH, Identity};
+use crate::auth::external::ProvisionError;
+use crate::auth::oidc::CALLBACK_PATH;
 use crate::db::audit::AuditEntry;
-use crate::db::users::User;
 
 const STATE_COOKIE: &str = "clamv_oidc";
 
@@ -41,6 +41,8 @@ fn login_error(st: &AppState, status: StatusCode, msg: &'static str) -> Response
             info: None,
             username: String::new(),
             sso: st.oidc.as_ref().map(|o| o.label().to_owned()),
+            ldap: st.ldap.is_some(),
+            source: String::new(),
         },
     );
     if let Ok(v) = state_cookie("", 0, st.cfg.cookie_secure).parse() {
@@ -108,85 +110,6 @@ async fn deny(st: &AppState, info: &RequestInfo, who: &str, reason: &str) {
         .await;
 }
 
-/// A local name for display and audit: `sso:` plus the provider's name, made unique.
-async fn free_username(st: &AppState, name: &str) -> Option<String> {
-    let base: String = name
-        .chars()
-        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-' | '@'))
-        .take(48)
-        .collect();
-    let base = if base.is_empty() {
-        "user".to_owned()
-    } else {
-        base
-    };
-    for i in 1..100 {
-        let candidate = if i == 1 {
-            format!("sso:{base}")
-        } else {
-            format!("sso:{base}-{i}")
-        };
-        if matches!(st.db.user_by_username(&candidate).await, Ok(None)) {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-async fn local_user(
-    st: &AppState,
-    id: &Identity,
-    role: crate::auth::Role,
-) -> Result<User, &'static str> {
-    let principal = id.principal();
-    let existing = st
-        .db
-        .identity_user(&principal)
-        .await
-        .map_err(|_| "database")?;
-    if let Some(uid) = existing {
-        let u = st
-            .db
-            .user_by_id(&uid)
-            .await
-            .map_err(|_| "database")?
-            .ok_or("database")?;
-        if !u.enabled {
-            return Err("account disabled");
-        }
-        // Groups decide the role on every sign-in; a change also ends old sessions.
-        if u.role != role {
-            st.db
-                .set_role_enabled(&u.id, role, true)
-                .await
-                .map_err(|_| "database")?;
-            tracing::info!(event = "auth.role_changed", user = %u.username, role = %role, "role updated from SSO groups");
-            return st
-                .db
-                .user_by_id(&uid)
-                .await
-                .map_err(|_| "database")?
-                .ok_or("database");
-        }
-        return Ok(u);
-    }
-    let name = free_username(st, &id.name)
-        .await
-        .ok_or("no free username")?;
-    // "!" is not a valid hash, so the account can never sign in with a password.
-    let u = st
-        .db
-        .create_user(&name, crate::db::users::NO_PASSWORD, role, false)
-        .await
-        .map_err(|_| "database")?;
-    st.db
-        .link_identity(&principal, &u.id, "OIDC", &id.issuer, &id.subject)
-        .await
-        .map_err(|_| "database")?;
-    tracing::info!(event = "auth.user_provisioned", user = %u.username, role = %role, "SSO user created");
-    Ok(u)
-}
-
 async fn callback(
     State(st): State<Arc<AppState>>,
     auth: Auth,
@@ -236,18 +159,14 @@ async fn callback(
             "Your account is not in a group that may use this app.",
         );
     };
-    let user = match local_user(&st, &id, role).await {
+    let user = match crate::auth::external::provision(&st, &id, role).await {
         Ok(u) => u,
-        Err("account disabled") => {
+        Err(ProvisionError::Disabled) => {
             deny(&st, &info, &id.name, "account disabled").await;
             return login_error(&st, StatusCode::FORBIDDEN, "Your account is disabled here.");
         }
-        Err(e) => {
-            tracing::error!(
-                event = "oidc.failed",
-                error = e,
-                "could not record SSO user"
-            );
+        Err(ProvisionError::Unavailable) => {
+            tracing::error!(event = "oidc.failed", "could not record SSO user");
             return login_error(&st, StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
         }
     };

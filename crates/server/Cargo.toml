@@ -37,6 +37,7 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls-no-p
 webpki-roots = "1"
 url = "2"
 ring = "0.17"
+ldap3 = { version = "0.12", default-features = false, features = ["tls-rustls-ring"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

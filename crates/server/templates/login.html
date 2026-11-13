@@ -9,6 +9,8 @@
 {% if let Some(msg) = error %}<div class="alert alert-danger" role="alert">{{ msg }}</div>{% endif %}
 {% if let Some(msg) = info %}<div class="alert alert-info" role="status">{{ msg }}</div>{% endif %}
 <form method="post" action="/login">
+{% if ldap %}<label for="source" class="form-label">Account</label>
+<select class="form-select mb-3" name="source" id="source"><option value="">Local account</option><option value="ldap"{% if source == "ldap" %} selected{% endif %}>Directory (LDAP)</option></select>{% endif %}
 <label for="username" class="form-label">Username</label>
 <input class="form-control" required autofocus name="username" id="username" autocomplete="username" maxlength="64" value="{{ username }}">
 <label for="password" class="form-label mt-3">Password</label>

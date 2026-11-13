@@ -16,6 +16,7 @@ services:
       # METRICS_TOKEN_FILE: /run/secrets/metrics_token  # enables /metrics for Prometheus
       # OIDC_ISSUER: https://auth.example.lan  # SSO; also set OIDC_CLIENT_ID, OIDC_CLIENT_SECRET_FILE, OIDC_REDIRECT_URI
       # OIDC_ADMIN_GROUPS: clamav-admins  # nobody without a listed group can sign in via SSO
+      # LDAP_URL: ldaps://dc.example.lan  # directory sign-in; also LDAP_BIND_DN, LDAP_BIND_PASSWORD_FILE, LDAP_USER_BASE, LDAP_ADMIN_GROUPS
     ports:
       - "8080:8080"  # bind to the mesh IP in production, e.g. 100.82.x.y:8080:8080
     networks:

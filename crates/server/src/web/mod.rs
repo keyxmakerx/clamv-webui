@@ -139,6 +139,8 @@ pub(crate) struct LoginPage {
     pub info: Option<&'static str>,
     pub username: String,
     pub sso: Option<String>,
+    pub ldap: bool,
+    pub source: String,
 }
 
 #[derive(Deserialize)]
@@ -169,6 +171,8 @@ async fn login_page(
             info,
             username: String::new(),
             sso: st.oidc.as_ref().map(|o| o.label().to_owned()),
+            ldap: st.ldap.is_some(),
+            source: String::new(),
         },
     )
 }
@@ -177,6 +181,8 @@ async fn login_page(
 struct LoginForm {
     username: String,
     password: String,
+    #[serde(default)]
+    source: String,
 }
 
 const BAD_LOGIN: &str = "Invalid username or password.";
@@ -189,6 +195,12 @@ async fn login(
 ) -> Response {
     let username: String = f.username.trim().chars().take(64).collect();
     let ip = req_parts.ip;
+    let source = if f.source == "ldap" && st.ldap.is_some() {
+        "ldap"
+    } else {
+        ""
+    }
+    .to_owned();
     let page = |status, error| {
         render(
             status,
@@ -197,9 +209,46 @@ async fn login(
                 info: None,
                 username: username.clone(),
                 sso: st.oidc.as_ref().map(|o| o.label().to_owned()),
+                ldap: st.ldap.is_some(),
+                source: source.clone(),
             },
         )
     };
+    if source == "ldap" {
+        use crate::auth::login::DirectoryFailure as D;
+        let ua = req_parts.user_agent.as_deref();
+        let user = match crate::auth::login::authenticate_ldap(&st, &username, &f.password, ip, ua)
+            .await
+        {
+            Ok(u) => u,
+            Err(D::Locked) => {
+                return page(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "Too many login attempts. Try again later.",
+                );
+            }
+            Err(D::Bad) => return page(StatusCode::UNAUTHORIZED, BAD_LOGIN),
+            Err(D::Denied) => {
+                return page(
+                    StatusCode::FORBIDDEN,
+                    "Your account is not in a group that may use this app.",
+                );
+            }
+            Err(D::Disabled) => {
+                return page(StatusCode::FORBIDDEN, "Your account is disabled here.");
+            }
+            Err(D::Unavailable) => {
+                return page(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "The directory is unavailable right now.",
+                );
+            }
+        };
+        return match begin_session(&st, auth, &user, &req_parts, "LDAP").await {
+            Ok((cookie, to)) => ([(header::SET_COOKIE, cookie)], Redirect::to(to)).into_response(),
+            Err(r) => r,
+        };
+    }
     let user = match crate::auth::login::authenticate(
         &st,
         &username,

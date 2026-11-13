@@ -14,6 +14,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::Role;
+pub use super::external::Identity;
+use super::external::groups_list;
 use crate::config::Config;
 
 pub const CALLBACK_PATH: &str = "/login/oauth2/code/clamav";
@@ -64,24 +66,6 @@ struct Pending {
     created: i64,
 }
 
-/// A verified identity from the provider.
-#[derive(Debug, Clone)]
-pub struct Identity {
-    pub issuer: String,
-    pub subject: String,
-    pub name: String,
-    pub groups: Vec<String>,
-}
-
-impl Identity {
-    /// Stable local name derived from issuer and subject, never from email or username.
-    pub fn principal(&self) -> String {
-        let d = Sha256::digest(format!("{}\0{}", self.issuer, self.subject));
-        let hex: String = d.iter().map(|b| format!("{b:02x}")).collect();
-        format!("oidc:{}", &hex[..48])
-    }
-}
-
 pub struct Oidc {
     issuer: String,
     client_id: String,
@@ -107,13 +91,6 @@ fn loopback(u: &Url) -> bool {
         Some(url::Host::Ipv6(a)) => a.is_loopback(),
         None => false,
     }
-}
-
-fn groups_list(v: &[String]) -> Vec<String> {
-    v.iter()
-        .map(|g| g.trim().to_lowercase())
-        .filter(|g| !g.is_empty())
-        .collect()
 }
 
 fn b64url(s: &str) -> Result<Vec<u8>, String> {
@@ -388,6 +365,7 @@ impl Oidc {
             .unwrap_or(&subject)
             .to_owned();
         Ok(Identity {
+            source: "OIDC",
             issuer: self.issuer.clone(),
             subject,
             name,
@@ -485,17 +463,7 @@ impl Oidc {
 
     /// The highest role any of the groups grants.
     pub fn role_for(&self, groups: &[String]) -> Option<Role> {
-        let have: Vec<String> = groups.iter().map(|g| g.trim().to_lowercase()).collect();
-        let hit = |want: &[String]| want.iter().any(|w| have.contains(w));
-        if hit(&self.admin) {
-            Some(Role::Admin)
-        } else if hit(&self.operator) {
-            Some(Role::Operator)
-        } else if hit(&self.viewer) {
-            Some(Role::Viewer)
-        } else {
-            None
-        }
+        super::external::role_for(groups, &self.admin, &self.operator, &self.viewer)
     }
 
     /// Where to send an SSO user after local sign-out, if provider logout is on.
@@ -647,6 +615,7 @@ mod tests {
     #[test]
     fn principal_is_stable_and_bounded() {
         let i = Identity {
+            source: "OIDC",
             issuer: "https://id.example".into(),
             subject: "abc".into(),
             name: "n".into(),

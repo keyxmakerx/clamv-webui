@@ -26,6 +26,7 @@ pub struct AppState {
     pub notifier: crate::webhook::Notifier,
     pub metrics: crate::metrics::Metrics,
     pub oidc: Option<crate::auth::oidc::Oidc>,
+    pub ldap: Option<crate::auth::ldap::Ldap>,
 }
 
 impl AppState {
@@ -38,6 +39,10 @@ impl AppState {
             ),
             notifier: crate::webhook::Notifier::new(&cfg),
             metrics: crate::metrics::Metrics::default(),
+            ldap: crate::auth::ldap::Ldap::from_config(&cfg).unwrap_or_else(|e| {
+                tracing::error!(event = "ldap.config_invalid", error = %e, "directory sign-in disabled");
+                None
+            }),
             oidc: crate::auth::oidc::Oidc::from_config(&cfg).unwrap_or_else(|e| {
                 tracing::error!(event = "oidc.config_invalid", error = %e, "SSO disabled");
                 None
@@ -153,6 +158,7 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     tracing::info!(database = %redact_url(&url), "database ready");
     let mut cfg = crate::settings::overlay(cfg, &db.list_settings().await.unwrap_or_default());
     crate::auth::oidc::Oidc::from_config(&cfg)?;
+    crate::auth::ldap::Ldap::from_config(&cfg)?;
     if cfg.tls_enabled() {
         cfg.cookie_secure = true;
     }
