@@ -1,0 +1,29 @@
+# UI only: joins an existing network and uses a clamd it does not own.
+services:
+  clamv-webui:
+    image: ghcr.io/keyxmakerx/clamv-webui:latest
+    container_name: clamv-webui
+    restart: unless-stopped
+    environment:
+      CLAMD_ENDPOINT: tcp://clamav:3310  # existing clamd container on the shared network
+      LOG_FORMAT: json  # one JSON object per line for fluent-bit
+    ports:
+      - "8080:8080"  # bind to the mesh IP in production, e.g. 100.82.x.y:8080:8080
+    networks:
+      - media
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./data:/app/data  # app state; owned by UID 10001
+      - /data:/data:ro
+      - /documents:/documents:ro
+      - /games:/games:ro
+
+networks:
+  media:
+    external: true

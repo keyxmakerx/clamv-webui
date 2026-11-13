@@ -22,3 +22,10 @@ cli/dist/
 .env.*
 secrets/
 certificates/
+
+# Rust image needs only the workspace.
+cli/
+docs/
+src/
+examples/
+dashboards/
