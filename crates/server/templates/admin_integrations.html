@@ -1,5 +1,15 @@
 {% extends "shell.html" %}
-{% block title %}Integrations · ClamAV Web UI{% endblock %}
+{% block title %}Integrations · ClamAV Web UI<section class="card mt-3"><div class="card-body">
+<h2 class="h5">Prometheus and Grafana</h2>
+{% if metrics %}<p>Metrics are served at <code>/metrics</code> (also <code>/actuator/prometheus</code>) with <code>Authorization: Bearer</code> and the configured <code>METRICS_TOKEN</code>.</p>
+{% else %}<p class="muted">Off. Set <code>METRICS_TOKEN</code> (or <code>METRICS_TOKEN_FILE</code>) to serve <code>/metrics</code>. Use at least 16 random characters.</p>{% endif %}
+<ul class="mb-0">
+<li><a href="/admin/integrations/files/grafana-clamav-webui.json">Grafana dashboard</a></li>
+<li><a href="/admin/integrations/files/clamav-alerts.yml">Prometheus alert rules</a></li>
+<li><a href="/admin/integrations/files/prometheus.yml.example">Prometheus scrape config example</a></li>
+</ul>
+</div></section>
+{% endblock %}
 {% block content %}
 <h1 class="h3">Integrations</h1>
 <section class="card mt-3"><div class="card-body">

@@ -141,6 +141,10 @@ pub async fn finish(st: &AppState, job: &Job, endpoint: Option<&Endpoint>, o: Ou
     if let Err(e) = st.db.finish_job(&job.id, &o).await {
         tracing::error!(event = "scan.store_failed", job_id = %job.id, error = %e, "could not store scan result");
     }
+    let secs = job
+        .started_at
+        .map(|s| (crate::db::now_ms() - s) as f64 / 1000.0);
+    st.metrics.record(job, &o, secs);
     st.notifier.notify(event("scan.finished", job, ep, &o));
 }
 

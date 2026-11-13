@@ -11,6 +11,7 @@ pub mod cron;
 pub mod db;
 pub mod healthcheck;
 pub mod logging;
+pub mod metrics;
 pub mod scan;
 pub mod schedule;
 pub mod timefmt;

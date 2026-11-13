@@ -179,6 +179,7 @@ pub async fn control(st: &AppState, s: &Schedule, ep: &Endpoint) -> bool {
     if let Err(e) = st.db.finish_job(&job.id, &outcome).await {
         tracing::error!(error = %e, "could not store EICAR control");
     }
+    st.metrics.record(&job, &outcome, None);
     if !ok {
         st.notifier.notify(scan::event(
             "eicar.control_failed",

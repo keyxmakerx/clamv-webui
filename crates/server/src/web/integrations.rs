@@ -21,6 +21,7 @@ pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/admin/integrations", get(page))
         .route("/admin/integrations/webhook/test", post(test))
+        .route("/admin/integrations/files/{name}", get(file))
 }
 
 #[derive(Template)]
@@ -31,6 +32,46 @@ struct Page {
     discord: bool,
     all: bool,
     last: Option<(String, bool, String)>,
+    metrics: bool,
+}
+
+const FILES: [(&str, &str, &str); 3] = [
+    (
+        "grafana-clamav-webui.json",
+        "application/json",
+        include_str!("../../../../dashboards/grafana-clamav-webui.json"),
+    ),
+    (
+        "clamav-alerts.yml",
+        "text/yaml; charset=utf-8",
+        include_str!("../../../../dashboards/clamav-alerts.yml"),
+    ),
+    (
+        "prometheus.yml.example",
+        "text/yaml; charset=utf-8",
+        include_str!("../../../../dashboards/prometheus.yml.example"),
+    ),
+];
+
+async fn file(auth: Auth, axum::extract::Path(name): axum::extract::Path<String>) -> Response {
+    use axum::response::IntoResponse;
+    if let Err(r) = auth.require(Role::Admin) {
+        return r;
+    }
+    match FILES.iter().find(|(n, _, _)| *n == name) {
+        Some((n, ct, body)) => (
+            [
+                (axum::http::header::CONTENT_TYPE, (*ct).to_owned()),
+                (
+                    axum::http::header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"{n}\""),
+                ),
+            ],
+            *body,
+        )
+            .into_response(),
+        None => super::error_page(StatusCode::NOT_FOUND, "Not found."),
+    }
 }
 
 fn show(st: &AppState, nav: Nav) -> Response {
@@ -48,6 +89,7 @@ fn show(st: &AppState, nav: Nav) -> Response {
             discord: n.target().is_some_and(crate::webhook::Target::is_discord),
             all: n.events() == WebhookEvents::All,
             last: n.last().map(|d| (fmt_ts(d.at), d.ok, d.detail)),
+            metrics: st.cfg.metrics_token().is_some(),
         },
     )
 }

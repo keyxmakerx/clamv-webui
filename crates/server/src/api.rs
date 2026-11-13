@@ -413,7 +413,7 @@ async fn visible_endpoint(
 }
 
 /// `ClamAV 1.4.0/27000/Thu Nov 12 09:00:00 2026` -> (version, db version, db time).
-fn split_version(v: &str) -> (String, Option<String>, Option<String>) {
+pub(crate) fn split_version(v: &str) -> (String, Option<String>, Option<String>) {
     let mut it = v.splitn(3, '/');
     let engine = it.next().unwrap_or_default().trim().to_owned();
     let db = it.next().map(|s| s.trim().to_owned());

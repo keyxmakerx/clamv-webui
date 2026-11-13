@@ -32,6 +32,7 @@ async fn fake_clamd() -> u16 {
                 }
                 let reply: Vec<u8> = match cmd.as_slice() {
                     b"zPING" => b"PONG\0".to_vec(),
+                    b"zSTATS" => b"POOLS: 1\n\nSTATE: VALID PRIMARY\nTHREADS: live 3  idle 1 max 10 idle-timeout 30\nQUEUE: 0 items\n\tSTATS 0.000025 \n\nMEMSTATS: heap N/A mmap N/A used N/A free N/A releasable N/A pools 1 pools_used 1.000M pools_total 2.000M\nEND\0".to_vec(),
                     b"zVERSION" => b"ClamAV 1.4.0/27000/Thu Nov 12 09:00:00 2026\0".to_vec(),
                     b"zINSTREAM" => {
                         let mut data = Vec::new();
@@ -580,4 +581,64 @@ async fn webhook_refuses_private_addresses() {
     let creds = Cli::try_parse_from(["clamv-webui", "--webhook-url", "https://u:p@example.com/"])
         .expect("parse");
     assert!(clamv_webui::webhook::Target::from_config(&creds.config).is_err());
+}
+
+#[tokio::test]
+async fn metrics_need_the_token_and_count_scans() {
+    let (app, st, c, t) = app(&["--metrics-token", "0123456789abcdef-test"]).await;
+    clamv_webui::metrics::spawn(st.clone());
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let scrape = |auth: Option<&str>| {
+        let mut b = Request::get("/metrics");
+        if let Some(a) = auth {
+            b = b.header(header::AUTHORIZATION, a);
+        }
+        b.body(Body::empty()).expect("req")
+    };
+    let res = app.clone().oneshot(scrape(None)).await.expect("res");
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    let res = app
+        .clone()
+        .oneshot(scrape(Some("Bearer wrong")))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    let res = app
+        .clone()
+        .oneshot(upload(&c, multipart(Some(&t), &[("eicar.com", EICAR)])))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let res = app
+        .clone()
+        .oneshot(scrape(Some("Bearer 0123456789abcdef-test")))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::OK);
+    let b = http_body_util::BodyExt::collect(res.into_body())
+        .await
+        .expect("body")
+        .to_bytes();
+    let text = String::from_utf8_lossy(&b);
+    for want in [
+        "clamav_scans_total{type=\"upload\",verdict=\"virus_found\"} 1",
+        "clamav_scans_total{type=\"path\",verdict=\"ok\"} 0",
+        "clamav_viruses_detected_total{signature=\"Eicar-Test-Signature\"} 1",
+        "clamav_scan_detections_total 1",
+        "clamav_scan_jobs_pending 0",
+        "clamav_scan_duration_seconds_count{type=\"upload\"} 1",
+        "clamav_threads_live{slot=\"0\"} 3",
+        "clamav_threads_busy{slot=\"0\"} 2",
+        "clamav_pools_used_bytes{slot=\"0\"} 1048576",
+        "clamav_clamd_endpoint_available{slot=\"0\"} 1",
+        "clamav_clamd_version_minor{slot=\"0\"} 4",
+        "clamav_database_version{slot=\"0\"} 27000",
+        "clamav_clamd_endpoint_info{slot=\"0\",endpoint=\"default\"} 1",
+    ] {
+        assert!(text.contains(want), "missing {want}\n{text}");
+    }
+    // Off unless a token is configured.
+    let (plain, _, _, _) = self::app(&[]).await;
+    let res = plain.oneshot(scrape(Some("Bearer x"))).await.expect("res");
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }

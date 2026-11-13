@@ -151,6 +151,14 @@ pub struct Config {
     )]
     pub webhook_allow_private: bool,
 
+    /// Bearer token Prometheus sends to /metrics. Without it /metrics is off.
+    #[arg(long, env = "METRICS_TOKEN", hide_env_values = true, global = true)]
+    pub metrics_token: Option<String>,
+
+    /// File holding the metrics token (Docker secret). Wins over METRICS_TOKEN.
+    #[arg(long, env = "METRICS_TOKEN_FILE", global = true)]
+    pub metrics_token_file: Option<std::path::PathBuf>,
+
     /// Files accepted in one upload request.
     #[arg(long, env = "UPLOAD_MAX_FILES", default_value_t = 10, global = true)]
     pub upload_max_files: usize,
@@ -243,6 +251,16 @@ impl Config {
             "sqlite://{}",
             self.data_dir.join("clamv-webui.db").display()
         ))
+    }
+
+    /// The scrape token, if one is configured and non-empty.
+    pub fn metrics_token(&self) -> Option<String> {
+        let raw = match &self.metrics_token_file {
+            Some(p) => std::fs::read_to_string(p).ok()?,
+            None => self.metrics_token.clone()?,
+        };
+        let t = raw.trim();
+        (!t.is_empty()).then(|| t.to_owned())
     }
 
     pub fn session_idle_ms(&self) -> i64 {

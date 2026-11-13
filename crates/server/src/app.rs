@@ -24,6 +24,7 @@ pub struct AppState {
     pub scan_rate: crate::auth::ratelimit::RateLimit,
     pub watcher: crate::watch::Watcher,
     pub notifier: crate::webhook::Notifier,
+    pub metrics: crate::metrics::Metrics,
 }
 
 impl AppState {
@@ -35,6 +36,7 @@ impl AppState {
                 std::time::Duration::from_secs(60),
             ),
             notifier: crate::webhook::Notifier::new(&cfg),
+            metrics: crate::metrics::Metrics::default(),
             cfg,
             db,
             lockout: Lockout::new(LockoutPolicy::default()),
@@ -97,6 +99,7 @@ pub fn router(state: Arc<AppState>, cfg: &Config) -> Router {
     let pages = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        .merge(crate::metrics::routes())
         .merge(crate::api::routes())
         .merge(crate::web::routes())
         .layer(tower_http::limit::RequestBodyLimitLayer::new(64 * 1024))
@@ -134,6 +137,13 @@ pub async fn serve(mut cfg: Config) -> anyhow::Result<()> {
         cfg.cookie_secure = true;
     }
     crate::webhook::Target::from_config(&cfg)?;
+    if let Some(p) = &cfg.metrics_token_file {
+        std::fs::read_to_string(p)
+            .map_err(|e| anyhow::anyhow!("cannot read METRICS_TOKEN_FILE {}: {e}", p.display()))?;
+    }
+    if cfg.metrics_token().is_some_and(|t| t.len() < 16) {
+        anyhow::bail!("METRICS_TOKEN must be at least 16 characters");
+    }
     let url = cfg.database_url()?;
     let db = Db::open(&url, cfg.database_max_connections)
         .await
@@ -152,6 +162,7 @@ pub async fn serve(mut cfg: Config) -> anyhow::Result<()> {
     crate::schedule::spawn(state.clone());
     crate::watch::spawn(state.clone());
     crate::webhook::spawn(state.clone());
+    crate::metrics::spawn(state.clone());
     let app = router(state, &cfg).into_make_service_with_connect_info::<std::net::SocketAddr>();
     let scheme = if cfg.tls_enabled() { "https" } else { "http" };
     tracing::info!(listen = %cfg.listen, scheme, clamd = %cfg.clamd_endpoint, data_dir = %cfg.data_dir.display(), version = env!("CARGO_PKG_VERSION"), "started");
