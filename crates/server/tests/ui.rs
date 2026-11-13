@@ -293,6 +293,7 @@ async fn route_table_by_role() {
         ("/admin/api-tokens", Role::Admin),
         ("/admin/schedules", Role::Admin),
         ("/admin/watch", Role::Admin),
+        ("/admin/integrations", Role::Admin),
     ];
     let posts: &[(&str, Role)] = &[
         ("/admin/users", Role::Admin),
@@ -315,6 +316,7 @@ async fn route_table_by_role() {
         ("/admin/watch", Role::Admin),
         ("/admin/watch/x/enabled", Role::Admin),
         ("/admin/watch/x/delete", Role::Admin),
+        ("/admin/integrations/webhook/test", Role::Admin),
     ];
     for role in [Role::Viewer, Role::Operator, Role::Admin] {
         let h = password::hash(&clamv_webui::auth::token::random_secret()).expect("hash");

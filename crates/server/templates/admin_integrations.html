@@ -1,0 +1,18 @@
+{% extends "shell.html" %}
+{% block title %}Integrations · ClamAV Web UI{% endblock %}
+{% block content %}
+<h1 class="h3">Integrations</h1>
+<section class="card mt-3"><div class="card-body">
+<h2 class="h5">Webhook</h2>
+{% if let Some(h) = host %}
+<dl class="row mb-2">
+<dt class="col-sm-3">Destination</dt><dd class="col-sm-9"><code>{{ h }}</code>{% if discord %} <span class="badge bg-secondary">Discord</span>{% endif %} <span class="muted small">(the full URL is kept secret)</span></dd>
+<dt class="col-sm-3">Sends</dt><dd class="col-sm-9">{% if all %}every finished scan{% else %}detections, failed scans, unscannable files and failed EICAR checks{% endif %}</dd>
+<dt class="col-sm-3">Last delivery</dt><dd class="col-sm-9">{% if let Some(l) = last %}{{ l.0 }} · {% if l.1 %}<span class="text-success">delivered</span>{% else %}<span class="text-danger">failed: {{ l.2 }}</span>{% endif %}{% else %}<span class="muted">none since start</span>{% endif %}</dd>
+</dl>
+<form method="post" action="/admin/integrations/webhook/test"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-outline-primary" type="submit">Send test message</button></form>
+{% else %}
+<p class="muted mb-0">Not configured. Set <code>WEBHOOK_URL</code> (or <code>WEBHOOK_URL_FILE</code>). Private, loopback and CGNAT addresses need <code>WEBHOOK_ALLOWED_CIDRS</code>.</p>
+{% endif %}
+</div></section>
+{% endblock %}

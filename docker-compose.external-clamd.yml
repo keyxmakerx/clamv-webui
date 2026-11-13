@@ -11,6 +11,8 @@ services:
       LOG_FORMAT: json  # one JSON object per line for fluent-bit
       # TLS_SELF_SIGNED: "true"  # HTTPS for clamctl; certificate lands in ./data/tls
       # TLS_SELF_SIGNED_NAMES: 100.82.x.y  # the mesh IP or name clients connect to
+      # WEBHOOK_URL_FILE: /run/secrets/webhook_url  # alerts by POST; Discord URLs get a chat message
+      # WEBHOOK_ALLOWED_CIDRS: 100.82.0.0/16  # needed when the receiver is on the mesh
     ports:
       - "8080:8080"  # bind to the mesh IP in production, e.g. 100.82.x.y:8080:8080
     networks:

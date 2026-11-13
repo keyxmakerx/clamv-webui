@@ -479,3 +479,105 @@ async fn watcher_queues_new_files_once() {
     );
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// A tiny HTTP server that hands every request body to the test.
+async fn hook_receiver() -> (u16, tokio::sync::mpsc::UnboundedReceiver<serde_json::Value>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = listener.accept().await {
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let mut buf = Vec::new();
+                let mut b = [0u8; 1024];
+                let (head_end, len) = loop {
+                    let Ok(n) = s.read(&mut b).await else { return };
+                    if n == 0 {
+                        return;
+                    }
+                    buf.extend_from_slice(&b[..n]);
+                    if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let head = String::from_utf8_lossy(&buf[..i]).to_ascii_lowercase();
+                        let len = head
+                            .lines()
+                            .find_map(|l| l.strip_prefix("content-length:"))
+                            .and_then(|v| v.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
+                        break (i + 4, len);
+                    }
+                };
+                while buf.len() < head_end + len {
+                    let Ok(n) = s.read(&mut b).await else { return };
+                    if n == 0 {
+                        return;
+                    }
+                    buf.extend_from_slice(&b[..n]);
+                }
+                let _ = tx.send(
+                    serde_json::from_slice(&buf[head_end..head_end + len]).unwrap_or_default(),
+                );
+                let _ = s
+                    .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    .await;
+            });
+        }
+    });
+    (port, rx)
+}
+
+#[tokio::test]
+async fn webhook_reports_alerts_only() {
+    let (port, mut rx) = hook_receiver().await;
+    let url = format!("http://127.0.0.1:{port}/hook");
+    let (app, st, c, t) = app(&[
+        "--webhook-url",
+        &url,
+        "--webhook-allowed-cidrs",
+        "127.0.0.1/32",
+    ])
+    .await;
+    clamv_webui::webhook::spawn(st.clone());
+    let res = app
+        .clone()
+        .oneshot(upload(
+            &c,
+            multipart(Some(&t), &[("clean.txt", b"hello"), ("eicar.com", EICAR)]),
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let body = tokio::time::timeout(Duration::from_secs(10), rx.recv())
+        .await
+        .expect("delivered")
+        .expect("body");
+    assert_eq!(body["event"], "scan.finished");
+    assert_eq!(body["verdict"], "VIRUS_FOUND");
+    assert_eq!(body["target"], "eicar.com");
+    assert_eq!(body["foundViruses"][0], "Eicar-Test-Signature");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(700), rx.recv())
+            .await
+            .is_err(),
+        "clean scans are not sent in alerts mode"
+    );
+    st.notifier.test().await.expect("test delivered");
+    let body = rx.recv().await.expect("test body");
+    assert_eq!(body["event"], "test");
+    assert!(st.notifier.last().is_some_and(|d| d.ok));
+}
+
+#[tokio::test]
+async fn webhook_refuses_private_addresses() {
+    let (port, _rx) = hook_receiver().await;
+    let url = format!("http://localhost:{port}/hook");
+    let (_app, st, _, _) = app(&["--webhook-url", &url]).await;
+    let err = st.notifier.test().await.expect_err("blocked");
+    assert!(err.contains("not allowed"), "{err}");
+    assert!(!err.contains("/hook"), "URL is not echoed");
+    let bad = Cli::try_parse_from(["clamv-webui", "--webhook-url", "ftp://x/y"]).expect("parse");
+    assert!(clamv_webui::webhook::Target::from_config(&bad.config).is_err());
+    let creds = Cli::try_parse_from(["clamv-webui", "--webhook-url", "https://u:p@example.com/"])
+        .expect("parse");
+    assert!(clamv_webui::webhook::Target::from_config(&creds.config).is_err());
+}

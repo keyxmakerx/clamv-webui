@@ -23,6 +23,7 @@ pub struct AppState {
     /// Scan submissions per credential (Java `api.v1.scan-rate-limit-per-minute`).
     pub scan_rate: crate::auth::ratelimit::RateLimit,
     pub watcher: crate::watch::Watcher,
+    pub notifier: crate::webhook::Notifier,
 }
 
 impl AppState {
@@ -33,6 +34,7 @@ impl AppState {
                 30,
                 std::time::Duration::from_secs(60),
             ),
+            notifier: crate::webhook::Notifier::new(&cfg),
             cfg,
             db,
             lockout: Lockout::new(LockoutPolicy::default()),
@@ -131,6 +133,7 @@ pub async fn serve(mut cfg: Config) -> anyhow::Result<()> {
     if cfg.tls_enabled() {
         cfg.cookie_secure = true;
     }
+    crate::webhook::Target::from_config(&cfg)?;
     let url = cfg.database_url()?;
     let db = Db::open(&url, cfg.database_max_connections)
         .await
@@ -148,6 +151,7 @@ pub async fn serve(mut cfg: Config) -> anyhow::Result<()> {
     crate::scan::start(state.clone()).await;
     crate::schedule::spawn(state.clone());
     crate::watch::spawn(state.clone());
+    crate::webhook::spawn(state.clone());
     let app = router(state, &cfg).into_make_service_with_connect_info::<std::net::SocketAddr>();
     let scheme = if cfg.tls_enabled() { "https" } else { "http" };
     tracing::info!(listen = %cfg.listen, scheme, clamd = %cfg.clamd_endpoint, data_dir = %cfg.data_dir.display(), version = env!("CARGO_PKG_VERSION"), "started");

@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod csrf;
 pub mod endpoints;
+pub mod integrations;
 pub mod scan;
 pub mod schedules;
 pub mod session;
@@ -48,6 +49,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(tokens::routes())
         .merge(schedules::routes())
         .merge(watch::routes())
+        .merge(integrations::routes())
         .route("/{*path}", get(asset))
 }
 

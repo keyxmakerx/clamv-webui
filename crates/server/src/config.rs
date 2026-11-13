@@ -28,6 +28,14 @@ pub enum LogFormat {
     Json,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum WebhookEvents {
+    /// Detections, failed scans, unscannable files and failed EICAR checks.
+    Alerts,
+    /// Every finished scan.
+    All,
+}
+
 #[derive(Debug, Clone, Args)]
 pub struct Config {
     /// Listen address.
@@ -112,6 +120,36 @@ pub struct Config {
     /// Seconds between looks at watched folders.
     #[arg(long, env = "WATCH_POLL_SECS", default_value_t = 60, global = true)]
     pub watch_poll_secs: u64,
+
+    /// Webhook called when a scan finishes (Discord URLs get a chat message).
+    #[arg(long, env = "WEBHOOK_URL", hide_env_values = true, global = true)]
+    pub webhook_url: Option<String>,
+
+    /// File holding the webhook URL (Docker secret). Wins over WEBHOOK_URL.
+    #[arg(long, env = "WEBHOOK_URL_FILE", global = true)]
+    pub webhook_url_file: Option<std::path::PathBuf>,
+
+    /// Which finished scans call the webhook.
+    #[arg(long, env = "WEBHOOK_EVENTS", value_enum, default_value_t = WebhookEvents::Alerts, global = true)]
+    pub webhook_events: WebhookEvents,
+
+    /// Comma-separated CIDRs the webhook may reach even though they are private.
+    #[arg(
+        long,
+        env = "WEBHOOK_ALLOWED_CIDRS",
+        value_delimiter = ',',
+        global = true
+    )]
+    pub webhook_allowed_cidrs: Vec<String>,
+
+    /// Let the webhook reach any private, loopback or CGNAT address.
+    #[arg(
+        long,
+        env = "WEBHOOK_ALLOW_PRIVATE",
+        default_value_t = false,
+        global = true
+    )]
+    pub webhook_allow_private: bool,
 
     /// Files accepted in one upload request.
     #[arg(long, env = "UPLOAD_MAX_FILES", default_value_t = 10, global = true)]

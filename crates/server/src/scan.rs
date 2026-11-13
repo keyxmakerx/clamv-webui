@@ -141,6 +141,30 @@ pub async fn finish(st: &AppState, job: &Job, endpoint: Option<&Endpoint>, o: Ou
     if let Err(e) = st.db.finish_job(&job.id, &o).await {
         tracing::error!(event = "scan.store_failed", job_id = %job.id, error = %e, "could not store scan result");
     }
+    st.notifier.notify(event("scan.finished", job, ep, &o));
+}
+
+/// The webhook view of a finished job.
+pub fn event(name: &'static str, job: &Job, endpoint: &str, o: &Outcome) -> crate::webhook::Event {
+    let mut found: Vec<String> = o.detections.values().flatten().cloned().collect();
+    found.sort();
+    found.dedup();
+    crate::webhook::Event {
+        event: name,
+        job_id: job.id.clone(),
+        kind: job.kind.clone(),
+        target: job.target.clone(),
+        endpoint: endpoint.to_owned(),
+        submitted_by: job.submitted_by.clone(),
+        verdict: o.verdict.to_owned(),
+        found_viruses: found,
+        detections: o.detections.clone(),
+        files_scanned: o.files_scanned,
+        file_errors: o.errors.len(),
+        error_code: o.error_code.map(str::to_owned),
+        error: o.error_message.clone(),
+        finished_at: crate::timefmt::rfc3339(crate::db::now_ms()),
+    }
 }
 
 /// The job's endpoint if set and enabled, else the default.
