@@ -4,7 +4,9 @@
 //! `$n` for PostgreSQL), ids are UUIDv7 text, times are unix milliseconds and
 //! booleans are 0/1 integers, so every column decodes the same on every backend.
 
+pub mod sessions;
 pub mod settings;
+pub mod users;
 
 use std::borrow::Cow;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

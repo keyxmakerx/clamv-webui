@@ -18,6 +18,12 @@ tower-http = { version = "0.6", features = ["set-header", "trace", "timeout", "l
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "json", "std"] }
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "any", "sqlite-bundled", "postgres", "mysql", "migrate", "macros"] }
+argon2 = { version = "0.5", features = ["std"] }
+bcrypt = "0.17"
+rand = "0.9"
+sha2 = "0.10"
+subtle = "2"
+base64 = "0.22"
 uuid = { version = "1", features = ["v7"] }
 clap = { version = "4", features = ["derive", "env"] }
 

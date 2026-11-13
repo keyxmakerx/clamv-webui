@@ -99,3 +99,95 @@ async fn portable_types_decode_everywhere() {
         db.close().await;
     }
 }
+
+#[tokio::test]
+async fn users_and_sessions() {
+    use clamv_webui::auth::Role;
+    for db in databases().await {
+        let kind = db.kind();
+        let name = format!("u-{}", &new_id()[..8]);
+        let u = db
+            .create_user(&name, "$argon2id$x", Role::Operator, true)
+            .await
+            .expect("create");
+        let dup = db
+            .create_user(&name, "$argon2id$y", Role::Viewer, false)
+            .await;
+        assert!(dup.is_err(), "{kind:?}: duplicate username accepted");
+        let got = db
+            .user_by_username(&name)
+            .await
+            .expect("get")
+            .expect("exists");
+        assert_eq!(
+            (got.role, got.enabled, got.must_change_password),
+            (Role::Operator, true, true),
+            "{kind:?}"
+        );
+
+        let (raw, s) = db
+            .create_session(&u.id, 3_600_000, Some("10.0.0.1"), Some("test"))
+            .await
+            .expect("session");
+        assert_ne!(raw, s.id_hash);
+        let (s2, u2) = db
+            .session_user(&raw, 600_000)
+            .await
+            .expect("lookup")
+            .expect("valid");
+        assert_eq!(
+            (s2.csrf_token, u2.id.clone()),
+            (s.csrf_token, u.id.clone()),
+            "{kind:?}"
+        );
+        assert!(
+            db.session_user("not-a-session", 600_000)
+                .await
+                .expect("lookup")
+                .is_none()
+        );
+
+        // Password change ends sessions (N7).
+        db.set_password(&u.id, "$argon2id$z", false, true)
+            .await
+            .expect("pw");
+        assert!(
+            db.session_user(&raw, 600_000)
+                .await
+                .expect("lookup")
+                .is_none(),
+            "{kind:?}"
+        );
+
+        // Disabling ends sessions.
+        let (raw2, _) = db
+            .create_session(&u.id, 3_600_000, None, None)
+            .await
+            .expect("session");
+        db.set_role_enabled(&u.id, Role::Viewer, false)
+            .await
+            .expect("disable");
+        assert!(
+            db.session_user(&raw2, 600_000)
+                .await
+                .expect("lookup")
+                .is_none(),
+            "{kind:?}"
+        );
+
+        // Deleting a user cascades to sessions.
+        let (raw3, _) = db
+            .create_session(&u.id, 3_600_000, None, None)
+            .await
+            .expect("session");
+        assert!(db.delete_user(&u.id).await.expect("delete"));
+        assert!(
+            db.session_user(&raw3, 600_000)
+                .await
+                .expect("lookup")
+                .is_none(),
+            "{kind:?}"
+        );
+        db.close().await;
+    }
+}

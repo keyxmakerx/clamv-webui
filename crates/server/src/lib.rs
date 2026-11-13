@@ -1,6 +1,7 @@
 //! clamv-webui library: everything except the process entry point.
 
 pub mod app;
+pub mod auth;
 pub mod config;
 pub mod db;
 pub mod healthcheck;
