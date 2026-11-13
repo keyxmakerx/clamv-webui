@@ -11,13 +11,22 @@ use clamv_webui::db::Db;
 use clap::Parser;
 use tower::ServiceExt;
 
-const PW: &str = "initial-admin-password";
+/// Generated per run so no credential literal lives in the source.
+fn pw() -> &'static str {
+    static PW: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    PW.get_or_init(clamv_webui::auth::token::random_secret)
+}
+
+fn new_pw() -> &'static str {
+    static PW: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    PW.get_or_init(clamv_webui::auth::token::random_secret)
+}
 
 async fn app() -> (Router, Arc<AppState>) {
     let cli = Cli::parse_from(["clamv-webui", "--clamd-endpoint", "tcp://127.0.0.1:1"]);
     let db = Db::open("sqlite::memory:", 1).await.expect("db");
     let dir = std::env::temp_dir();
-    clamv_webui::auth::bootstrap::ensure_admin(&db, &dir, Some(PW))
+    clamv_webui::auth::bootstrap::ensure_admin(&db, &dir, Some(pw()))
         .await
         .expect("bootstrap");
     let st = Arc::new(AppState::new(cli.config.clone(), db));
@@ -82,7 +91,10 @@ async fn wrong_password_then_lockout() {
             .clone()
             .oneshot(form(
                 "/login",
-                "username=admin&password=wrong-password!",
+                &format!(
+                    "username=admin&password={}",
+                    clamv_webui::auth::token::random_secret()
+                ),
                 None,
             ))
             .await
@@ -93,7 +105,7 @@ async fn wrong_password_then_lockout() {
     let res = app
         .oneshot(form(
             "/login",
-            &format!("username=admin&password={PW}"),
+            &format!("username=admin&password={}", pw()),
             None,
         ))
         .await
@@ -107,7 +119,10 @@ async fn unknown_user_looks_like_wrong_password() {
     let res = app
         .oneshot(form(
             "/login",
-            "username=nobody&password=whatever-password",
+            &format!(
+                "username=nobody&password={}",
+                clamv_webui::auth::token::random_secret()
+            ),
             None,
         ))
         .await
@@ -123,7 +138,7 @@ async fn first_login_forces_password_change_then_works() {
         .clone()
         .oneshot(form(
             "/login",
-            &format!("username=admin&password={PW}"),
+            &format!("username=admin&password={}", pw()),
             None,
         ))
         .await
@@ -150,7 +165,7 @@ async fn first_login_forces_password_change_then_works() {
     let csrf = csrf_from(&page);
 
     // Missing CSRF token is refused.
-    let bad = format!("current={PW}&new=brand-new-password-1&confirm=brand-new-password-1");
+    let bad = format!("current={}&new={n}&confirm={n}", pw(), n = new_pw());
     let res = app
         .clone()
         .oneshot(form("/account/password", &bad, Some(&c)))
@@ -158,8 +173,11 @@ async fn first_login_forces_password_change_then_works() {
         .expect("res");
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
 
-    let ok =
-        format!("_csrf={csrf}&current={PW}&new=brand-new-password-1&confirm=brand-new-password-1");
+    let ok = format!(
+        "_csrf={csrf}&current={}&new={n}&confirm={n}",
+        pw(),
+        n = new_pw()
+    );
     let res = app
         .clone()
         .oneshot(form("/account/password", &ok, Some(&c)))
@@ -179,7 +197,7 @@ async fn first_login_forces_password_change_then_works() {
         .clone()
         .oneshot(form(
             "/login",
-            "username=admin&password=brand-new-password-1",
+            &format!("username=admin&password={}", new_pw()),
             None,
         ))
         .await
@@ -216,19 +234,19 @@ async fn first_login_forces_password_change_then_works() {
 #[tokio::test]
 async fn cross_origin_posts_are_rejected() {
     let (app, _) = app().await;
-    let mut req = form("/login", &format!("username=admin&password={PW}"), None);
+    let mut req = form("/login", &format!("username=admin&password={}", pw()), None);
     req.headers_mut()
         .insert(header::ORIGIN, "http://evil.example".parse().expect("hv"));
     let res = app.clone().oneshot(req).await.expect("res");
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
 
-    let mut req = form("/login", &format!("username=admin&password={PW}"), None);
+    let mut req = form("/login", &format!("username=admin&password={}", pw()), None);
     req.headers_mut()
         .insert("sec-fetch-site", "cross-site".parse().expect("hv"));
     let res = app.clone().oneshot(req).await.expect("res");
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
 
-    let mut req = form("/login", &format!("username=admin&password={PW}"), None);
+    let mut req = form("/login", &format!("username=admin&password={}", pw()), None);
     req.headers_mut()
         .insert(header::ORIGIN, "http://nas:8080".parse().expect("hv"));
     let res = app.oneshot(req).await.expect("res");
@@ -268,7 +286,7 @@ async fn route_table_by_role() {
         ("/admin/users/x/delete", Role::Admin),
     ];
     for role in [Role::Viewer, Role::Operator, Role::Admin] {
-        let h = password::hash("role-test-password").expect("hash");
+        let h = password::hash(&clamv_webui::auth::token::random_secret()).expect("hash");
         let u = st
             .db
             .create_user(&format!("t-{role}"), &h, role, false)

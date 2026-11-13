@@ -75,39 +75,43 @@ pub fn verify(password: &str, stored: &str) -> Verified {
 /// Burn the same time as a real check, so unknown usernames are not revealed by timing.
 pub fn verify_dummy(password: &str) {
     static DUMMY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    let h = DUMMY.get_or_init(|| hash("dummy-password-for-timing").unwrap_or_default());
+    let h = DUMMY.get_or_init(|| hash(&super::token::random_secret()).unwrap_or_default());
     let _ = verify(password, h);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::token::random_secret;
 
     #[test]
     fn argon2_round_trip() {
-        let h = hash("correct horse battery").expect("hash");
+        let pw = random_secret();
+        let h = hash(&pw).expect("hash");
         assert!(h.starts_with("$argon2id$"));
-        assert_eq!(verify("correct horse battery", &h), Verified::Yes);
-        assert_eq!(verify("wrong horse battery", &h), Verified::No);
+        assert_eq!(verify(&pw, &h), Verified::Yes);
+        assert_eq!(verify(&random_secret(), &h), Verified::No);
     }
 
     #[test]
     fn length_rules() {
-        assert_eq!(hash("short"), Err(PasswordError::Length));
-        assert!(validate(&"x".repeat(129)).is_err());
-        assert!(validate("twelve chars").is_ok());
+        assert_eq!(hash(&"x".repeat(MIN_LEN - 1)), Err(PasswordError::Length));
+        assert!(validate(&"x".repeat(MAX_LEN + 1)).is_err());
+        assert!(validate(&"x".repeat(MIN_LEN)).is_ok());
     }
 
     #[test]
     fn bcrypt_from_java_verifies_and_asks_for_rehash() {
-        let legacy = bcrypt::hash("legacy-password-1", 4).expect("bcrypt");
-        assert_eq!(verify("legacy-password-1", &legacy), Verified::YesRehash);
-        assert_eq!(verify("nope-nope-nope", &legacy), Verified::No);
+        let pw = random_secret();
+        let legacy = bcrypt::hash(&pw, 4).expect("bcrypt");
+        assert_eq!(verify(&pw, &legacy), Verified::YesRehash);
+        assert_eq!(verify(&random_secret(), &legacy), Verified::No);
     }
 
     #[test]
     fn garbage_hash_never_verifies() {
-        assert_eq!(verify("anything at all", "not a hash"), Verified::No);
-        assert_eq!(verify("anything at all", ""), Verified::No);
+        let pw = random_secret();
+        assert_eq!(verify(&pw, "not a hash"), Verified::No);
+        assert_eq!(verify(&pw, ""), Verified::No);
     }
 }
