@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="app-shell">
+<aside id="app-sidebar" class="app-sidebar">
+<div class="sidebar-header"><img class="sidebar-logo" alt="ClamAV" src="/images/logo.jpg">
+<div><div class="sidebar-appname">ClamAV Web UI</div><div class="sidebar-caption">Scan &amp; Monitor</div></div></div>
+<nav class="sidebar-section tabs" aria-label="Operations"><div class="sidebar-section__title">Operations</div>
+<a class="nav-btn tab-link{% if nav.page == "dashboard" %} active{% endif %}" href="/dashboard"{% if nav.page == "dashboard" %} aria-current="page"{% endif %}><i class="fas fa-tachometer-alt" aria-hidden="true"></i>Dashboard</a>
+</nav>
+</aside>
+<main class="app-main">
+<header class="app-topbar"><div><div class="app-title__name">ClamAV</div><div class="app-title__subtitle">Self-hosted malware scanning console</div></div>
+<div class="app-topbar__right">
+<div class="topbar-username"><span>User:</span> <a href="/account/password"><strong>{{ nav.username }}</strong></a> <span class="muted small">({{ nav.role }})</span></div>
+<form method="post" action="/logout" class="topbar-logout">
+<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
+<button type="submit" class="btn btn-outline-secondary topbar-logout__button">Logout</button>
+</form>
+</div></header>
+<div class="app-content">
+{% if let Some(msg) = nav.error %}<div class="alert alert-danger" role="alert">{{ msg }}</div>{% endif %}
+{% if let Some(msg) = nav.success %}<div class="alert alert-success" role="status">{{ msg }}</div>{% endif %}
+{% block content %}{% endblock %}
+</div>
+<footer class="app-footer muted">ClamAV Web UI · managed scan jobs and live clamd metrics</footer>
+</main>
+</div>
+{% endblock %}

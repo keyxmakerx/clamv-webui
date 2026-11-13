@@ -5,18 +5,33 @@ use std::sync::Arc;
 use axum::Router;
 use axum::extract::State;
 use axum::http::{HeaderName, HeaderValue, StatusCode, header};
-use axum::response::{Html, IntoResponse};
+use axum::response::IntoResponse;
 use axum::routing::get;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
+use crate::auth::lockout::{Lockout, LockoutPolicy};
 use crate::config::Config;
 use crate::db::{Db, redact_url};
 
 pub struct AppState {
+    pub cfg: Config,
     pub clamd: clamd::Client,
     pub db: Db,
+    pub lockout: Lockout,
+}
+
+impl AppState {
+    pub fn new(cfg: Config, db: Db) -> Self {
+        let clamd = clamd::Client::new(cfg.clamd_endpoint.clone(), clamd::Limits::default());
+        Self {
+            cfg,
+            clamd,
+            db,
+            lockout: Lockout::new(LockoutPolicy::default()),
+        }
+    }
 }
 
 /// Headers sent on every response (S7). Inline scripts and styles are not allowed.
@@ -27,7 +42,8 @@ const SECURITY_HEADERS: &[(&str, &str)] = &[
          font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; \
          form-action 'self'; frame-ancestors 'none'",
     ),
-    ("referrer-policy", "no-referrer"),
+    // same-origin, not no-referrer: Chrome sends `Origin: null` on form posts under no-referrer.
+    ("referrer-policy", "same-origin"),
     (
         "permissions-policy",
         "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
@@ -39,10 +55,12 @@ const SECURITY_HEADERS: &[(&str, &str)] = &[
 
 pub fn router(state: Arc<AppState>, cfg: &Config) -> Router {
     let mut app = Router::new()
-        .route("/", get(index))
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
-        .with_state(state);
+        .merge(crate::web::routes())
+        .with_state(state)
+        .layer(axum::middleware::from_fn(crate::web::csrf::same_origin))
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(64 * 1024));
     for (name, value) in SECURITY_HEADERS {
         app = app.layer(SetResponseHeaderLayer::overriding(
             HeaderName::from_static(name),
@@ -57,17 +75,21 @@ pub fn router(state: Arc<AppState>, cfg: &Config) -> Router {
 }
 
 pub async fn serve(cfg: Config) -> anyhow::Result<()> {
+    prepare_data_dir(&cfg.data_dir)?;
     let url = cfg.database_url()?;
     let db = Db::open(&url, cfg.database_max_connections)
         .await
         .map_err(|e| anyhow::anyhow!("database {}: {e}", redact_url(&url)))?;
     tracing::info!(database = %redact_url(&url), "database ready");
-    let clamd = clamd::Client::new(cfg.clamd_endpoint.clone(), clamd::Limits::default());
-    let state = Arc::new(AppState {
-        clamd,
-        db: db.clone(),
-    });
-    let app = router(state, &cfg);
+    crate::auth::bootstrap::ensure_admin(
+        &db,
+        &cfg.data_dir,
+        cfg.bootstrap_admin_password.as_deref(),
+    )
+    .await?;
+    let state = Arc::new(AppState::new(cfg.clone(), db.clone()));
+    spawn_housekeeping(state.clone());
+    let app = router(state, &cfg).into_make_service_with_connect_info::<std::net::SocketAddr>();
     let listener = tokio::net::TcpListener::bind(cfg.listen).await?;
     tracing::info!(listen = %cfg.listen, clamd = %cfg.clamd_endpoint, data_dir = %cfg.data_dir.display(), version = env!("CARGO_PKG_VERSION"), "started");
     axum::serve(listener, app)
@@ -94,12 +116,37 @@ async fn shutdown() {
     tokio::select! { () = ctrl_c => {}, () = term => {} }
 }
 
-async fn index() -> impl IntoResponse {
-    Html(concat!(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">",
-        "<title>ClamAV Web UI</title></head><body>",
-        "<h1>ClamAV Web UI</h1><p>Rust port in progress.</p></body></html>"
-    ))
+/// Create DATA_DIR and make it private: it holds the database and secrets.
+fn prepare_data_dir(dir: &std::path::Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir)
+        .map_err(|e| anyhow::anyhow!("cannot create DATA_DIR {}: {e}", dir.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700)) {
+            tracing::warn!(error = %e, dir = %dir.display(), "could not restrict DATA_DIR to mode 0700");
+        }
+    }
+    Ok(())
+}
+
+/// Periodic cleanup of expired sessions.
+fn spawn_housekeeping(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
+        loop {
+            tick.tick().await;
+            match state
+                .db
+                .purge_expired_sessions(state.cfg.session_idle_ms())
+                .await
+            {
+                Ok(n) if n > 0 => tracing::debug!(removed = n, "expired sessions purged"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "session purge failed"),
+            }
+        }
+    });
 }
 
 /// Liveness: unauthenticated, touches nothing external.
@@ -136,9 +183,8 @@ mod tests {
             "--clamd-endpoint",
             "tcp://127.0.0.1:1",
         ]);
-        let clamd = clamd::Client::new(cli.config.clamd_endpoint.clone(), clamd::Limits::default());
         let db = Db::open("sqlite::memory:", 1).await.expect("db");
-        router(Arc::new(AppState { clamd, db }), &cli.config)
+        router(Arc::new(AppState::new(cli.config.clone(), db)), &cli.config)
     }
 
     #[tokio::test]

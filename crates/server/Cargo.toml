@@ -26,6 +26,9 @@ subtle = "2"
 base64 = "0.22"
 uuid = { version = "1", features = ["v7"] }
 clap = { version = "4", features = ["derive", "env"] }
+askama = "0.14"
+rust-embed = { version = "8", features = ["mime-guess"] }
+serde = { version = "1.0.229", features = ["derive"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

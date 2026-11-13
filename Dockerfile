@@ -8,7 +8,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
     cargo build --release --locked && \
     install -D -m 0555 target/release/clamv-webui /out/clamv-webui && \
-    install -d -m 0750 /out/data
+    install -d -m 0700 /out/data
 
 # ---- runtime: no shell, no package manager ----
 FROM gcr.io/distroless/cc-debian12:nonroot

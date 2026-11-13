@@ -83,6 +83,32 @@ pub struct Config {
     )]
     pub clamd_endpoint: clamd::Endpoint,
 
+    /// Mark the session cookie Secure. Leave false only when served over plain HTTP on a private network.
+    #[arg(long, env = "COOKIE_SECURE", default_value_t = false, global = true)]
+    pub cookie_secure: bool,
+
+    /// Sign out after this many idle minutes.
+    #[arg(
+        long,
+        env = "SESSION_IDLE_MINUTES",
+        default_value_t = 30,
+        global = true
+    )]
+    pub session_idle_minutes: u32,
+
+    /// Absolute session lifetime in hours.
+    #[arg(long, env = "SESSION_MAX_HOURS", default_value_t = 12, global = true)]
+    pub session_max_hours: u32,
+
+    /// First admin password (min 12 chars). Without it a random one is written to DATA_DIR/bootstrap-admin-password.
+    #[arg(
+        long,
+        env = "BOOTSTRAP_ADMIN_PASSWORD",
+        hide_env_values = true,
+        global = true
+    )]
+    pub bootstrap_admin_password: Option<String>,
+
     /// Per-request timeout for UI and API calls, in seconds.
     #[arg(
         long,
@@ -109,6 +135,14 @@ impl Config {
             "sqlite://{}",
             self.data_dir.join("clamv-webui.db").display()
         ))
+    }
+
+    pub fn session_idle_ms(&self) -> i64 {
+        i64::from(self.session_idle_minutes.max(1)) * 60_000
+    }
+
+    pub fn session_max_ms(&self) -> i64 {
+        i64::from(self.session_max_hours.max(1)) * 3_600_000
     }
 
     pub fn request_timeout(&self) -> Duration {

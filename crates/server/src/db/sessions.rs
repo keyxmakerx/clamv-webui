@@ -78,14 +78,14 @@ impl Db {
             expires_at: row.try_get("expires_at")?,
         };
         if s.expires_at <= now || now.saturating_sub(s.last_seen_at) > idle_ms {
-            self.delete_session_hash(&s.id_hash).await?;
+            self.delete_session_by_hash(&s.id_hash).await?;
             return Ok(None);
         }
         let Some(user) = self.user_by_id(&s.user_id).await? else {
             return Ok(None);
         };
         if !user.enabled {
-            self.delete_session_hash(&s.id_hash).await?;
+            self.delete_session_by_hash(&s.id_hash).await?;
             return Ok(None);
         }
         // At most one write a minute per session.
@@ -100,10 +100,10 @@ impl Db {
     }
 
     pub async fn delete_session(&self, raw: &str) -> Result<(), DbError> {
-        self.delete_session_hash(&hash_secret(raw)).await
+        self.delete_session_by_hash(&hash_secret(raw)).await
     }
 
-    async fn delete_session_hash(&self, id_hash: &str) -> Result<(), DbError> {
+    pub async fn delete_session_by_hash(&self, id_hash: &str) -> Result<(), DbError> {
         sqlx::query(self.sql("DELETE FROM sessions WHERE id_hash = ?"))
             .bind(id_hash)
             .execute(self.pool())

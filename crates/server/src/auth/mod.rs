@@ -1,5 +1,6 @@
 //! Authentication and authorisation primitives.
 
+pub mod bootstrap;
 pub mod lockout;
 pub mod password;
 pub mod token;

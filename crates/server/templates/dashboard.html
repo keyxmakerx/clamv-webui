@@ -1,0 +1,13 @@
+{% extends "shell.html" %}
+{% block title %}Dashboard · ClamAV Web UI{% endblock %}
+{% block content %}
+<h1 class="h3">Dashboard</h1>
+<section class="card mt-3"><div class="card-body">
+<h2 class="h5">Default clamd endpoint</h2>
+<p><code>{{ endpoint }}</code></p>
+{% match clamd %}
+{% when Ok with (version) %}<p><span class="badge bg-success">reachable</span> {{ version }}</p>
+{% when Err with (e) %}<p><span class="badge bg-danger">unreachable</span> {{ e }}</p>
+{% endmatch %}
+</div></section>
+{% endblock %}

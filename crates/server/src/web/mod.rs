@@ -1,0 +1,410 @@
+//! Browser UI: pages, login, static assets.
+
+pub mod csrf;
+pub mod session;
+
+use std::sync::Arc;
+
+use askama::Template;
+use axum::Router;
+use axum::extract::{Form, Path, Query, State};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::routing::get;
+use serde::Deserialize;
+
+use crate::app::AppState;
+use crate::auth::password::{self, Verified};
+use crate::auth::{Role, lockout::LockScope};
+use crate::db::users::User;
+use session::{Auth, clear_cookie, client_ip, set_cookie};
+
+#[derive(rust_embed::Embed)]
+#[folder = "static/"]
+struct Assets;
+
+pub fn routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/", get(|| async { Redirect::to("/dashboard") }))
+        .route("/login", get(login_page).post(login))
+        .route("/logout", axum::routing::post(logout))
+        .route(
+            "/account/password",
+            get(password_page).post(change_password),
+        )
+        .route("/dashboard", get(dashboard))
+        .route("/{*path}", get(asset))
+}
+
+/// Shared data for the page shell.
+pub struct Nav {
+    pub page: &'static str,
+    pub username: String,
+    pub role: Role,
+    pub is_admin: bool,
+    pub csrf: String,
+    pub error: Option<String>,
+    pub success: Option<String>,
+}
+
+impl Nav {
+    fn new(page: &'static str, s: &crate::db::sessions::Session, u: &User) -> Self {
+        Self {
+            page,
+            username: u.username.clone(),
+            role: u.role,
+            is_admin: u.role.allows(Role::Admin),
+            csrf: s.csrf_token.clone(),
+            error: None,
+            success: None,
+        }
+    }
+}
+
+fn render<T: Template>(status: StatusCode, t: &T) -> Response {
+    match t.render() {
+        Ok(html) => (status, [(header::CACHE_CONTROL, "no-store")], Html(html)).into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "template render failed");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+#[derive(Template)]
+#[template(path = "error.html")]
+struct ErrorPage<'a> {
+    status: u16,
+    message: &'a str,
+}
+
+/// Generic error page; details belong in the log, not here.
+pub fn error_page(status: StatusCode, message: &str) -> Response {
+    render(
+        status,
+        &ErrorPage {
+            status: status.as_u16(),
+            message,
+        },
+    )
+}
+
+async fn asset(Path(path): Path<String>) -> Response {
+    match Assets::get(&path) {
+        Some(file) => {
+            let mime = file.metadata.mimetype();
+            let mut res = file.data.into_owned().into_response();
+            if let Ok(v) = HeaderValue::from_str(mime) {
+                res.headers_mut().insert(header::CONTENT_TYPE, v);
+            }
+            res.headers_mut().insert(
+                header::CACHE_CONTROL,
+                HeaderValue::from_static("public, max-age=86400"),
+            );
+            res
+        }
+        None => error_page(StatusCode::NOT_FOUND, "Page not found."),
+    }
+}
+
+// ---- login ----
+
+#[derive(Template)]
+#[template(path = "login.html")]
+struct LoginPage {
+    error: Option<&'static str>,
+    info: Option<&'static str>,
+    username: String,
+}
+
+#[derive(Deserialize)]
+struct LoginQuery {
+    logout: Option<String>,
+    changed: Option<String>,
+}
+
+async fn login_page(auth: Auth, Query(q): Query<LoginQuery>) -> Response {
+    if auth.0.is_some() {
+        return Redirect::to("/dashboard").into_response();
+    }
+    let info = if q.logout.is_some() {
+        Some("You have signed out.")
+    } else if q.changed.is_some() {
+        Some("Password changed. Sign in again.")
+    } else {
+        None
+    };
+    render(
+        StatusCode::OK,
+        &LoginPage {
+            error: None,
+            info,
+            username: String::new(),
+        },
+    )
+}
+
+#[derive(Deserialize)]
+struct LoginForm {
+    username: String,
+    password: String,
+}
+
+const BAD_LOGIN: &str = "Invalid username or password.";
+
+async fn login(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    req_parts: RequestInfo,
+    Form(f): Form<LoginForm>,
+) -> Response {
+    let username: String = f.username.trim().chars().take(64).collect();
+    let ip = req_parts.ip;
+    let page = |status, error| {
+        render(
+            status,
+            &LoginPage {
+                error: Some(error),
+                info: None,
+                username: username.clone(),
+            },
+        )
+    };
+    if st.lockout.check(&username, ip).is_err() {
+        tracing::warn!(event = "auth.locked", user = %username, ip = %ip, "login refused while locked");
+        return page(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many login attempts. Try again later.",
+        );
+    }
+    let user = match st.db.user_by_username(&username).await {
+        Ok(u) => u,
+        Err(e) => {
+            tracing::error!(error = %e, "user lookup failed");
+            return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+        }
+    };
+    let verdict = match &user {
+        Some(u) if u.enabled => password::verify(&f.password, &u.password_hash),
+        _ => {
+            password::verify_dummy(&f.password);
+            Verified::No
+        }
+    };
+    let Some(user) = user.filter(|_| verdict != Verified::No) else {
+        tracing::warn!(event = "auth.failed", user = %username, ip = %ip, "login failed");
+        if let Some(scope) = st.lockout.fail(&username, ip) {
+            let scope = match scope {
+                LockScope::AccountFromIp => "account+ip",
+                LockScope::Account => "account",
+                LockScope::Ip => "ip",
+            };
+            tracing::warn!(event = "auth.locked", user = %username, ip = %ip, scope, "login locked");
+        }
+        return page(StatusCode::UNAUTHORIZED, BAD_LOGIN);
+    };
+    st.lockout.success(&username, ip);
+    if verdict == Verified::YesRehash
+        && let Ok(h) = password::hash(&f.password)
+    {
+        let _ = st
+            .db
+            .set_password(&user.id, &h, user.must_change_password, false)
+            .await;
+    }
+    // Fresh session id on every login (no fixation); drop any old one.
+    if let Some((old, _)) = auth.0 {
+        let _ = st.db.delete_session_by_hash(&old.id_hash).await;
+    }
+    let ua = req_parts.user_agent.as_deref();
+    let ip_s = ip.to_string();
+    let (raw, _) = match st
+        .db
+        .create_session(&user.id, st.cfg.session_max_ms(), Some(&ip_s), ua)
+        .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, "session create failed");
+            return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+        }
+    };
+    let _ = st.db.touch_login(&user.id).await;
+    tracing::info!(event = "auth.login", user = %user.username, ip = %ip, "signed in");
+    let to = if user.must_change_password {
+        "/account/password"
+    } else {
+        "/dashboard"
+    };
+    let cookie = set_cookie(&raw, st.cfg.session_max_ms() / 1000, st.cfg.cookie_secure);
+    ([(header::SET_COOKIE, cookie)], Redirect::to(to)).into_response()
+}
+
+#[derive(Deserialize)]
+struct CsrfOnly {
+    #[serde(rename = "_csrf")]
+    csrf: Option<String>,
+}
+
+async fn logout(State(st): State<Arc<AppState>>, auth: Auth, Form(f): Form<CsrfOnly>) -> Response {
+    if let Some((s, u)) = auth.0 {
+        if !csrf::token_ok(&s.csrf_token, f.csrf.as_deref()) {
+            return error_page(
+                StatusCode::FORBIDDEN,
+                "Your session form expired. Reload and try again.",
+            );
+        }
+        let _ = st.db.delete_session_by_hash(&s.id_hash).await;
+        tracing::info!(event = "auth.logout", user = %u.username, "signed out");
+    }
+    (
+        [(header::SET_COOKIE, clear_cookie(st.cfg.cookie_secure))],
+        Redirect::to("/login?logout"),
+    )
+        .into_response()
+}
+
+// ---- password change ----
+
+#[derive(Template)]
+#[template(path = "password.html")]
+struct PasswordPage {
+    csrf: String,
+    must_change: bool,
+    error: Option<String>,
+}
+
+async fn password_page(auth: Auth) -> Response {
+    let Some((s, u)) = auth.0 else {
+        return Redirect::to("/login").into_response();
+    };
+    render(
+        StatusCode::OK,
+        &PasswordPage {
+            csrf: s.csrf_token,
+            must_change: u.must_change_password,
+            error: None,
+        },
+    )
+}
+
+#[derive(Deserialize)]
+struct PasswordForm {
+    #[serde(rename = "_csrf")]
+    csrf: Option<String>,
+    current: String,
+    new: String,
+    confirm: String,
+}
+
+async fn change_password(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    info: RequestInfo,
+    Form(f): Form<PasswordForm>,
+) -> Response {
+    let Some((s, u)) = auth.0 else {
+        return Redirect::to("/login").into_response();
+    };
+    if !csrf::token_ok(&s.csrf_token, f.csrf.as_deref()) {
+        return error_page(
+            StatusCode::FORBIDDEN,
+            "Your session form expired. Reload and try again.",
+        );
+    }
+    let fail = |msg: &str| {
+        render(
+            StatusCode::BAD_REQUEST,
+            &PasswordPage {
+                csrf: s.csrf_token.clone(),
+                must_change: u.must_change_password,
+                error: Some(msg.to_owned()),
+            },
+        )
+    };
+    if st.lockout.check(&u.username, info.ip).is_err() {
+        return fail("Too many attempts. Try again later.");
+    }
+    if password::verify(&f.current, &u.password_hash) == Verified::No {
+        tracing::warn!(event = "auth.failed", user = %u.username, ip = %info.ip, "password change: wrong current password");
+        st.lockout.fail(&u.username, info.ip);
+        return fail("Current password is wrong.");
+    }
+    if f.new != f.confirm {
+        return fail("The new passwords do not match.");
+    }
+    if f.new == f.current {
+        return fail("Choose a password different from the current one.");
+    }
+    let hash = match password::hash(&f.new) {
+        Ok(h) => h,
+        Err(e) => return fail(&e.to_string()),
+    };
+    if let Err(e) = st.db.set_password(&u.id, &hash, false, true).await {
+        tracing::error!(error = %e, "password update failed");
+        return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+    }
+    tracing::info!(event = "auth.password_changed", user = %u.username, ip = %info.ip, "password changed; sessions ended");
+    (
+        [(header::SET_COOKIE, clear_cookie(st.cfg.cookie_secure))],
+        Redirect::to("/login?changed"),
+    )
+        .into_response()
+}
+
+// ---- dashboard ----
+
+#[derive(Template)]
+#[template(path = "dashboard.html")]
+struct DashboardPage {
+    nav: Nav,
+    endpoint: String,
+    clamd: Result<String, String>,
+}
+
+async fn dashboard(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
+    let (s, u) = match auth.require(Role::Viewer) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let clamd = st.clamd.version().await.map_err(|e| {
+        tracing::warn!(error = %e, "clamd VERSION failed");
+        "no response".to_owned()
+    });
+    render(
+        StatusCode::OK,
+        &DashboardPage {
+            nav: Nav::new("dashboard", &s, &u),
+            endpoint: st.clamd.endpoint().to_string(),
+            clamd,
+        },
+    )
+}
+
+// ---- request info ----
+
+/// Client IP (socket peer only) and user agent.
+pub struct RequestInfo {
+    pub ip: std::net::IpAddr,
+    pub user_agent: Option<String>,
+}
+
+impl<S: Send + Sync> axum::extract::FromRequestParts<S> for RequestInfo {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _: &S,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(Self {
+            ip: client_ip(&parts.extensions),
+            user_agent: header_str(&parts.headers, header::USER_AGENT),
+        })
+    }
+}
+
+fn header_str(h: &HeaderMap, name: header::HeaderName) -> Option<String> {
+    h.get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.chars().take(255).collect())
+}
