@@ -19,11 +19,13 @@ pub struct AppState {
     pub cfg: Config,
     pub db: Db,
     pub lockout: Lockout,
+    pub runner: crate::scan::Runner,
 }
 
 impl AppState {
     pub fn new(cfg: Config, db: Db) -> Self {
         Self {
+            runner: crate::scan::Runner::new(cfg.scan_concurrency),
             cfg,
             db,
             lockout: Lockout::new(LockoutPolicy::default()),
@@ -82,24 +84,36 @@ const SECURITY_HEADERS: &[(&str, &str)] = &[
 ];
 
 pub fn router(state: Arc<AppState>, cfg: &Config) -> Router {
-    let mut app = Router::new()
+    let pages = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .merge(crate::web::routes())
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(64 * 1024))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            cfg.request_timeout(),
+        ));
+    // Uploads stream for as long as the client sends; each file is capped while streaming.
+    let per_file = cfg
+        .clamd_max_stream_mb
+        .saturating_add(1)
+        .saturating_mul(1024 * 1024);
+    let upload_limit = usize::try_from(per_file.saturating_mul(cfg.upload_max_files.max(1) as u64))
+        .unwrap_or(usize::MAX);
+    let uploads = crate::web::scan::upload_routes()
+        .layer(axum::extract::DefaultBodyLimit::disable())
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(upload_limit));
+    let mut app = pages
+        .merge(uploads)
         .with_state(state)
-        .layer(axum::middleware::from_fn(crate::web::csrf::same_origin))
-        .layer(tower_http::limit::RequestBodyLimitLayer::new(64 * 1024));
+        .layer(axum::middleware::from_fn(crate::web::csrf::same_origin));
     for (name, value) in SECURITY_HEADERS {
         app = app.layer(SetResponseHeaderLayer::overriding(
             HeaderName::from_static(name),
             HeaderValue::from_static(value),
         ));
     }
-    app.layer(TimeoutLayer::with_status_code(
-        StatusCode::REQUEST_TIMEOUT,
-        cfg.request_timeout(),
-    ))
-    .layer(TraceLayer::new_for_http())
+    app.layer(TraceLayer::new_for_http())
 }
 
 pub async fn serve(cfg: Config) -> anyhow::Result<()> {
@@ -118,6 +132,7 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     seed_endpoint(&db, &cfg).await?;
     let state = Arc::new(AppState::new(cfg.clone(), db.clone()));
     spawn_housekeeping(state.clone());
+    crate::scan::start(state.clone()).await;
     let app = router(state, &cfg).into_make_service_with_connect_info::<std::net::SocketAddr>();
     let listener = tokio::net::TcpListener::bind(cfg.listen).await?;
     tracing::info!(listen = %cfg.listen, clamd = %cfg.clamd_endpoint, data_dir = %cfg.data_dir.display(), version = env!("CARGO_PKG_VERSION"), "started");
@@ -159,7 +174,7 @@ fn prepare_data_dir(dir: &std::path::Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Periodic cleanup of expired sessions.
+/// Periodic cleanup of expired sessions and old jobs (N5).
 fn spawn_housekeeping(state: Arc<AppState>) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
@@ -173,6 +188,21 @@ fn spawn_housekeeping(state: Arc<AppState>) {
                 Ok(n) if n > 0 => tracing::debug!(removed = n, "expired sessions purged"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "session purge failed"),
+            }
+            let days = state.cfg.job_retention_days;
+            if days > 0 {
+                let ms = i64::try_from(days.saturating_mul(86_400_000)).unwrap_or(i64::MAX);
+                match state
+                    .db
+                    .prune_jobs(crate::db::now_ms().saturating_sub(ms))
+                    .await
+                {
+                    Ok(n) if n > 0 => {
+                        tracing::info!(event = "jobs.pruned", removed = n, "old jobs deleted")
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "job prune failed"),
+                }
             }
         }
     });

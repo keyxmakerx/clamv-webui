@@ -101,6 +101,22 @@ pub struct Config {
     )]
     pub clamd_max_stream_mb: u64,
 
+    /// Comma-separated directories path scans may target. Empty disables path scans.
+    #[arg(long, env = "SCAN_ROOTS", value_delimiter = ',', global = true)]
+    pub scan_roots: Vec<std::path::PathBuf>,
+
+    /// Path scans that run at once.
+    #[arg(long, env = "SCAN_CONCURRENCY", default_value_t = 2, global = true)]
+    pub scan_concurrency: usize,
+
+    /// Files accepted in one upload request.
+    #[arg(long, env = "UPLOAD_MAX_FILES", default_value_t = 10, global = true)]
+    pub upload_max_files: usize,
+
+    /// Finished jobs older than this are deleted. 0 keeps them forever.
+    #[arg(long, env = "JOB_RETENTION_DAYS", default_value_t = 90, global = true)]
+    pub job_retention_days: u64,
+
     /// Mark the session cookie Secure. Leave false only when served over plain HTTP on a private network.
     #[arg(long, env = "COOKIE_SECURE", default_value_t = false, global = true)]
     pub cookie_secure: bool,

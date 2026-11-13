@@ -6,6 +6,8 @@
 <div><div class="sidebar-appname">ClamAV Web UI</div><div class="sidebar-caption">Scan &amp; Monitor</div></div></div>
 <nav class="sidebar-section tabs" aria-label="Operations"><div class="sidebar-section__title">Operations</div>
 <a class="nav-btn tab-link{% if nav.page == "dashboard" %} active{% endif %}" href="/dashboard"{% if nav.page == "dashboard" %} aria-current="page"{% endif %}><i class="fas fa-tachometer-alt" aria-hidden="true"></i>Dashboard</a>
+{% if nav.is_operator %}<a class="nav-btn tab-link{% if nav.page == "scan" %} active{% endif %}" href="/scan"{% if nav.page == "scan" %} aria-current="page"{% endif %}><i class="fas fa-search" aria-hidden="true"></i>Scan</a>
+<a class="nav-btn tab-link{% if nav.page == "jobs" %} active{% endif %}" href="/jobs"{% if nav.page == "jobs" %} aria-current="page"{% endif %}><i class="fas fa-tasks" aria-hidden="true"></i>Jobs</a>{% endif %}
 </nav>
 {% if nav.is_admin %}
 <div class="sidebar-divider"></div>

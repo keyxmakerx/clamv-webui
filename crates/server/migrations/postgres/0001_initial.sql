@@ -105,6 +105,7 @@ CREATE TABLE scan_jobs (
     finished_at BIGINT,
     files_scanned BIGINT NOT NULL,
     detections_json TEXT,
+    error_code VARCHAR(32),
     error_message TEXT,
     errors_json TEXT,
     quarantine_path TEXT,

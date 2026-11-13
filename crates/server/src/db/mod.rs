@@ -6,6 +6,7 @@
 
 pub mod audit;
 pub mod endpoints;
+pub mod jobs;
 pub mod sessions;
 pub mod settings;
 pub mod users;
@@ -37,6 +38,10 @@ pub enum DbError {
     Sqlx(#[from] sqlx::Error),
     #[error(transparent)]
     Migrate(#[from] sqlx::migrate::MigrateError),
+    #[error("row vanished after insert")]
+    Missing,
+    #[error("encode: {0}")]
+    Encode(String),
 }
 
 #[derive(Debug, Clone)]

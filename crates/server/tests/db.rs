@@ -250,3 +250,89 @@ async fn endpoints_keep_one_default() {
         db.close().await;
     }
 }
+
+#[tokio::test]
+async fn jobs_claim_filter_and_prune() {
+    use clamv_webui::db::jobs::{JobFilter, NewJob, Outcome};
+    for db in databases().await {
+        let kind = db.kind();
+        sqlx::query(db.sql("DELETE FROM scan_jobs"))
+            .execute(db.pool())
+            .await
+            .expect("clear");
+        let target = format!("/data/ünïcode-{}", new_id());
+        let j = db
+            .create_job(NewJob {
+                kind: "PATH",
+                target: &target,
+                endpoint_id: None,
+                schedule_id: None,
+                submitted_by: Some("admin"),
+                transport: "UI",
+                running: false,
+            })
+            .await
+            .expect("create");
+        assert_eq!(j.target, target, "{kind:?}");
+        assert_eq!(
+            db.queued_jobs(10).await.expect("queued"),
+            vec![j.id.clone()]
+        );
+        assert!(db.claim_job(&j.id).await.expect("claim"), "{kind:?}");
+        assert!(
+            !db.claim_job(&j.id).await.expect("claim"),
+            "{kind:?}: double claim"
+        );
+        let mut o = Outcome {
+            verdict: "VIRUS_FOUND",
+            files_scanned: 3,
+            ..Outcome::default()
+        };
+        o.detections
+            .insert(format!("{target}/x"), vec!["Eicar-Test-Signature".into()]);
+        db.finish_job(&j.id, &o).await.expect("finish");
+        let f = JobFilter {
+            verdict: Some("VIRUS_FOUND".into()),
+            ..JobFilter::default()
+        };
+        let (rows, total) = db.list_jobs(&f, 0, 10).await.expect("list");
+        assert_eq!((rows.len(), total), (1, 1), "{kind:?}");
+        assert_eq!(
+            rows[0].signatures(),
+            vec!["Eicar-Test-Signature".to_owned()]
+        );
+        let (_, none) = db
+            .list_jobs(
+                &JobFilter {
+                    status: Some("QUEUED".into()),
+                    ..JobFilter::default()
+                },
+                0,
+                10,
+            )
+            .await
+            .expect("list");
+        assert_eq!(none, 0, "{kind:?}");
+        let r = db
+            .create_job(NewJob {
+                kind: "UPLOAD",
+                target: "f",
+                endpoint_id: None,
+                schedule_id: None,
+                submitted_by: None,
+                transport: "UI",
+                running: true,
+            })
+            .await
+            .expect("create");
+        assert_eq!(db.interrupt_running_jobs().await.expect("interrupt"), 1);
+        let r = db.job(&r.id).await.expect("q").expect("job");
+        assert_eq!(r.error_code.as_deref(), Some("SCAN_FAILED"), "{kind:?}");
+        assert_eq!(
+            db.prune_jobs(now_ms() + 1).await.expect("prune"),
+            2,
+            "{kind:?}"
+        );
+        db.close().await;
+    }
+}

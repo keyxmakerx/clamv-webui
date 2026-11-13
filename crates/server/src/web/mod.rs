@@ -3,6 +3,7 @@
 pub mod admin;
 pub mod csrf;
 pub mod endpoints;
+pub mod scan;
 pub mod session;
 
 use endpoints::Status;
@@ -40,6 +41,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/dashboard", get(dashboard))
         .merge(admin::routes())
         .merge(endpoints::routes())
+        .merge(scan::routes())
         .route("/{*path}", get(asset))
 }
 
@@ -49,6 +51,7 @@ pub struct Nav {
     pub username: String,
     pub role: Role,
     pub is_admin: bool,
+    pub is_operator: bool,
     pub csrf: String,
     pub error: Option<String>,
     pub success: Option<String>,
@@ -61,6 +64,7 @@ impl Nav {
             username: u.username.clone(),
             role: u.role,
             is_admin: u.role.allows(Role::Admin),
+            is_operator: u.role.allows(Role::Operator),
             csrf: s.csrf_token.clone(),
             error: None,
             success: None,
