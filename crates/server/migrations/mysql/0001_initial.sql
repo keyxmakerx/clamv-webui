@@ -84,6 +84,7 @@ CREATE TABLE scan_schedules (
     updated_at BIGINT NOT NULL,
     last_run_at BIGINT,
     last_job_id VARCHAR(36),
+    agent_id BIGINT,
     CONSTRAINT uk_scan_schedules_name UNIQUE (name),
     CONSTRAINT fk_schedules_endpoint FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
@@ -109,12 +110,14 @@ CREATE TABLE scan_jobs (
     error_message TEXT,
     errors_json TEXT,
     quarantine_path TEXT,
+    agent_id BIGINT,
     CONSTRAINT fk_jobs_endpoint FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE SET NULL,
     CONSTRAINT fk_jobs_schedule FOREIGN KEY (schedule_id) REFERENCES scan_schedules(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 CREATE INDEX idx_jobs_submitted ON scan_jobs(submitted_at);
 CREATE INDEX idx_jobs_status ON scan_jobs(status);
 CREATE INDEX idx_jobs_schedule ON scan_jobs(schedule_id);
+CREATE INDEX idx_jobs_agent ON scan_jobs(agent_id, status);
 
 CREATE TABLE watched_directories (
     id VARCHAR(36) PRIMARY KEY,
@@ -158,4 +161,23 @@ CREATE TABLE settings (
     value TEXT NOT NULL,
     updated_at BIGINT NOT NULL,
     updated_by VARCHAR(255)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE agents (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(64) NOT NULL,
+    token_hash VARCHAR(64) NOT NULL,
+    prefix VARCHAR(16) NOT NULL,
+    enabled BIGINT NOT NULL,
+    created_at BIGINT NOT NULL,
+    created_by VARCHAR(255),
+    last_seen_at BIGINT,
+    last_ip VARCHAR(64),
+    version VARCHAR(64),
+    clamd_version VARCHAR(255),
+    roots_json TEXT,
+    slots BIGINT NOT NULL,
+    online BIGINT NOT NULL,
+    CONSTRAINT uk_agents_name UNIQUE (name),
+    CONSTRAINT uk_agents_token UNIQUE (token_hash)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

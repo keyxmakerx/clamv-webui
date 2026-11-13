@@ -826,6 +826,7 @@ async fn scan_path(
             target,
             endpoint_id: Some(ep.id),
             schedule_id: None,
+            agent_id: None,
             submitted_by: Some(&name),
             transport: p.transport(),
             running: false,
@@ -900,6 +901,7 @@ async fn scan_uploads(
                         target: &fname,
                         endpoint_id: Some(ep.id),
                         schedule_id: None,
+                        agent_id: None,
                         submitted_by: Some(&name),
                         transport: p.transport(),
                         running: true,
@@ -912,7 +914,7 @@ async fn scan_uploads(
                 p.audit(&st, "SCAN_UPLOAD", Some(&job), Some(fname.clone()))
                     .await;
                 let o = crate::web::scan::scan_field(&st, &ep, field, &fname).await;
-                scan::finish(&st, &job, Some(&ep), o).await;
+                scan::finish(&st, &job, &ep.name, o).await;
                 ids.push(job.id);
             }
             _ => {}

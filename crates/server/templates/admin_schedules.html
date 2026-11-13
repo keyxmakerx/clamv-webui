@@ -5,14 +5,14 @@
 <p class="muted">Times are UTC. A run is skipped while the previous one is still going. With the EICAR control on, each run first checks that clamd flags the EICAR test file; a miss logs <code>eicar.control_failed</code>.</p>
 <section class="card mt-3"><div class="card-body">
 <h2 class="h5">Add schedule</h2>
-{% if roots.is_empty() %}<p class="muted">Set <code>SCAN_ROOTS</code> to schedule path scans.</p>{% else %}
+{% if roots.is_empty() && agents.is_empty() %}<p class="muted">Set <code>SCAN_ROOTS</code> or add an agent to schedule path scans.</p>{% else %}
 <form method="post" action="/admin/schedules" class="row g-3">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
 <div class="col-md-4"><label class="form-label" for="sn">Name</label><input class="form-control" id="sn" name="name" required maxlength="100" placeholder="Nightly library" autocomplete="off"></div>
 <div class="col-md-4"><label class="form-label" for="sc">When (cron, UTC)</label><input class="form-control" id="sc" name="cron" required maxlength="128" placeholder="30 2 * * *" autocomplete="off">
 <div class="form-text">minute hour day month weekday, or @daily / @weekly</div></div>
-<div class="col-md-4"><label class="form-label" for="se">Endpoint</label><select class="form-select" id="se" name="endpoint">
-{% for e in endpoints %}<option value="{% if !e.is_default %}{{ e.id }}{% endif %}"{% if e.is_default %} selected{% endif %}>{{ e.name }}{% if e.is_default %} (default){% endif %}</option>{% endfor %}</select></div>
+<div class="col-md-4"><label class="form-label" for="se">Run on</label><select class="form-select" id="se" name="endpoint">
+{% if !roots.is_empty() %}<optgroup label="This server">{% for e in endpoints %}<option value="{% if !e.is_default %}{{ e.id }}{% endif %}"{% if e.is_default %} selected{% endif %}>{{ e.name }}{% if e.is_default %} (default){% endif %}</option>{% endfor %}</optgroup>{% endif %}{% if !agents.is_empty() %}<optgroup label="Agents">{% for a in agents %}<option value="a:{{ a.id }}">{{ a.name }}{% if !a.online %} (offline){% endif %}</option>{% endfor %}</optgroup>{% endif %}</select></div>
 <div class="col-md-8"><label class="form-label" for="sp">Paths, one per line</label><textarea class="form-control" id="sp" name="paths" rows="3" required placeholder="{% for r in roots %}{{ r }}&#10;{% endfor %}"></textarea></div>
 <div class="col-md-4 d-flex align-items-end"><label class="form-check-label"><input class="form-check-input" type="checkbox" name="eicar" value="1" checked> EICAR control on every run</label></div>
 <div class="col-12"><button class="btn btn-primary" type="submit">Add schedule</button></div>

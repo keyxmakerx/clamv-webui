@@ -175,6 +175,7 @@ pub async fn pass(st: &AppState) -> usize {
                     target: &path,
                     endpoint_id: Some(ep.id),
                     schedule_id: None,
+                    agent_id: None,
                     submitted_by: Some("watcher"),
                     transport: "WATCH",
                     running: false,

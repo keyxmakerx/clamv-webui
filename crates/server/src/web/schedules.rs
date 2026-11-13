@@ -11,6 +11,7 @@ use axum::routing::{get, post};
 use serde::Deserialize;
 
 use super::admin::{admin_post, audit, fmt_ts};
+use super::scan::RunOn;
 use super::session::Auth;
 use super::{Nav, RequestInfo, error_page, render};
 use crate::app::AppState;
@@ -54,6 +55,7 @@ struct SchedulesPage {
     nav: Nav,
     rows: Vec<Row>,
     endpoints: Vec<Endpoint>,
+    agents: Vec<super::scan::AgentChoice>,
     roots: Vec<String>,
 }
 
@@ -65,7 +67,7 @@ async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
     show(&st, Nav::new("schedules", &s, &u)).await
 }
 
-async fn row(st: &AppState, s: Schedule, endpoints: &[Endpoint]) -> Row {
+async fn row(st: &AppState, s: Schedule, names: &super::scan::Names) -> Row {
     let next = match s.cron.parse::<Cron>() {
         Ok(c) if s.enabled => c
             .next_after(now_ms().max(s.last_run_at.unwrap_or(0)))
@@ -81,10 +83,7 @@ async fn row(st: &AppState, s: Schedule, endpoints: &[Endpoint]) -> Row {
         Some(j) => ("running", j.id.clone()),
     };
     Row {
-        endpoint: s
-            .endpoint_id
-            .and_then(|id| endpoints.iter().find(|e| e.id == id))
-            .map_or_else(|| "default".into(), |e| e.name.clone()),
+        endpoint: names.label(s.endpoint_id, s.agent_id),
         next,
         control: state,
         control_job: cj,
@@ -104,9 +103,10 @@ async fn show(st: &AppState, nav: Nav) -> Response {
     else {
         return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
     };
+    let names = super::scan::endpoint_names(st).await;
     let mut rows = Vec::with_capacity(list.len());
     for s in list {
-        rows.push(row(st, s, &endpoints).await);
+        rows.push(row(st, s, &names).await);
     }
     let status = if nav.error.is_some() {
         StatusCode::BAD_REQUEST
@@ -119,6 +119,7 @@ async fn show(st: &AppState, nav: Nav) -> Response {
             nav,
             rows,
             endpoints: endpoints.into_iter().filter(|e| e.enabled).collect(),
+            agents: super::scan::agent_choices(st).await,
             roots: st
                 .cfg
                 .scan_roots
@@ -175,34 +176,44 @@ async fn create(
     if let Err(e) = cron.parse::<Cron>() {
         return fail(format!("Schedule: {e}.")).await;
     }
-    if st.cfg.scan_roots.is_empty() {
-        return fail("Set SCAN_ROOTS before adding schedules.".into()).await;
-    }
+    let run_on = match super::scan::chosen_target(&st, f.endpoint.as_deref()).await {
+        Ok(r) => r,
+        Err(m) => return fail(m.into()).await,
+    };
     let mut paths = Vec::new();
     for line in f.paths.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        match scan::resolve_path(&st.cfg.scan_roots, line).await {
-            Ok(p) => match p.to_str() {
-                Some(p) if !paths.iter().any(|x: &String| x == p) => paths.push(p.to_owned()),
-                Some(_) => {}
-                None => return fail(format!("{line}: only UTF-8 paths can be scheduled.")).await,
+        let p = match &run_on {
+            // The agent checks each path again when it runs.
+            RunOn::Agent(a) => match crate::agent::refuse(a, line) {
+                None => line.to_owned(),
+                Some(m) => return fail(format!("{line}: {m}")).await,
             },
-            Err(m) => return fail(format!("{line}: {m}")).await,
+            RunOn::Endpoint(_) => {
+                if st.cfg.scan_roots.is_empty() {
+                    return fail("Set SCAN_ROOTS before adding schedules.".into()).await;
+                }
+                match scan::resolve_path(&st.cfg.scan_roots, line).await {
+                    Ok(p) => match p.to_str() {
+                        Some(p) => p.to_owned(),
+                        None => {
+                            return fail(format!("{line}: only UTF-8 paths can be scheduled."))
+                                .await;
+                        }
+                    },
+                    Err(m) => return fail(format!("{line}: {m}")).await,
+                }
+            }
+        };
+        if !paths.contains(&p) {
+            paths.push(p);
         }
     }
     if paths.is_empty() || paths.len() > MAX_PATHS {
         return fail(format!("Give 1 to {MAX_PATHS} paths, one per line.")).await;
     }
-    let endpoint_id = match f
-        .endpoint
-        .as_deref()
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-    {
-        None => None,
-        Some(v) => match v.parse::<i64>() {
-            Ok(id) if matches!(st.db.endpoint(id).await, Ok(Some(_))) => Some(id),
-            _ => return fail("Unknown endpoint.".into()).await,
-        },
+    let (endpoint_id, agent_id) = match &run_on {
+        RunOn::Agent(a) => (None, Some(a.id)),
+        RunOn::Endpoint(e) => (*e, None),
     };
     match st
         .db
@@ -211,6 +222,7 @@ async fn create(
             cron,
             paths: &paths,
             endpoint_id,
+            agent_id,
             eicar_check: f.eicar.is_some(),
         })
         .await

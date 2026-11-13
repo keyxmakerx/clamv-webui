@@ -305,6 +305,7 @@ async fn route_table_by_role() {
         ("/admin/watch", Role::Admin),
         ("/admin/integrations", Role::Admin),
         ("/admin/settings", Role::Admin),
+        ("/admin/agents", Role::Admin),
     ];
     let posts: &[(&str, Role)] = &[
         ("/admin/users", Role::Admin),
@@ -330,6 +331,10 @@ async fn route_table_by_role() {
         ("/admin/integrations/webhook/test", Role::Admin),
         ("/admin/settings/review", Role::Admin),
         ("/admin/settings/apply", Role::Admin),
+        ("/admin/agents", Role::Admin),
+        ("/admin/agents/x/enabled", Role::Admin),
+        ("/admin/agents/x/rotate", Role::Admin),
+        ("/admin/agents/x/delete", Role::Admin),
     ];
     for role in [Role::Viewer, Role::Operator, Role::Admin] {
         let h = password::hash(&clamv_webui::auth::token::random_secret()).expect("hash");
@@ -544,6 +549,107 @@ async fn admin_issues_and_revokes_tokens() {
         .await
         .expect("res");
     assert!(body(res).await.contains("Token revoked."));
+}
+
+#[tokio::test]
+async fn admin_adds_an_agent_and_targets_it() {
+    let (app, st) = app().await;
+    let (c, t) = admin_cookie(&st).await;
+    let post = |uri: String, b: String| {
+        let app = app.clone();
+        let c = c.clone();
+        async move { app.oneshot(form(&uri, &b, Some(&c))).await.expect("res") }
+    };
+    let res = post("/admin/agents".into(), format!("_csrf={t}&name=bad%20name")).await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let res = post("/admin/agents".into(), format!("_csrf={t}&name=nas-2")).await;
+    let html = body(res).await;
+    assert!(html.contains("Token for nas-2") && html.contains("clamv_agent_"));
+    assert!(html.contains("AGENT_TOKEN_FILE") && html.contains("command: agent"));
+    let a = st.db.list_agents().await.expect("list").remove(0);
+    let res = app
+        .clone()
+        .oneshot(get("/admin/agents", Some(&c)))
+        .await
+        .expect("res");
+    let html = body(res).await;
+    assert!(!html.contains("Token for"), "token shown once");
+    assert!(html.contains("never connected"));
+
+    // Not offered as a target until it has connected and reported its roots.
+    let res = post(
+        "/scan/path".into(),
+        format!("_csrf={t}&path=%2Fdata%2Fx&endpoint=a%3A{}", a.id),
+    )
+    .await;
+    assert!(body(res).await.contains("has not connected yet"));
+    st.db
+        .heartbeat_agent(
+            a.id,
+            &clamv_webui::db::agents::Heartbeat {
+                ip: "100.82.0.9",
+                version: "t",
+                clamd_version: None,
+                roots: &["/data".to_owned()],
+                slots: 1,
+            },
+        )
+        .await
+        .expect("hb");
+    let res = post(
+        "/scan/path".into(),
+        format!("_csrf={t}&path=%2Fetc&endpoint=a%3A{}", a.id),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let res = post(
+        "/scan/path".into(),
+        format!("_csrf={t}&path=%2Fdata%2Fx&endpoint=a%3A{}", a.id),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let jobs = st.db.agent_jobs(a.id, "QUEUED").await.expect("jobs");
+    assert_eq!(jobs[0].target, "/data/x");
+    let res = post(
+        "/admin/schedules".into(),
+        format!(
+            "_csrf={t}&name=remote&cron=%40daily&paths=%2Fdata&endpoint=a%3A{}&eicar=1",
+            a.id
+        ),
+    )
+    .await;
+    assert!(body(res).await.contains("Added remote."));
+    let s = st.db.list_schedules().await.expect("list").remove(0);
+    assert_eq!((s.agent_id, s.endpoint_id), (Some(a.id), None));
+    let n = clamv_webui::schedule::run(&st, &s, "manual")
+        .await
+        .expect("run");
+    assert_eq!(n, 1);
+    let queued = st.db.agent_jobs(a.id, "QUEUED").await.expect("jobs");
+    assert!(
+        queued.iter().any(|j| j.kind == "CONTROL"),
+        "EICAR control goes to the agent"
+    );
+
+    let res = post(
+        format!("/admin/agents/{}/rotate", a.id),
+        format!("_csrf={t}"),
+    )
+    .await;
+    assert!(body(res).await.contains("the old one no longer works"));
+    let res = post(
+        format!("/admin/agents/{}/delete", a.id),
+        format!("_csrf={t}"),
+    )
+    .await;
+    assert!(body(res).await.contains("Removed nas-2."));
+    assert!(
+        st.db
+            .agent_jobs(a.id, "QUEUED")
+            .await
+            .expect("jobs")
+            .is_empty()
+    );
 }
 
 #[tokio::test]

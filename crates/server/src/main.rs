@@ -25,6 +25,16 @@ async fn main() -> ExitCode {
                 }
             }
         }
+        Command::Agent => {
+            logging::init(&cli.config);
+            match clamv_webui::agent::client::run(cli.config).await {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    tracing::error!(error = %e, "agent failed");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Command::Serve => {
             logging::init(&cli.config);
             match app::serve(cli.config).await {

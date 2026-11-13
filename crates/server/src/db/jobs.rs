@@ -33,6 +33,8 @@ pub struct Job {
     pub size_bytes: Option<i64>,
     pub endpoint_id: Option<i64>,
     pub schedule_id: Option<String>,
+    /// Set when a remote agent runs the job instead of this server.
+    pub agent_id: Option<i64>,
     pub submitted_by: Option<String>,
     pub transport: Option<String>,
     pub submitted_at: i64,
@@ -65,6 +67,7 @@ pub struct NewJob<'a> {
     pub target: &'a str,
     pub endpoint_id: Option<i64>,
     pub schedule_id: Option<&'a str>,
+    pub agent_id: Option<i64>,
     pub submitted_by: Option<&'a str>,
     pub transport: &'a str,
     /// Start as RUNNING (uploads scan inside the request).
@@ -104,6 +107,7 @@ fn from_row(r: &AnyRow) -> Result<Job, DbError> {
         size_bytes: r.try_get("size_bytes")?,
         endpoint_id: r.try_get("endpoint_id")?,
         schedule_id: r.try_get("schedule_id")?,
+        agent_id: r.try_get("agent_id")?,
         submitted_by: r.try_get("submitted_by")?,
         transport: r.try_get("transport")?,
         submitted_at: r.try_get("submitted_at")?,
@@ -125,7 +129,7 @@ fn from_row(r: &AnyRow) -> Result<Job, DbError> {
 macro_rules! select {
     ($tail:literal) => {
         concat!(
-            "SELECT id, kind, status, verdict, target, sha256, size_bytes, endpoint_id, schedule_id, ",
+            "SELECT id, kind, status, verdict, target, sha256, size_bytes, endpoint_id, schedule_id, agent_id, ",
             "submitted_by, transport, submitted_at, started_at, finished_at, files_scanned, detections_json, ",
             "errors_json, error_code, error_message FROM scan_jobs ",
             $tail
@@ -143,8 +147,8 @@ impl Db {
             (QUEUED, None)
         };
         sqlx::query(self.sql(
-            "INSERT INTO scan_jobs (id, kind, status, target, endpoint_id, schedule_id, submitted_by, transport, \
-             submitted_at, started_at, files_scanned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+            "INSERT INTO scan_jobs (id, kind, status, target, endpoint_id, schedule_id, agent_id, submitted_by, \
+             transport, submitted_at, started_at, files_scanned) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
         ))
         .bind(&id)
         .bind(j.kind)
@@ -152,6 +156,7 @@ impl Db {
         .bind(j.target)
         .bind(j.endpoint_id)
         .bind(j.schedule_id)
+        .bind(j.agent_id)
         .bind(j.submitted_by)
         .bind(j.transport)
         .bind(now)
@@ -169,10 +174,10 @@ impl Db {
         row.as_ref().map(from_row).transpose()
     }
 
-    /// Oldest queued job ids first.
+    /// Oldest queued job ids first, for this server (not agents).
     pub async fn queued_jobs(&self, limit: i64) -> Result<Vec<String>, DbError> {
         Ok(sqlx::query_scalar(self.sql(
-            "SELECT id FROM scan_jobs WHERE status = 'QUEUED' ORDER BY submitted_at, id LIMIT ?",
+            "SELECT id FROM scan_jobs WHERE status = 'QUEUED' AND agent_id IS NULL ORDER BY submitted_at, id LIMIT ?",
         ))
         .bind(limit)
         .fetch_all(self.pool())
@@ -192,6 +197,15 @@ impl Db {
     }
 
     pub async fn finish_job(&self, id: &str, o: &Outcome) -> Result<(), DbError> {
+        self.write_outcome(id, o, None).await.map(|_| ())
+    }
+
+    async fn write_outcome(
+        &self,
+        id: &str,
+        o: &Outcome,
+        guard: Option<&str>,
+    ) -> Result<u64, DbError> {
         let det = (!o.detections.is_empty())
             .then(|| serde_json::to_string(&o.detections))
             .transpose()
@@ -200,10 +214,11 @@ impl Db {
             .then(|| serde_json::to_string(&o.errors))
             .transpose()
             .map_err(|e| DbError::Encode(e.to_string()))?;
-        sqlx::query(self.sql(
+        let r = sqlx::query(self.sql(
             "UPDATE scan_jobs SET status = 'FINISHED', verdict = ?, finished_at = ?, files_scanned = ?, \
              detections_json = ?, errors_json = ?, error_code = ?, error_message = ?, \
-             sha256 = COALESCE(?, sha256), size_bytes = COALESCE(?, size_bytes) WHERE id = ?",
+             sha256 = COALESCE(?, sha256), size_bytes = COALESCE(?, size_bytes) \
+             WHERE id = ? AND (? IS NULL OR status = ?)",
         ))
         .bind(o.verdict)
         .bind(now_ms())
@@ -215,9 +230,53 @@ impl Db {
         .bind(o.sha256.as_deref())
         .bind(o.size_bytes)
         .bind(id)
+        .bind(guard)
+        .bind(guard)
         .execute(self.pool())
         .await?;
-        Ok(())
+        Ok(r.rows_affected())
+    }
+
+    /// Claim up to `n` of an agent's queued jobs, oldest first.
+    pub async fn claim_agent_jobs(&self, agent_id: i64, n: i64) -> Result<Vec<Job>, DbError> {
+        let ids: Vec<String> = sqlx::query_scalar(self.sql(
+            "SELECT id FROM scan_jobs WHERE status = 'QUEUED' AND agent_id = ? ORDER BY submitted_at, id LIMIT ?",
+        ))
+        .bind(agent_id)
+        .bind(n)
+        .fetch_all(self.pool())
+        .await?;
+        let mut out = Vec::new();
+        for id in ids {
+            if self.claim_job(&id).await?
+                && let Some(j) = self.job(&id).await?
+            {
+                out.push(j);
+            }
+        }
+        Ok(out)
+    }
+
+    /// An agent's jobs in `status` (RUNNING or QUEUED).
+    pub async fn agent_jobs(&self, agent_id: i64, status: &str) -> Result<Vec<Job>, DbError> {
+        let rows = sqlx::query(self.sql(select!(
+            "WHERE agent_id = ? AND status = ? ORDER BY submitted_at, id"
+        )))
+        .bind(agent_id)
+        .bind(status)
+        .fetch_all(self.pool())
+        .await?;
+        rows.iter().map(from_row).collect()
+    }
+
+    /// Finish a job only if it is still in `status`; true if this call did it.
+    pub async fn finish_job_if(
+        &self,
+        id: &str,
+        status: &str,
+        o: &Outcome,
+    ) -> Result<bool, DbError> {
+        Ok(self.write_outcome(id, o, Some(status)).await? == 1)
     }
 
     /// After a restart, RUNNING jobs did not finish. Mark them failed instead
@@ -225,7 +284,8 @@ impl Db {
     pub async fn interrupt_running_jobs(&self) -> Result<u64, DbError> {
         let r = sqlx::query(self.sql(
             "UPDATE scan_jobs SET status = 'FINISHED', verdict = 'ERROR', finished_at = ?, \
-             error_code = 'SCAN_FAILED', error_message = 'Interrupted by a restart.' WHERE status = 'RUNNING'",
+             error_code = 'SCAN_FAILED', error_message = 'Interrupted by a restart.' \
+             WHERE status = 'RUNNING' AND agent_id IS NULL",
         ))
         .bind(now_ms())
         .execute(self.pool())

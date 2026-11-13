@@ -22,6 +22,8 @@ pub enum Command {
     Healthcheck,
     /// Give `admin` a new one-time password in DATA_DIR/bootstrap-admin-password.
     ResetAdmin,
+    /// Run as a remote agent: take scan jobs from AGENT_SERVER_URL and scan with the local clamd.
+    Agent,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -394,6 +396,26 @@ pub struct Config {
         global = true
     )]
     pub request_timeout_secs: u64,
+
+    /// Agent mode: the server to take jobs from, e.g. https://100.82.0.5:8080.
+    #[arg(long, env = "AGENT_SERVER_URL", global = true)]
+    pub agent_server_url: Option<url::Url>,
+
+    /// Agent mode: the agent token shown when the agent was added.
+    #[arg(long, env = "AGENT_TOKEN", hide_env_values = true, global = true)]
+    pub agent_token: Option<String>,
+
+    /// File holding the agent token (Docker secret). Wins over AGENT_TOKEN.
+    #[arg(long, env = "AGENT_TOKEN_FILE", global = true)]
+    pub agent_token_file: Option<std::path::PathBuf>,
+
+    /// Agent mode: extra PEM CA bundle for the server's certificate.
+    #[arg(long, env = "AGENT_CA_FILE", global = true)]
+    pub agent_ca_file: Option<std::path::PathBuf>,
+
+    /// Agent mode: pin the server certificate by SHA-256 (as logged at server start); no CA needed.
+    #[arg(long, env = "AGENT_SERVER_FINGERPRINT", global = true)]
+    pub agent_server_fingerprint: Option<String>,
 }
 
 impl Config {
@@ -415,6 +437,15 @@ impl Config {
     }
 
     /// The scrape token, if one is configured and non-empty.
+    pub fn agent_token(&self) -> Option<String> {
+        let raw = match &self.agent_token_file {
+            Some(p) => std::fs::read_to_string(p).ok()?,
+            None => self.agent_token.clone()?,
+        };
+        let t = raw.trim();
+        (!t.is_empty()).then(|| t.to_owned())
+    }
+
     pub fn metrics_token(&self) -> Option<String> {
         let raw = match &self.metrics_token_file {
             Some(p) => std::fs::read_to_string(p).ok()?,

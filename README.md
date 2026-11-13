@@ -10,6 +10,7 @@ Forked from an earlier Java application, which has been replaced entirely. Licen
 - **Scans**: upload scans (in-memory stream to clamd), path scans limited to `SCAN_ROOTS`, job history with per-file results.
 - **Schedules**: cron schedules per path. Each run first scans an EICAR control, so a run against a broken clamd reports a failure, not a clean result.
 - **Watched folders**: new or changed files under a watched path are scanned automatically.
+- **Agents**: run the same image with `agent` on other hosts. Each agent scans its own folders with its own clamd and reports back, so one UI covers every machine. Agents connect out to the server, so they need no open port.
 - **Multiple clamd endpoints**, with a status page (signature age, threads, queue) and alerts when clamd goes down or signatures go stale.
 - **Users and roles**: Viewer, Operator, Admin. Local accounts, OIDC single sign-on, and LDAP with roles taken from groups on every sign-in.
 - **API** at `/api/v1` with personal tokens, used by the `clamctl` CLI and MCP server (`cli/`, `docs/CLI.md`, `docs/MCP.md`).
@@ -29,9 +30,26 @@ docker compose up -d
 
 Open http://localhost:8080. On first start an `admin` account is created with a generated password, written to `data/bootstrap-admin-password`. Open that file on the host, sign in, then delete the file.
 
-To use a clamd you already run, use `docker-compose.external-clamd.yml`. It joins an existing Docker network, mounts scan roots read-only, and lists optional webhook, metrics, OIDC and LDAP settings as comments.
+To use a clamd you already run, use `docker-compose.external-clamd.yml`. It joins an existing Docker network, mounts scan roots read-only, and lists optional webhook, metrics, OIDC and LDAP settings as comments. For agents on other hosts, see [Agents](#agents).
 
 Lost the admin password? Run `docker compose exec clamv-webui /app/clamv-webui reset-admin`. It writes a new password to a file and prints only the file's path.
+
+## Agents
+
+1. In **Admin > Agents**, add an agent. The page shows its token once, plus a compose file for the agent host.
+2. On that host, save the token as `./agent_token` and start `docker-compose.agent.yml` next to a clamd.
+3. Pick the agent under **Run on** when you scan a path or add a schedule. Schedules with the EICAR control run that check on the agent too.
+
+The agent enforces its own `SCAN_ROOTS`. Jobs queued for an offline agent wait (and expire after a day). A job the agent loses is marked failed. Online and offline changes are logged as `agent.online` and `agent.offline`.
+
+| Variable | Purpose |
+|---|---|
+| `AGENT_SERVER_URL` | The server, as the agent host reaches it |
+| `AGENT_TOKEN(_FILE)` | The agent's token |
+| `AGENT_SERVER_FINGERPRINT` | SHA-256 of the server certificate (logged at server start); trust exactly that certificate |
+| `AGENT_CA_FILE` | Or: a PEM CA bundle for the server certificate |
+
+`CLAMD_ENDPOINT`, `SCAN_ROOTS`, `SCAN_CONCURRENCY`, `CLAMD_MAX_STREAM_MB` and `LOG_*` apply to the agent as they do to the server. Plain `http://` works but sends the token unencrypted, so use it only over a VPN or mesh.
 
 ## Configuration
 
@@ -119,6 +137,7 @@ The Settings page (Admin) can change the scan, retention, watch, webhook-policy 
 - API tokens are stored hashed and shown once. Metrics need a bearer token.
 - Webhook delivery pins the resolved address, refuses private and metadata ranges unless allowed, follows no redirects, and never logs the URL.
 - OIDC uses PKCE, state and nonce, and only asymmetric signatures. LDAP requires TLS.
+- Agent tokens are stored hashed, can be rotated or disabled, and only reach the agent endpoints. Results from an agent are size-limited and cleaned before they are stored.
 
 Report vulnerabilities privately through GitHub security advisories.
 

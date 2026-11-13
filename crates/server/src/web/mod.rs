@@ -1,6 +1,7 @@
 //! Browser UI: pages, login, static assets.
 
 pub mod admin;
+pub mod agents;
 pub mod csrf;
 pub mod endpoints;
 pub mod integrations;
@@ -50,6 +51,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(endpoints::routes())
         .merge(scan::routes())
         .merge(tokens::routes())
+        .merge(agents::routes())
         .merge(schedules::routes())
         .merge(watch::routes())
         .merge(integrations::routes())

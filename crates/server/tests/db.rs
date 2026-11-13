@@ -267,6 +267,7 @@ async fn jobs_claim_filter_and_prune() {
                 target: &target,
                 endpoint_id: None,
                 schedule_id: None,
+                agent_id: None,
                 submitted_by: Some("admin"),
                 transport: "UI",
                 running: false,
@@ -319,6 +320,7 @@ async fn jobs_claim_filter_and_prune() {
                 target: "f",
                 endpoint_id: None,
                 schedule_id: None,
+                agent_id: None,
                 submitted_by: None,
                 transport: "UI",
                 running: true,
@@ -403,6 +405,7 @@ async fn schedules_claim_once() {
                 cron: "@daily",
                 paths: &["/data/ü".to_owned()],
                 endpoint_id: None,
+                agent_id: None,
                 eicar_check: true,
             })
             .await
@@ -495,5 +498,100 @@ async fn processed_files_are_forgotten_by_folder() {
         );
         let _ = db.forget_processed_under(&format!("{root}x")).await;
         let _ = db.forget_processed_under(&root.replace('_', "Z")).await;
+    }
+}
+
+#[tokio::test]
+async fn agents_claim_heartbeat_and_delete() {
+    use clamv_webui::db::agents::Heartbeat;
+    use clamv_webui::db::jobs::{NewJob, Outcome};
+    for db in databases().await {
+        let kind = db.kind();
+        let name = format!("ag-{}", &new_id()[..8]);
+        let (a, secret) = db.create_agent(&name, "admin").await.expect("create");
+        assert!(
+            db.create_agent(&name, "admin").await.is_err(),
+            "{kind:?}: unique name"
+        );
+        assert_eq!(
+            db.agent_by_secret(&secret).await.expect("q").map(|x| x.id),
+            Some(a.id),
+            "{kind:?}"
+        );
+        assert!(
+            db.agent_by_secret("clamv_agent_x")
+                .await
+                .expect("q")
+                .is_none()
+        );
+        db.heartbeat_agent(
+            a.id,
+            &Heartbeat {
+                ip: "100.82.0.9",
+                version: "1.0",
+                clamd_version: Some("ClamAV 1.4"),
+                roots: &["/data/ü".to_owned()],
+                slots: 2,
+            },
+        )
+        .await
+        .expect("hb");
+        assert!(db.set_agent_online(a.id, true).await.expect("on"));
+        assert!(
+            !db.set_agent_online(a.id, true).await.expect("on"),
+            "{kind:?}: once"
+        );
+        let got = db.agent(a.id).await.expect("q").expect("a");
+        assert_eq!(got.roots, vec!["/data/ü".to_owned()], "{kind:?}");
+        assert_eq!((got.slots, got.online), (2, true));
+
+        let mk = |t: &'static str| NewJob {
+            kind: "PATH",
+            target: t,
+            endpoint_id: None,
+            schedule_id: None,
+            agent_id: Some(a.id),
+            submitted_by: None,
+            transport: "UI",
+            running: false,
+        };
+        let j1 = db.create_job(mk("/data/1")).await.expect("j1");
+        let j2 = db.create_job(mk("/data/2")).await.expect("j2");
+        assert!(
+            !db.queued_jobs(1000).await.expect("q").contains(&j1.id),
+            "{kind:?}: local dispatcher skips agent jobs"
+        );
+        let claimed = db.claim_agent_jobs(a.id, 1).await.expect("claim");
+        assert_eq!(claimed.len(), 1, "{kind:?}");
+        let o = Outcome {
+            verdict: "OK",
+            ..Outcome::default()
+        };
+        assert!(
+            db.finish_job_if(&claimed[0].id, "RUNNING", &o)
+                .await
+                .expect("fin")
+        );
+        assert!(
+            !db.finish_job_if(&claimed[0].id, "RUNNING", &o)
+                .await
+                .expect("fin"),
+            "{kind:?}: once"
+        );
+        let rotated = db
+            .rotate_agent_secret(a.id)
+            .await
+            .expect("rot")
+            .expect("some");
+        assert!(
+            db.agent_by_secret(&secret).await.expect("q").is_none(),
+            "{kind:?}"
+        );
+        assert!(db.agent_by_secret(&rotated).await.expect("q").is_some());
+        assert!(db.delete_agent(a.id).await.expect("del"));
+        let left = if claimed[0].id == j1.id { &j2 } else { &j1 };
+        let j = db.job(&left.id).await.expect("q").expect("j");
+        assert_eq!(j.status, "FINISHED", "{kind:?}: removed agent's jobs fail");
+        db.close().await;
     }
 }

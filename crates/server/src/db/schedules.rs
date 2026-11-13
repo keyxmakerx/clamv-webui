@@ -13,6 +13,8 @@ pub struct Schedule {
     pub cron: String,
     pub paths: Vec<String>,
     pub endpoint_id: Option<i64>,
+    /// Runs on this agent instead of this server.
+    pub agent_id: Option<i64>,
     pub enabled: bool,
     pub eicar_check: bool,
     pub created_at: i64,
@@ -25,6 +27,7 @@ pub struct NewSchedule<'a> {
     pub cron: &'a str,
     pub paths: &'a [String],
     pub endpoint_id: Option<i64>,
+    pub agent_id: Option<i64>,
     pub eicar_check: bool,
 }
 
@@ -36,6 +39,7 @@ fn from_row(r: &AnyRow) -> Result<Schedule, DbError> {
         cron: r.try_get("cron")?,
         paths: serde_json::from_str(&paths).unwrap_or_default(),
         endpoint_id: r.try_get("endpoint_id")?,
+        agent_id: r.try_get("agent_id")?,
         enabled: r.try_get::<i64, _>("enabled")? != 0,
         eicar_check: r.try_get::<i64, _>("eicar_check")? != 0,
         created_at: r.try_get("created_at")?,
@@ -47,7 +51,7 @@ fn from_row(r: &AnyRow) -> Result<Schedule, DbError> {
 impl Db {
     pub async fn list_schedules(&self) -> Result<Vec<Schedule>, DbError> {
         let rows = sqlx::query(self.sql(
-            "SELECT id, name, cron, paths_json, endpoint_id, enabled, eicar_check, created_at, last_run_at, \
+            "SELECT id, name, cron, paths_json, endpoint_id, agent_id, enabled, eicar_check, created_at, last_run_at, \
              last_job_id FROM scan_schedules ORDER BY name",
         ))
         .fetch_all(self.pool())
@@ -57,7 +61,7 @@ impl Db {
 
     pub async fn schedule(&self, id: &str) -> Result<Option<Schedule>, DbError> {
         let row = sqlx::query(self.sql(
-            "SELECT id, name, cron, paths_json, endpoint_id, enabled, eicar_check, created_at, last_run_at, \
+            "SELECT id, name, cron, paths_json, endpoint_id, agent_id, enabled, eicar_check, created_at, last_run_at, \
              last_job_id FROM scan_schedules WHERE id = ?",
         ))
         .bind(id)
@@ -71,14 +75,15 @@ impl Db {
         let now = now_ms();
         let paths = serde_json::to_string(s.paths).map_err(|e| DbError::Encode(e.to_string()))?;
         sqlx::query(self.sql(
-            "INSERT INTO scan_schedules (id, name, cron, paths_json, exclusions_json, endpoint_id, enabled, \
-             max_streams, eicar_check, created_at, updated_at) VALUES (?, ?, ?, ?, '[]', ?, 1, 1, ?, ?, ?)",
+            "INSERT INTO scan_schedules (id, name, cron, paths_json, exclusions_json, endpoint_id, agent_id, enabled, \
+             max_streams, eicar_check, created_at, updated_at) VALUES (?, ?, ?, ?, '[]', ?, ?, 1, 1, ?, ?, ?)",
         ))
         .bind(&id)
         .bind(s.name)
         .bind(s.cron)
         .bind(paths)
         .bind(s.endpoint_id)
+        .bind(s.agent_id)
         .bind(i64::from(s.eicar_check))
         .bind(now)
         .bind(now)

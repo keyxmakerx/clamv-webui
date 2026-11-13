@@ -27,6 +27,7 @@ pub struct AppState {
     pub metrics: crate::metrics::Metrics,
     pub oidc: Option<crate::auth::oidc::Oidc>,
     pub ldap: Option<crate::auth::ldap::Ldap>,
+    pub agents: crate::agent::Hub,
 }
 
 impl AppState {
@@ -51,6 +52,7 @@ impl AppState {
             db,
             lockout: Lockout::new(LockoutPolicy::default()),
             watcher: crate::watch::Watcher::default(),
+            agents: crate::agent::Hub::default(),
         }
     }
 
@@ -128,8 +130,19 @@ pub fn router(state: Arc<AppState>, cfg: &Config) -> Router {
         .merge(crate::api::upload_routes())
         .layer(axum::extract::DefaultBodyLimit::disable())
         .layer(tower_http::limit::RequestBodyLimitLayer::new(upload_limit));
+    // Agents long-poll and send whole reports: own timeout and body limit.
+    let agents = crate::agent::routes()
+        .layer(axum::extract::DefaultBodyLimit::disable())
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(
+            32 * 1024 * 1024,
+        ))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            crate::agent::POLL_HOLD + std::time::Duration::from_secs(30),
+        ));
     let mut app = pages
         .merge(uploads)
+        .merge(agents)
         .with_state(state)
         .layer(axum::middleware::from_fn(crate::web::csrf::same_origin));
     for (name, value) in SECURITY_HEADERS {
@@ -186,6 +199,7 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     crate::watch::spawn(state.clone());
     crate::webhook::spawn(state.clone());
     crate::metrics::spawn(state.clone());
+    crate::agent::spawn_monitor(state.clone());
     let app = router(state, &cfg).into_make_service_with_connect_info::<std::net::SocketAddr>();
     let scheme = if cfg.tls_enabled() { "https" } else { "http" };
     tracing::info!(listen = %cfg.listen, scheme, clamd = %cfg.clamd_endpoint, data_dir = %cfg.data_dir.display(), version = env!("CARGO_PKG_VERSION"), "started");

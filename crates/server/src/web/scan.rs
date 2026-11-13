@@ -47,6 +47,7 @@ pub fn upload_routes() -> Router<Arc<AppState>> {
 struct ScanPage {
     nav: Nav,
     endpoints: Vec<Endpoint>,
+    agents: Vec<AgentChoice>,
     roots: Vec<String>,
     max_mb: u64,
     max_files: usize,
@@ -59,6 +60,51 @@ async fn scan_page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
         Err(r) => return r,
     };
     show_scan(&st, Nav::new("scan", &s, &u), String::new()).await
+}
+
+/// An agent offered as a scan target.
+pub(crate) struct AgentChoice {
+    pub id: i64,
+    pub name: String,
+    pub online: bool,
+    pub roots: String,
+}
+
+pub(crate) async fn agent_choices(st: &AppState) -> Vec<AgentChoice> {
+    let now = crate::db::now_ms();
+    st.db
+        .list_agents()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|a| a.enabled && a.last_seen_at.is_some())
+        .map(|a| AgentChoice {
+            online: crate::agent::is_online(&a, now),
+            roots: a.roots.join(", "),
+            id: a.id,
+            name: a.name,
+        })
+        .collect()
+}
+
+/// Where a path scan runs: this server (an endpoint, or the default) or an agent.
+pub(crate) enum RunOn {
+    Endpoint(Option<i64>),
+    Agent(crate::db::agents::Agent),
+}
+
+/// Parse the "Run on" select: empty, an endpoint id, or `a:<agent id>`.
+pub(crate) async fn chosen_target(st: &AppState, raw: Option<&str>) -> Result<RunOn, &'static str> {
+    match raw.map(str::trim).and_then(|v| v.strip_prefix("a:")) {
+        Some(id) => {
+            let id: i64 = id.parse().map_err(|_| "Unknown agent.")?;
+            match st.db.agent(id).await {
+                Ok(Some(a)) if a.enabled => Ok(RunOn::Agent(a)),
+                _ => Err("Unknown agent."),
+            }
+        }
+        None => chosen_endpoint(st, raw).await.map(RunOn::Endpoint),
+    }
 }
 
 async fn show_scan(st: &AppState, nav: Nav, path: String) -> Response {
@@ -79,6 +125,7 @@ async fn show_scan(st: &AppState, nav: Nav, path: String) -> Response {
         &ScanPage {
             nav,
             endpoints,
+            agents: agent_choices(st).await,
             roots: st
                 .cfg
                 .scan_roots
@@ -140,42 +187,53 @@ async fn scan_path(
         );
     }
     let input = f.path.trim().to_owned();
-    if st.cfg.scan_roots.is_empty() {
-        return scan_error(
-            &st,
-            &s,
-            &u,
-            "Path scans are off: SCAN_ROOTS is not set.",
-            input,
-        )
-        .await;
-    }
-    let endpoint_id = match chosen_endpoint(&st, f.endpoint.as_deref()).await {
-        Ok(e) => e,
+    let (target, endpoint_id, agent_id) = match chosen_target(&st, f.endpoint.as_deref()).await {
         Err(m) => return scan_error(&st, &s, &u, m, input).await,
-    };
-    // Pin the endpoint now so the job and its filters name a real one.
-    let Some(ep) = scan::pick_endpoint(&st, endpoint_id).await else {
-        return scan_error(&st, &s, &u, "No enabled clamd endpoint.", input).await;
-    };
-    let real = match scan::resolve_path(&st.cfg.scan_roots, &input).await {
-        Ok(p) => p,
-        Err(m) => {
-            tracing::warn!(event = "scan.path_rejected", user = %u.username, ip = %info.ip, path = %input, "path outside SCAN_ROOTS or missing");
-            return scan_error(&st, &s, &u, m, input).await;
+        Ok(RunOn::Agent(a)) => {
+            if let Some(m) = crate::agent::refuse(&a, &input) {
+                tracing::warn!(event = "scan.path_rejected", user = %u.username, ip = %info.ip, path = %input, agent = %a.name, "path outside the agent's SCAN_ROOTS");
+                return scan_error(&st, &s, &u, m, input).await;
+            }
+            // The agent resolves and checks the path again when it runs.
+            (input.clone(), None, Some(a.id))
         }
-    };
-    // Store the resolved path; it is checked again when the job runs.
-    let Some(target) = real.to_str() else {
-        return scan_error(&st, &s, &u, "Only UTF-8 paths can be queued.", input).await;
+        Ok(RunOn::Endpoint(endpoint_id)) => {
+            if st.cfg.scan_roots.is_empty() {
+                return scan_error(
+                    &st,
+                    &s,
+                    &u,
+                    "Path scans are off: SCAN_ROOTS is not set.",
+                    input,
+                )
+                .await;
+            }
+            // Pin the endpoint now so the job and its filters name a real one.
+            let Some(ep) = scan::pick_endpoint(&st, endpoint_id).await else {
+                return scan_error(&st, &s, &u, "No enabled clamd endpoint.", input).await;
+            };
+            let real = match scan::resolve_path(&st.cfg.scan_roots, &input).await {
+                Ok(p) => p,
+                Err(m) => {
+                    tracing::warn!(event = "scan.path_rejected", user = %u.username, ip = %info.ip, path = %input, "path outside SCAN_ROOTS or missing");
+                    return scan_error(&st, &s, &u, m, input).await;
+                }
+            };
+            // Store the resolved path; it is checked again when the job runs.
+            let Some(target) = real.to_str() else {
+                return scan_error(&st, &s, &u, "Only UTF-8 paths can be queued.", input).await;
+            };
+            (target.to_owned(), Some(ep.id), None)
+        }
     };
     let job = match st
         .db
         .create_job(NewJob {
             kind: scan::KIND_PATH,
-            target,
-            endpoint_id: Some(ep.id),
+            target: &target,
+            endpoint_id,
             schedule_id: None,
+            agent_id,
             submitted_by: Some(&u.username),
             transport: "UI",
             running: false,
@@ -190,6 +248,7 @@ async fn scan_path(
     };
     audit_scan(&st, &u, &info, &job, "SCAN_PATH").await;
     st.runner.poke();
+    st.agents.poke();
     Redirect::to(&format!("/jobs/{}", job.id)).into_response()
 }
 
@@ -368,6 +427,7 @@ async fn scan_upload(
                         target: &name,
                         endpoint_id: Some(ep.id),
                         schedule_id: None,
+                        agent_id: None,
                         submitted_by: Some(&u.username),
                         transport: "UI",
                         running: true,
@@ -382,7 +442,7 @@ async fn scan_upload(
                 };
                 audit_scan(&st, &u, &info, &job, "SCAN_UPLOAD").await;
                 let o = scan_field(&st, &ep, field, &name).await;
-                scan::finish(&st, &job, Some(&ep), o).await;
+                scan::finish(&st, &job, &ep.name, o).await;
                 ids.push(job.id);
             }
             _ => {}
@@ -445,17 +505,35 @@ fn fmt_size(b: Option<i64>) -> String {
     }
 }
 
-pub(crate) fn row(j: &Job, names: &std::collections::HashMap<i64, String>) -> JobRow {
+/// Display names for endpoints and agents.
+#[derive(Default)]
+pub(crate) struct Names {
+    endpoints: std::collections::HashMap<i64, String>,
+    agents: std::collections::HashMap<i64, String>,
+}
+
+impl Names {
+    pub(crate) fn label(&self, endpoint_id: Option<i64>, agent_id: Option<i64>) -> String {
+        match agent_id {
+            Some(a) => format!(
+                "agent: {}",
+                self.agents.get(&a).map_or("(removed)", String::as_str)
+            ),
+            None => endpoint_id
+                .and_then(|id| self.endpoints.get(&id).cloned())
+                .unwrap_or_else(|| "default".to_owned()),
+        }
+    }
+}
+
+pub(crate) fn row(j: &Job, names: &Names) -> JobRow {
     JobRow {
         id: j.id.clone(),
         kind: j.kind.clone(),
         status: j.status.clone(),
         verdict: j.verdict.clone().unwrap_or_default(),
         target: j.target.clone(),
-        endpoint: j
-            .endpoint_id
-            .and_then(|id| names.get(&id).cloned())
-            .unwrap_or_else(|| "default".to_owned()),
+        endpoint: names.label(j.endpoint_id, j.agent_id),
         submitted_by: j.submitted_by.clone().unwrap_or_default(),
         submitted: fmt_ts(j.submitted_at),
         duration: fmt_duration(j.duration_ms()),
@@ -464,14 +542,25 @@ pub(crate) fn row(j: &Job, names: &std::collections::HashMap<i64, String>) -> Jo
     }
 }
 
-pub(crate) async fn endpoint_names(st: &AppState) -> std::collections::HashMap<i64, String> {
-    st.db
-        .list_endpoints()
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .map(|e| (e.id, e.name))
-        .collect()
+pub(crate) async fn endpoint_names(st: &AppState) -> Names {
+    Names {
+        endpoints: st
+            .db
+            .list_endpoints()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| (e.id, e.name))
+            .collect(),
+        agents: st
+            .db
+            .list_agents()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| (a.id, a.name))
+            .collect(),
+    }
 }
 
 #[derive(Template)]

@@ -115,9 +115,21 @@ pub fn failure(code: &'static str, message: &str) -> Outcome {
     }
 }
 
-/// Log every result line, then store the outcome.
-pub async fn finish(st: &AppState, job: &Job, endpoint: Option<&Endpoint>, o: Outcome) {
-    let ep = endpoint.map_or("-", |e| e.name.as_str());
+/// Store the outcome of a RUNNING job, then log every result line, record
+/// metrics and call the webhook. A job someone else already finished is left
+/// alone. `ep` names where it ran (endpoint or agent) for logs.
+pub async fn finish(st: &AppState, job: &Job, ep: &str, o: Outcome) {
+    match st.db.finish_job_if(&job.id, jobs::RUNNING, &o).await {
+        Ok(true) => {}
+        Ok(false) => {
+            tracing::warn!(job_id = %job.id, "job already finished; result ignored");
+            return;
+        }
+        // Still log below: logs are the alert path even when the database is down.
+        Err(e) => {
+            tracing::error!(event = "scan.store_failed", job_id = %job.id, error = %e, "could not store scan result")
+        }
+    }
     for (path, sigs) in &o.detections {
         for sig in sigs {
             tracing::warn!(event = "scan.detected", job_id = %job.id, kind = %job.kind, endpoint = ep, path = %path, signature = %sig, "malware detected");
@@ -137,9 +149,6 @@ pub async fn finish(st: &AppState, job: &Job, endpoint: Option<&Endpoint>, o: Ou
         _ => {
             tracing::info!(event = "scan.finished", job_id = %job.id, kind = %job.kind, endpoint = ep, scan_target = %job.target, verdict = o.verdict, files = o.files_scanned, detections = o.detections.len(), errors = o.errors.len(), "scan finished");
         }
-    }
-    if let Err(e) = st.db.finish_job(&job.id, &o).await {
-        tracing::error!(event = "scan.store_failed", job_id = %job.id, error = %e, "could not store scan result");
     }
     let secs = job
         .started_at
@@ -266,7 +275,7 @@ async fn run(st: Arc<AppState>, id: String, _permit: OwnedSemaphorePermit) {
         other => {
             let o = failure(SCAN_FAILED, "This job type cannot be run.");
             tracing::error!(job_id = %id, kind = other, "unknown job kind");
-            finish(&st, &job, None, o).await;
+            finish(&st, &job, "-", o).await;
         }
     }
 }
@@ -276,7 +285,7 @@ async fn run_path(st: &AppState, job: &Job) {
         return finish(
             st,
             job,
-            None,
+            "-",
             failure(CONFIGURATION_UNAVAILABLE, "No enabled clamd endpoint."),
         )
         .await;
@@ -284,13 +293,13 @@ async fn run_path(st: &AppState, job: &Job) {
     // Re-check at use time: the tree may have changed since submission.
     let path = match resolve_path(&st.cfg.scan_roots, &job.target).await {
         Ok(p) => p,
-        Err(m) => return finish(st, job, Some(&ep), failure(POLICY_REJECTED, m)).await,
+        Err(m) => return finish(st, job, &ep.name, failure(POLICY_REJECTED, m)).await,
     };
     let Ok(addr) = ep.parsed() else {
         return finish(
             st,
             job,
-            Some(&ep),
+            &ep.name,
             failure(CONFIGURATION_UNAVAILABLE, "Endpoint address is invalid."),
         )
         .await;
@@ -314,7 +323,7 @@ async fn run_path(st: &AppState, job: &Job) {
     if let Some((mtime, size)) = seen {
         crate::watch::record(st, &job.target, mtime, size, &o).await;
     }
-    finish(st, job, Some(&ep), o).await;
+    finish(st, job, &ep.name, o).await;
 }
 
 #[cfg(test)]
