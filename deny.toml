@@ -5,6 +5,12 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+ignore = [
+  # Bundled SQLite < 3.54 WAL page-size bug: needs an attacker who can already write
+  # our own db and -wal files in DATA_DIR. sqlx 0.9.0 pins libsqlite3-sys 0.37; drop
+  # this once sqlx ships with libsqlite3-sys >= 0.39.
+  { id = "RUSTSEC-2026-0459", reason = "local-only; needs write access to DATA_DIR" },
+]
 
 [licenses]
 version = 2

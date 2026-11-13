@@ -1,15 +1,11 @@
 //! clamv-webui: web UI for ClamAV clamd.
 
-mod app;
-mod config;
-mod healthcheck;
-mod logging;
-
 use std::process::ExitCode;
 
 use clap::Parser;
 
-use crate::config::{Cli, Command};
+use clamv_webui::config::{Cli, Command};
+use clamv_webui::{app, healthcheck, logging};
 
 #[tokio::main]
 async fn main() -> ExitCode {

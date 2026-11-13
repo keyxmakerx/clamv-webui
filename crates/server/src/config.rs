@@ -57,6 +57,23 @@ pub struct Config {
     #[arg(long, env = "DATA_DIR", default_value = "./data", global = true)]
     pub data_dir: std::path::PathBuf,
 
+    /// Database URL: sqlite://, postgres://, mysql:// or mariadb://. Defaults to SQLite in DATA_DIR.
+    #[arg(long, env = "DATABASE_URL", hide_env_values = true, global = true)]
+    pub database_url: Option<String>,
+
+    /// File holding the database URL (Docker secret). Wins over DATABASE_URL.
+    #[arg(long, env = "DATABASE_URL_FILE", global = true)]
+    pub database_url_file: Option<std::path::PathBuf>,
+
+    /// Maximum database connections.
+    #[arg(
+        long,
+        env = "DATABASE_MAX_CONNECTIONS",
+        default_value_t = 10,
+        global = true
+    )]
+    pub database_max_connections: u32,
+
     /// Default clamd endpoint: tcp://host:port or unix:///path.
     #[arg(
         long,
@@ -77,6 +94,23 @@ pub struct Config {
 }
 
 impl Config {
+    /// Resolve the database URL without ever logging it.
+    pub fn database_url(&self) -> anyhow::Result<String> {
+        if let Some(path) = &self.database_url_file {
+            let raw = std::fs::read_to_string(path).map_err(|e| {
+                anyhow::anyhow!("cannot read DATABASE_URL_FILE {}: {e}", path.display())
+            })?;
+            return Ok(raw.trim().to_owned());
+        }
+        if let Some(url) = &self.database_url {
+            return Ok(url.clone());
+        }
+        Ok(format!(
+            "sqlite://{}",
+            self.data_dir.join("clamv-webui.db").display()
+        ))
+    }
+
     pub fn request_timeout(&self) -> Duration {
         Duration::from_secs(self.request_timeout_secs)
     }

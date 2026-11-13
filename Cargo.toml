@@ -5,7 +5,7 @@ members = ["crates/clamd", "crates/server"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.94"
 license = "LGPL-2.1-or-later"
 repository = "https://github.com/keyxmakerx/clamv-webui"
 publish = false

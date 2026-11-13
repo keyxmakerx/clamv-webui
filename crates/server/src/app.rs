@@ -12,9 +12,11 @@ use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::config::Config;
+use crate::db::{Db, redact_url};
 
 pub struct AppState {
     pub clamd: clamd::Client,
+    pub db: Db,
 }
 
 /// Headers sent on every response (S7). Inline scripts and styles are not allowed.
@@ -55,14 +57,23 @@ pub fn router(state: Arc<AppState>, cfg: &Config) -> Router {
 }
 
 pub async fn serve(cfg: Config) -> anyhow::Result<()> {
+    let url = cfg.database_url()?;
+    let db = Db::open(&url, cfg.database_max_connections)
+        .await
+        .map_err(|e| anyhow::anyhow!("database {}: {e}", redact_url(&url)))?;
+    tracing::info!(database = %redact_url(&url), "database ready");
     let clamd = clamd::Client::new(cfg.clamd_endpoint.clone(), clamd::Limits::default());
-    let state = Arc::new(AppState { clamd });
+    let state = Arc::new(AppState {
+        clamd,
+        db: db.clone(),
+    });
     let app = router(state, &cfg);
     let listener = tokio::net::TcpListener::bind(cfg.listen).await?;
     tracing::info!(listen = %cfg.listen, clamd = %cfg.clamd_endpoint, data_dir = %cfg.data_dir.display(), version = env!("CARGO_PKG_VERSION"), "started");
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown())
         .await?;
+    db.close().await;
     tracing::info!("stopped");
     Ok(())
 }
@@ -96,8 +107,12 @@ async fn healthz() -> impl IntoResponse {
     ([(header::CACHE_CONTROL, "no-store")], "ok")
 }
 
-/// Readiness: is the default clamd reachable? Reveals nothing beyond up/down.
+/// Readiness: database and default clamd reachable? Reveals nothing beyond up/down.
 async fn readyz(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    if let Err(e) = state.db.ping().await {
+        tracing::warn!(error = %e, "database not reachable");
+        return (StatusCode::SERVICE_UNAVAILABLE, "database unavailable");
+    }
     match state.clamd.ping().await {
         Ok(()) => (StatusCode::OK, "ready"),
         Err(e) => {
@@ -115,19 +130,21 @@ mod tests {
     use clap::Parser;
     use tower::ServiceExt;
 
-    fn test_app() -> Router {
+    async fn test_app() -> Router {
         let cli = crate::config::Cli::parse_from([
             "clamv-webui",
             "--clamd-endpoint",
             "tcp://127.0.0.1:1",
         ]);
         let clamd = clamd::Client::new(cli.config.clamd_endpoint.clone(), clamd::Limits::default());
-        router(Arc::new(AppState { clamd }), &cli.config)
+        let db = Db::open("sqlite::memory:", 1).await.expect("db");
+        router(Arc::new(AppState { clamd, db }), &cli.config)
     }
 
     #[tokio::test]
     async fn healthz_is_open_and_hardened() {
         let res = test_app()
+            .await
             .oneshot(Request::get("/healthz").body(Body::empty()).expect("req"))
             .await
             .expect("res");
@@ -140,6 +157,7 @@ mod tests {
     #[tokio::test]
     async fn readyz_fails_without_clamd() {
         let res = test_app()
+            .await
             .oneshot(Request::get("/readyz").body(Body::empty()).expect("req"))
             .await
             .expect("res");
@@ -149,6 +167,7 @@ mod tests {
     #[tokio::test]
     async fn unknown_paths_404_with_headers() {
         let res = test_app()
+            .await
             .oneshot(Request::get("/h2").body(Body::empty()).expect("req"))
             .await
             .expect("res");

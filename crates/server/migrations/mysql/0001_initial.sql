@@ -1,0 +1,156 @@
+-- Initial schema. Portable types only: ids are UUIDv7 text, times are unix milliseconds, booleans are 0/1.
+
+CREATE TABLE endpoints (
+    id VARCHAR(36) PRIMARY KEY,
+    name VARCHAR(64) NOT NULL,
+    address VARCHAR(512) NOT NULL,
+    enabled BIGINT NOT NULL,
+    is_default BIGINT NOT NULL,
+    created_at BIGINT NOT NULL,
+    CONSTRAINT uk_endpoints_name UNIQUE (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE users (
+    id VARCHAR(36) PRIMARY KEY,
+    username VARCHAR(64) NOT NULL,
+    password_hash VARCHAR(255) NOT NULL,
+    role VARCHAR(16) NOT NULL,
+    enabled BIGINT NOT NULL,
+    must_change_password BIGINT NOT NULL,
+    created_at BIGINT NOT NULL,
+    last_login_at BIGINT,
+    CONSTRAINT uk_users_username UNIQUE (username)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE sessions (
+    id_hash VARCHAR(64) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL,
+    csrf_token VARCHAR(64) NOT NULL,
+    created_at BIGINT NOT NULL,
+    last_seen_at BIGINT NOT NULL,
+    expires_at BIGINT NOT NULL,
+    ip VARCHAR(64),
+    user_agent VARCHAR(255),
+    CONSTRAINT fk_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE INDEX idx_sessions_user ON sessions(user_id);
+CREATE INDEX idx_sessions_expires ON sessions(expires_at);
+
+CREATE TABLE api_tokens (
+    id VARCHAR(36) PRIMARY KEY,
+    label VARCHAR(100) NOT NULL,
+    token_hash VARCHAR(64) NOT NULL,
+    prefix VARCHAR(16) NOT NULL,
+    scopes VARCHAR(512) NOT NULL,
+    endpoint_ids TEXT,
+    path_roots TEXT,
+    created_by VARCHAR(64),
+    created_at BIGINT NOT NULL,
+    expires_at BIGINT,
+    revoked_at BIGINT,
+    last_used_at BIGINT,
+    CONSTRAINT uk_api_tokens_hash UNIQUE (token_hash)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE audit_events (
+    id VARCHAR(36) PRIMARY KEY,
+    at BIGINT NOT NULL,
+    username VARCHAR(64),
+    action VARCHAR(64) NOT NULL,
+    outcome VARCHAR(64),
+    details TEXT,
+    job_id VARCHAR(36),
+    transport VARCHAR(32),
+    endpoint_id VARCHAR(36),
+    ip VARCHAR(64),
+    user_agent VARCHAR(255)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE INDEX idx_audit_at ON audit_events(at);
+CREATE INDEX idx_audit_job ON audit_events(job_id);
+
+CREATE TABLE scan_schedules (
+    id VARCHAR(36) PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    cron VARCHAR(128) NOT NULL,
+    paths_json TEXT NOT NULL,
+    exclusions_json TEXT NOT NULL,
+    endpoint_id VARCHAR(36),
+    enabled BIGINT NOT NULL,
+    window_start_min BIGINT,
+    window_end_min BIGINT,
+    max_streams BIGINT NOT NULL,
+    eicar_check BIGINT NOT NULL,
+    created_at BIGINT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    last_run_at BIGINT,
+    last_job_id VARCHAR(36),
+    CONSTRAINT uk_scan_schedules_name UNIQUE (name),
+    CONSTRAINT fk_schedules_endpoint FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE scan_jobs (
+    id VARCHAR(36) PRIMARY KEY,
+    kind VARCHAR(16) NOT NULL,
+    status VARCHAR(16) NOT NULL,
+    verdict VARCHAR(16),
+    target TEXT NOT NULL,
+    sha256 VARCHAR(64),
+    size_bytes BIGINT,
+    endpoint_id VARCHAR(36),
+    schedule_id VARCHAR(36),
+    submitted_by VARCHAR(64),
+    transport VARCHAR(32),
+    submitted_at BIGINT NOT NULL,
+    started_at BIGINT,
+    finished_at BIGINT,
+    files_scanned BIGINT NOT NULL,
+    detections_json TEXT,
+    error_message TEXT,
+    quarantine_path TEXT,
+    CONSTRAINT fk_jobs_endpoint FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE SET NULL,
+    CONSTRAINT fk_jobs_schedule FOREIGN KEY (schedule_id) REFERENCES scan_schedules(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE INDEX idx_jobs_submitted ON scan_jobs(submitted_at);
+CREATE INDEX idx_jobs_status ON scan_jobs(status);
+CREATE INDEX idx_jobs_schedule ON scan_jobs(schedule_id);
+
+CREATE TABLE watched_directories (
+    id VARCHAR(36) PRIMARY KEY,
+    path TEXT NOT NULL,
+    endpoint_id VARCHAR(36),
+    enabled BIGINT NOT NULL,
+    created_at BIGINT NOT NULL,
+    CONSTRAINT fk_watch_endpoint FOREIGN KEY (endpoint_id) REFERENCES endpoints(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE processed_files (
+    path_sha256 VARCHAR(64) PRIMARY KEY,
+    path TEXT NOT NULL,
+    modified_ms BIGINT NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    processed_at BIGINT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE external_identities (
+    principal_name VARCHAR(64) PRIMARY KEY,
+    source VARCHAR(8) NOT NULL,
+    issuer VARCHAR(512) NOT NULL,
+    subject VARCHAR(512) NOT NULL,
+    first_seen_at BIGINT NOT NULL,
+    last_seen_at BIGINT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE auth_provider_settings (
+    provider VARCHAR(16) PRIMARY KEY,
+    settings_json TEXT NOT NULL,
+    encrypted_secret TEXT,
+    updated_at BIGINT NOT NULL,
+    updated_by VARCHAR(255) NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE settings (
+    name VARCHAR(128) PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at BIGINT NOT NULL,
+    updated_by VARCHAR(255)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

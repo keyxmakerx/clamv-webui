@@ -27,6 +27,33 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --all-targets
 
+  db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17
+        env: { POSTGRES_PASSWORD: test, POSTGRES_DB: t }
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-retries 20
+      mysql:
+        image: mysql:8.4
+        env: { MYSQL_ROOT_PASSWORD: test, MYSQL_DATABASE: t }
+        ports: ['3306:3306']
+        options: --health-cmd "mysqladmin ping -ptest" --health-interval 5s --health-retries 30
+      mariadb:
+        image: mariadb:11
+        env: { MARIADB_ROOT_PASSWORD: test, MARIADB_DATABASE: t }
+        ports: ['3307:3306']
+        options: --health-cmd "healthcheck.sh --connect --innodb_initialized" --health-interval 5s --health-retries 30
+    env:
+      TEST_DATABASE_URLS: postgres://postgres:test@127.0.0.1:5432/t,mysql://root:test@127.0.0.1:3306/t,mariadb://root:test@127.0.0.1:3307/t
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked -p clamv-webui --test db
+
   deny:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -37,7 +64,7 @@ jobs:
           command: check advisories bans licenses sources
 
   image:
-    needs: [check, deny]
+    needs: [check, db, deny]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:

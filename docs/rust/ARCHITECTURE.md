@@ -21,7 +21,7 @@ The Go `clamctl` CLI and MCP bridge in `cli/` stay as they are. The REST API v1 
 | Templates | `askama` | Compile-time checked templates; a typo fails the build, not a page. Thymeleaf pages are ported one by one. |
 | Static assets | `rust-embed` | Existing Bootstrap, jQuery, xterm.js and CSS are reused and embedded in the binary. |
 | i18n | `fluent` or a small `.properties` loader | The six existing `messages_*.properties` files are reused as-is. |
-| Database | `sqlx` (compile-time checked queries, migrations) | See "Databases". |
+| Database | `sqlx` (Any driver, migrations) | See "Databases". |
 | Passwords | `argon2` for new hashes, `bcrypt` to verify imported Java hashes and rehash on login | Upgrade path without forcing password resets. |
 | Sessions / CSRF | `tower-sessions` (DB-backed store), own double-submit CSRF | SameSite=Strict, Secure configurable (S8). |
 | OIDC | `openidconnect` | Issuer discovery, PKCE, nonce, exact redirect URI. |
@@ -37,7 +37,7 @@ The Go `clamctl` CLI and MCP bridge in `cli/` stay as they are. The REST API v1 
 
 ## Databases
 
-Rust has no H2 driver. Supported: **SQLite (default, replaces H2), PostgreSQL, MySQL and MariaDB** (operator decision, 2026-11-13). `sqlx` covers all four (MariaDB via the MySQL driver). Each database gets its own migration folder (`migrations/{sqlite,postgres,mysql}`, MariaDB shares MySQL's unless a difference forces a split) and a repository layer behind a trait, so queries stay compile-time checked per backend. CI runs the DB test suite against SQLite plus Postgres, MySQL and MariaDB service containers. Existing H2 data is not imported automatically; a one-off `clamv-webui import-h2 <export.sql>` can be added if the NAS install has history worth keeping.
+Rust has no H2 driver. Supported: **SQLite (default, replaces H2), PostgreSQL, MySQL and MariaDB** (operator decision, 2026-11-13). `sqlx` covers all four (MariaDB via the MySQL driver). One `sqlx::AnyPool` with portable SQL: `?` placeholders (rewritten for Postgres), UUIDv7 text ids, unix-millisecond times and 0/1 booleans, so every column decodes the same everywhere. Each database has its own migration folder (`crates/server/migrations/{sqlite,postgres,mysql}`; MariaDB shares MySQL's). Queries are checked at runtime, not compile time (sqlx macros cannot target four databases at once), so the DB test suite runs on all four in CI. CI runs the DB test suite against SQLite plus Postgres, MySQL and MariaDB service containers. Existing H2 data is not imported automatically; a one-off `clamv-webui import-h2 <export.sql>` can be added if the NAS install has history worth keeping.
 
 ## Security design rules (from brief section 2)
 
