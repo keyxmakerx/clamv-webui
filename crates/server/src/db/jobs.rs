@@ -365,12 +365,19 @@ impl Db {
         ))
     }
 
-    /// Delete finished jobs submitted before `before_ms` (N5).
-    pub async fn prune_jobs(&self, before_ms: i64) -> Result<u64, DbError> {
-        let r = sqlx::query(
-            self.sql("DELETE FROM scan_jobs WHERE status = 'FINISHED' AND submitted_at < ?"),
-        )
+    /// Delete finished jobs submitted before `before_ms` (N5). Jobs that found
+    /// malware also have to be older than `detections_before_ms`.
+    pub async fn prune_jobs(
+        &self,
+        before_ms: i64,
+        detections_before_ms: i64,
+    ) -> Result<u64, DbError> {
+        let r = sqlx::query(self.sql(
+            "DELETE FROM scan_jobs WHERE status = 'FINISHED' AND submitted_at < ? \
+             AND (verdict IS NULL OR verdict <> 'VIRUS_FOUND' OR submitted_at < ?)",
+        ))
         .bind(before_ms)
+        .bind(detections_before_ms)
         .execute(self.pool())
         .await?;
         Ok(r.rows_affected())

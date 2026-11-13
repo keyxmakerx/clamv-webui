@@ -425,6 +425,35 @@ async fn watcher_queues_new_files_once() {
         0,
         "unchanged files are not rescanned"
     );
+    // A name that is not UTF-8 is still scanned, by streaming the file.
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        let bad = dir.join(std::ffi::OsStr::from_bytes(b"eicar\xff.com"));
+        std::fs::write(&bad, EICAR).expect("write");
+        std::fs::File::options()
+            .write(true)
+            .open(&bad)
+            .expect("open")
+            .set_modified(past)
+            .expect("mtime");
+        assert_eq!(clamv_webui::watch::pass(&st).await, 1);
+        st.runner.poke();
+        let (jobs, _) = st
+            .db
+            .list_jobs(&JobFilter::default(), 0, 10)
+            .await
+            .expect("list");
+        let job = wait_finished(&st, &jobs[0].id).await;
+        assert!(job.target.contains("//raw:"), "{}", job.target);
+        assert_eq!(job.verdict.as_deref(), Some("VIRUS_FOUND"));
+        assert!(job.detections.contains_key(&job.target));
+        assert_eq!(
+            clamv_webui::watch::pass(&st).await,
+            0,
+            "recorded once scanned"
+        );
+    }
     let _ = std::fs::remove_dir_all(&base);
 }
 

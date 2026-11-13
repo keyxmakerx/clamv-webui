@@ -25,7 +25,7 @@ services:
       - ./scan:/scan:ro  # files to scan; clamd sees the same path
 
   clamav:
-    image: clamav/clamav:latest
+    image: clamav/clamav:latest  # raise StreamMaxLength to 1024M in clamd.conf for 1 GB uploads
     container_name: clamav
     restart: unless-stopped
     volumes:

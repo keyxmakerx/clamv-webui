@@ -33,8 +33,15 @@ pub async fn resolve_path(roots: &[PathBuf], input: &str) -> Result<PathBuf, &'s
     if input.is_empty()
         || input.len() > 4096
         || input.bytes().any(|b| matches!(b, 0 | b'\n' | b'\r'))
-        || !Path::new(input).is_absolute()
     {
+        return Err(PATH_REJECTED);
+    }
+    resolve_os_path(roots, Path::new(input)).await
+}
+
+/// `resolve_path` for a path that may not be UTF-8.
+pub async fn resolve_os_path(roots: &[PathBuf], input: &Path) -> Result<PathBuf, &'static str> {
+    if !input.is_absolute() {
         return Err(PATH_REJECTED);
     }
     let real = tokio::fs::canonicalize(input)
@@ -290,8 +297,18 @@ async fn run_path(st: &AppState, job: &Job) {
         )
         .await;
     };
+    // A watched file whose name is not UTF-8: its exact bytes are in the key.
+    let raw = if job.kind == KIND_WATCH {
+        crate::watch::raw_path(&job.target)
+    } else {
+        None
+    };
     // Re-check at use time: the tree may have changed since submission.
-    let path = match resolve_path(&st.cfg.scan_roots, &job.target).await {
+    let resolved = match &raw {
+        Some(p) => resolve_os_path(&st.cfg.scan_roots, p).await,
+        None => resolve_path(&st.cfg.scan_roots, &job.target).await,
+    };
+    let path = match resolved {
         Ok(p) => p,
         Err(m) => return finish(st, job, &ep.name, failure(POLICY_REJECTED, m)).await,
     };
@@ -313,8 +330,18 @@ async fn run_path(st: &AppState, job: &Job) {
     } else {
         None
     };
-    let o = match st.clamd(addr).multiscan(&path).await {
+    let result = if raw.is_some() {
+        // clamd's reply names files as text; stream the file so the name never matters.
+        stream_file(st, addr, &path, &job.target).await
+    } else {
+        st.clamd(addr).multiscan(&path).await
+    };
+    let o = match result {
         Ok(report) => outcome(report),
+        Err(clamd::Error::StreamTooLarge(_)) => failure(
+            LIMIT_EXCEEDED,
+            "The file is larger than CLAMD_MAX_STREAM_MB.",
+        ),
         Err(e) => {
             tracing::warn!(job_id = %job.id, endpoint = %ep.name, error = %e, "clamd path scan failed");
             failure(SCAN_FAILED, "clamd did not complete the scan.")
@@ -324,6 +351,29 @@ async fn run_path(st: &AppState, job: &Job) {
         crate::watch::record(st, &job.target, mtime, size, &o).await;
     }
     finish(st, job, &ep.name, o).await;
+}
+
+/// Scan one file by streaming it; results are named `display`.
+async fn stream_file(
+    st: &AppState,
+    addr: clamd::Endpoint,
+    path: &Path,
+    display: &str,
+) -> Result<clamd::ScanReport, clamd::Error> {
+    let f = tokio::fs::File::open(path)
+        .await
+        .map_err(clamd::Error::Io)?;
+    let mut r = st
+        .clamd(addr)
+        .instream(tokio::io::BufReader::new(f))
+        .await?;
+    for d in &mut r.detections {
+        d.path = display.to_owned();
+    }
+    for e in &mut r.errors {
+        e.path = display.to_owned();
+    }
+    Ok(r)
 }
 
 #[cfg(test)]

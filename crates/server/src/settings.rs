@@ -71,6 +71,14 @@ pub const FIELDS: &[Field] = &[
         current: |c| c.audit_retention_days.to_string(),
     },
     Field {
+        env: "DETECTION_RETENTION_DAYS",
+        section: "Scanning",
+        label: "Keep jobs that found malware (days)",
+        help: "At least this long, even past the job limit. 0 keeps them forever.",
+        kind: Kind::Number { min: 0, max: 36500 },
+        current: |c| c.detection_retention_days.to_string(),
+    },
+    Field {
         env: "WATCH_POLL_SECS",
         section: "Scanning",
         label: "Watched folder interval (s)",
@@ -242,6 +250,9 @@ fn copy(env: &str, dst: &mut Config, src: &Config) {
         "CLAMD_MAX_STREAM_MB" => dst.clamd_max_stream_mb = src.clamd_max_stream_mb,
         "JOB_RETENTION_DAYS" => dst.job_retention_days = src.job_retention_days,
         "AUDIT_RETENTION_DAYS" => dst.audit_retention_days = src.audit_retention_days,
+        "DETECTION_RETENTION_DAYS" => {
+            dst.detection_retention_days = src.detection_retention_days;
+        }
         "WATCH_POLL_SECS" => dst.watch_poll_secs = src.watch_poll_secs,
         "WEBHOOK_EVENTS" => dst.webhook_events = src.webhook_events,
         "WEBHOOK_ALLOWED_CIDRS" => dst

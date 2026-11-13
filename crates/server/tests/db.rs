@@ -331,8 +331,15 @@ async fn jobs_claim_filter_and_prune() {
         let r = db.job(&r.id).await.expect("q").expect("job");
         assert_eq!(r.error_code.as_deref(), Some("SCAN_FAILED"), "{kind:?}");
         assert_eq!(
-            db.prune_jobs(now_ms() + 1).await.expect("prune"),
-            2,
+            db.prune_jobs(now_ms() + 1, i64::MIN).await.expect("prune"),
+            1,
+            "{kind:?}: the detection is kept longer"
+        );
+        assert_eq!(
+            db.prune_jobs(now_ms() + 1, now_ms() + 1)
+                .await
+                .expect("prune"),
+            1,
             "{kind:?}"
         );
         db.close().await;

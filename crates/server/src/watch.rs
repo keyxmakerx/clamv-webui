@@ -56,6 +56,42 @@ pub fn stamp(m: &std::fs::Metadata) -> (i64, i64) {
     (mtime, i64::try_from(m.len()).unwrap_or(i64::MAX))
 }
 
+/// Marks a watched file whose name is not UTF-8. Its key is the readable
+/// (lossy) path, this mark, then the exact path bytes in hex. Walked paths
+/// never contain `//`, so a key cannot collide with a real file's path.
+pub const RAW_MARK: &str = "//raw:";
+
+/// Key for a non-UTF-8 path.
+pub fn raw_key(p: &Path) -> String {
+    #[cfg(unix)]
+    let bytes = std::os::unix::ffi::OsStrExt::as_bytes(p.as_os_str()).to_vec();
+    #[cfg(not(unix))]
+    let bytes = p.to_string_lossy().into_owned().into_bytes();
+    let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+    format!("{}{RAW_MARK}{hex}", p.to_string_lossy())
+}
+
+/// The exact path behind a `raw_key`, if `target` is one.
+pub fn raw_path(target: &str) -> Option<PathBuf> {
+    let (_, hex) = target.rsplit_once(RAW_MARK)?;
+    if hex.len() % 2 != 0 {
+        return None;
+    }
+    let bytes = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok())
+        .collect::<Option<Vec<u8>>>()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        Some(PathBuf::from(std::ffi::OsString::from_vec(bytes)))
+    }
+    #[cfg(not(unix))]
+    {
+        String::from_utf8(bytes).ok().map(PathBuf::from)
+    }
+}
+
 /// Regular files under `root`, depth-limited, without following symlinks.
 pub fn walk(root: &Path) -> Vec<(String, (i64, i64))> {
     let mut out = Vec::new();
@@ -76,9 +112,11 @@ pub fn walk(root: &Path) -> Vec<(String, (i64, i64))> {
             if ft.is_dir() && depth < MAX_DEPTH {
                 stack.push((path, depth + 1));
             } else if ft.is_file()
-                && let (Some(p), Ok(m)) = (path.to_str(), entry.metadata())
+                && let Ok(m) = entry.metadata()
             {
-                out.push((p.to_owned(), stamp(&m)));
+                // Names that are not UTF-8 are scanned too (streamed to clamd).
+                let key = path.to_str().map_or_else(|| raw_key(&path), str::to_owned);
+                out.push((key, stamp(&m)));
             }
         }
     }
@@ -216,4 +254,35 @@ pub async fn baseline(st: &AppState, root: PathBuf) -> usize {
         }
     }
     n
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_names_are_walked_and_round_trip() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = std::env::temp_dir().join(format!("clamv-raw-{}", crate::db::new_id()));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let bad = dir.join(std::ffi::OsStr::from_bytes(b"bad\xff.exe"));
+        std::fs::write(&bad, b"x").expect("write");
+        std::fs::write(dir.join("ok.txt"), b"x").expect("write");
+        let found = walk(&dir);
+        assert_eq!(found.len(), 2);
+        let key = found
+            .iter()
+            .map(|(k, _)| k)
+            .find(|k| k.contains(RAW_MARK))
+            .expect("raw key");
+        assert!(
+            key.starts_with(dir.to_str().expect("utf8")),
+            "folder prefix kept"
+        );
+        assert_eq!(raw_path(key).as_deref(), Some(bad.as_path()));
+        assert_eq!(raw_path("/data/plain.txt"), None);
+        assert_eq!(raw_path("/data/x//raw:zz"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

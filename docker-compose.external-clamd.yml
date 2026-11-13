@@ -6,6 +6,7 @@ services:
     restart: unless-stopped
     environment:
       CLAMD_ENDPOINT: tcp://clamav:3310  # existing clamd container on the shared network
+      # CLAMD_MAX_STREAM_MB: "1024"  # default; clamd StreamMaxLength must be at least this
       CLAMD_HOST_ALLOWLIST: clamav  # admins can only add endpoints on these hosts
       SCAN_ROOTS: /data,/documents,/games  # clamd must see these at the same paths
       LOG_FORMAT: json  # one JSON object per line for fluent-bit

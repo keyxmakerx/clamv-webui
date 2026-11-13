@@ -282,9 +282,15 @@ fn spawn_housekeeping(state: Arc<AppState>) {
             let days = state.cfg.job_retention_days;
             if days > 0 {
                 let ms = i64::try_from(days.saturating_mul(86_400_000)).unwrap_or(i64::MAX);
+                let det = match state.cfg.detection_retention_days {
+                    0 => i64::MIN,
+                    d => crate::db::now_ms().saturating_sub(
+                        i64::try_from(d.saturating_mul(86_400_000)).unwrap_or(i64::MAX),
+                    ),
+                };
                 match state
                     .db
-                    .prune_jobs(crate::db::now_ms().saturating_sub(ms))
+                    .prune_jobs(crate::db::now_ms().saturating_sub(ms), det)
                     .await
                 {
                     Ok(n) if n > 0 => {

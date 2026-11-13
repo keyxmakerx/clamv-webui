@@ -72,13 +72,16 @@ Every option is an environment variable (or a `--flag`; run `clamv-webui --help`
 |---|---|---|
 | `CLAMD_ENDPOINT` | `tcp://clamav:3310` | Default endpoint (`tcp://host:port` or `unix:///path`) |
 | `CLAMD_HOST_ALLOWLIST` | empty | Hosts admins may add endpoints for; empty allows only the default |
-| `CLAMD_MAX_STREAM_MB` | `256` | Must not exceed clamd's `StreamMaxLength` |
+| `CLAMD_MAX_STREAM_MB` | `1024` | Upload size limit; raise clamd's `StreamMaxLength` to match (see below) |
 | `SCAN_ROOTS` | empty | Comma-separated paths that path scans, schedules and watches may use; clamd must see them at the same paths |
 | `SCAN_CONCURRENCY` | `2` | Path scans running at once |
 | `UPLOAD_MAX_FILES` | `10` | Files per upload |
 | `WATCH_POLL_SECS` | `60` | Seconds between looks at watched folders |
 | `JOB_RETENTION_DAYS` | `90` | `0` keeps jobs forever |
 | `AUDIT_RETENTION_DAYS` | `365` | `0` keeps audit events forever |
+| `DETECTION_RETENTION_DAYS` | `365` | Jobs that found malware are kept at least this long; `0` keeps them forever |
+
+clamd refuses streams over its `StreamMaxLength` (25 MB by default in many builds), so set it to at least `CLAMD_MAX_STREAM_MB` in clamd.conf, e.g. `StreamMaxLength 1024M`, and keep `MaxFileSize` and `MaxScanSize` at or above it. Files with names that are not UTF-8 in watched folders are streamed to clamd, so they are scanned too.
 
 ### Web, sessions and TLS
 

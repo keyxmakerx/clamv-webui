@@ -108,7 +108,7 @@ pub struct Config {
     #[arg(
         long,
         env = "CLAMD_MAX_STREAM_MB",
-        default_value_t = 256,
+        default_value_t = 1024,
         global = true
     )]
     pub clamd_max_stream_mb: u64,
@@ -329,6 +329,15 @@ pub struct Config {
         global = true
     )]
     pub audit_retention_days: u64,
+
+    /// Jobs that found malware are kept at least this long. 0 keeps them forever.
+    #[arg(
+        long,
+        env = "DETECTION_RETENTION_DAYS",
+        default_value_t = 365,
+        global = true
+    )]
+    pub detection_retention_days: u64,
 
     /// PEM certificate chain for HTTPS. With TLS_KEY_FILE, serves HTTPS instead of HTTP.
     #[arg(long, env = "TLS_CERT_FILE", global = true, requires = "tls_key_file")]
