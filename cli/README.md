@@ -195,21 +195,20 @@ go run ./tools/build.go
 
 The builder compiles all six targets with `CGO_ENABLED=0`, stripped symbols and
 trimmed source paths, then writes checksums and a manifest. A single target can
-be selected with `-targets linux/amd64`. Source builds do not require the server
-JAR. `.github/workflows/clamctl.yml` defines native Linux/macOS/Windows tests,
-cross-platform builds and the real Spring/native CLI integration check.
+be selected with `-targets linux/amd64`. Source builds do not require the server.
+`.github/workflows/clamctl.yml` defines native Linux/macOS/Windows tests,
+cross-platform builds and the full server/native CLI integration check.
 
-The optional full pipeline test requires the built server JAR, Go and the native
-Linux CLI, then runs from the source root:
+The optional full pipeline test requires the server (`cargo build --release`),
+Go and the native Linux CLI, then runs from the source root:
 
 ```bash
 python3 scripts/test-clamctl-integration.py
 ```
 
-It starts an isolated Spring application, temporary H2/settings/files, local TLS
+It starts an isolated server with a temporary SQLite database, a local TLS
 proxy and a synthetic ClamD wire fixture. It does not connect to a production
-server. See `docs/CLI_VALIDATION.md` in the source root for recorded results and
-remaining platform checks.
+server.
 
 The CLI follows the parent project's declared LGPL 2.1 license (`LICENSE`).
 Distributed binaries also contain the Go runtime/standard library under the

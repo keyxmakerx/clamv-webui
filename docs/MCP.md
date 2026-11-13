@@ -212,7 +212,7 @@ go vet ./...
 go run ./tools/build.go
 ```
 
-From the source root, after packaging the Java JAR and CLI binaries:
+From the source root, after `cargo build --release` and building the CLI binaries:
 
 ```bash
 python3 scripts/test-clamctl-integration.py
@@ -220,8 +220,7 @@ python3 scripts/test-clamctl-integration.py
 
 The integration runner includes native MCP stdio discovery, all five tools and
 all three resources, with Basic/CSRF and real scoped Bearer authentication
-against the isolated Spring application. ClamD is a synthetic wire fixture.
-See `docs/MCP_VALIDATION.md` for recorded checks and deployment limits.
+against an isolated server. ClamD is a synthetic wire fixture.
 
 Reference documentation used for the protocol and examples:
 

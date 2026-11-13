@@ -3,8 +3,8 @@ clamv-webui (keyxmakerx fork)
 Licensed under the GNU Lesser General Public License, version 2.1 or (at
 your option) any later version. See LICENSE.
 
-The Rust code in crates/ is a port of the Java application below and is a
-derivative work of it:
+The Rust code in crates/ is a port of the Java application below (removed
+from this tree; see the git history) and is a derivative work of it:
 
   clamv-webui, Copyright (c) Kosztyk
   https://github.com/Kosztyk/clamv-webui
@@ -14,9 +14,9 @@ which is itself derived from:
   clamav-web-client, Copyright (c) rguziy
   https://github.com/rguziy/clamav-web-client
 
-Bundled front-end assets keep their own licences (Bootstrap, jQuery,
-xterm.js: MIT; see docs/XTERM_LICENSE.txt). The clamctl CLI in cli/ has its
-own LICENSE and THIRD_PARTY_NOTICES.md.
+Bundled front-end assets keep their own licences: Bootstrap CSS (MIT) and
+Font Awesome Free (icons CC BY 4.0, fonts SIL OFL 1.1, code MIT). The
+clamctl CLI in cli/ has its own LICENSE and THIRD_PARTY_NOTICES.md.
 
 ClamAV is a registered trademark of Cisco Systems, Inc. This project is not
 affiliated with or endorsed by Cisco or the ClamAV project.

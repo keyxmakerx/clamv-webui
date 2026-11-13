@@ -1,2 +1,0 @@
-org.springframework.boot.EnvironmentPostProcessor=\
-info.trizub.clamav.webclient.configuration.ConfigurationEnvironmentPostProcessor
