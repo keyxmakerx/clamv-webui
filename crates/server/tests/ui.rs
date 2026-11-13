@@ -35,6 +35,15 @@ async fn app_with(extra: &[&str]) -> (Router, Arc<AppState>) {
     clamv_webui::auth::bootstrap::ensure_admin(&db, &dir, Some(pw()))
         .await
         .expect("bootstrap");
+    // Behave like a first start with a generated password: change it on first sign-in.
+    let admin = db
+        .user_by_username("admin")
+        .await
+        .expect("q")
+        .expect("admin");
+    db.set_password(&admin.id, &admin.password_hash, true, false)
+        .await
+        .expect("flag");
     clamv_webui::app::seed_endpoint(&db, &cli.config)
         .await
         .expect("seed");

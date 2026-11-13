@@ -211,11 +211,13 @@ async fn tokens_are_scoped_and_restricted() {
     assert_eq!(s, StatusCode::OK);
     let (s, _, _) = call(&t.app, get("/api/v1/jobs?size=1000", &bearer)).await;
     assert_eq!(s, StatusCode::BAD_REQUEST);
-    // Tokens cannot mint tokens; Basic cannot either.
+    // Tokens cannot mint tokens; only admins may list them.
     let (s, _, _) = call(&t.app, get("/api/v1/tokens", &bearer)).await;
     assert_eq!(s, StatusCode::FORBIDDEN);
-    let (s, _, _) = call(&t.app, get("/api/v1/tokens", &basic("admin", &t.pw))).await;
+    let (s, _, _) = call(&t.app, get("/api/v1/tokens", &basic("op", &t.pw))).await;
     assert_eq!(s, StatusCode::FORBIDDEN);
+    let (s, _, _) = call(&t.app, get("/api/v1/tokens", &basic("admin", &t.pw))).await;
+    assert_eq!(s, StatusCode::OK);
     assert!(t.st.db.revoke_token(tok.id).await.expect("revoke"));
     let (s, _, b) = call(&t.app, get("/api/v1/auth", &bearer)).await;
     assert_eq!(
@@ -288,7 +290,8 @@ async fn admin_session_issues_tokens() {
     )
     .await;
     assert_eq!(st, StatusCode::CREATED, "{b}");
-    let secret = b["token"].as_str().expect("secret").to_owned();
+    let secret = b["secret"].as_str().expect("secret").to_owned();
+    assert_eq!(b["token"]["label"], "cli");
     assert!(secret.starts_with("cvw_"));
     let (st, _, _) = call(&t.app, get("/api/v1/jobs", &format!("Bearer {secret}"))).await;
     assert_eq!(st, StatusCode::OK);

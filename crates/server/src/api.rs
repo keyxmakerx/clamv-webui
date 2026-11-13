@@ -980,7 +980,8 @@ pub fn token_json(t: &ApiToken) -> Value {
 
 fn admin_session(p: &Principal) -> Result<&User, Response> {
     match (&p.who, &p.via) {
-        (Who::User(u), Via::Cookie) if u.role.allows(Role::Admin) => Ok(u),
+        // Cookie or Basic (Basic writes also pass the session CSRF check); never a token.
+        (Who::User(u), Via::Cookie | Via::Basic) if u.role.allows(Role::Admin) => Ok(u),
         _ => Err(err(
             StatusCode::FORBIDDEN,
             "forbidden",
@@ -1125,9 +1126,10 @@ async fn create_token(
                 Some(format!("{} ({})", t.label, t.prefix)),
             )
             .await;
-            let mut body = token_json(&t);
-            body["token"] = json!(secret);
-            ok(StatusCode::CREATED, body)
+            ok(
+                StatusCode::CREATED,
+                json!({"token": token_json(&t), "secret": secret}),
+            )
         }
         Err(_) => unavailable(),
     }

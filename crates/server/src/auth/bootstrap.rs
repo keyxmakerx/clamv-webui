@@ -18,7 +18,9 @@ pub async fn ensure_admin(db: &Db, data_dir: &Path, supplied: Option<&str>) -> a
         None => (token::random_secret(), true),
     };
     let hash = password::hash(&pw)?;
-    db.create_user("admin", &hash, Role::Admin, true).await?;
+    // A generated password must be replaced; one the operator chose need not be.
+    db.create_user("admin", &hash, Role::Admin, generated)
+        .await?;
     if generated {
         let file = data_dir.join("bootstrap-admin-password");
         write_private(&file, &pw)?;
