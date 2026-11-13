@@ -247,6 +247,17 @@ async fn delete(
     if st.db.delete_watch(&w.id).await.is_err() {
         return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
     }
+    // Another watch may still cover these files; keep them then.
+    let still = st
+        .db
+        .list_watches()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .any(|o| w.path.starts_with(&o.path) || o.path.starts_with(&w.path));
+    if !still {
+        let _ = st.db.forget_processed_under(&w.path).await;
+    }
     audit(&st, &me, &info, "WATCH_DELETE", w.path.clone()).await;
     result(
         &st,

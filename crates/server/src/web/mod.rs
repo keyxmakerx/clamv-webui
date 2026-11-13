@@ -45,6 +45,7 @@ pub fn routes() -> Router<Arc<AppState>> {
             get(password_page).post(change_password),
         )
         .route("/dashboard", get(dashboard))
+        .route("/clamd", get(clamd_status))
         .merge(admin::routes())
         .merge(endpoints::routes())
         .merge(scan::routes())
@@ -484,7 +485,55 @@ async fn change_password(
 #[template(path = "dashboard.html")]
 struct DashboardPage {
     nav: Nav,
-    endpoints: Vec<endpoints::EndpointView>,
+    endpoints: Vec<(endpoints::EndpointView, String, bool)>,
+    day: (i64, i64, i64),
+    active: (i64, i64),
+    recent: Vec<scan::JobRow>,
+    controls: Vec<(String, String, bool)>,
+}
+
+impl DashboardPage {
+    fn badge(&self, v: &str) -> &'static str {
+        scan::badge(v)
+    }
+}
+
+/// Signature age from a clamd VERSION reply, and whether it is over a week.
+fn signature_age(version: &str) -> (String, bool) {
+    let (_, _, time) = crate::api::split_version(version);
+    match time.as_deref().and_then(crate::timefmt::parse_clamd_date) {
+        Some(t) => {
+            let h = (crate::db::now_ms() - t).max(0) / 3_600_000;
+            let text = if h < 48 {
+                format!("signatures {h} h old")
+            } else {
+                format!("signatures {} days old", h / 24)
+            };
+            (text, h > 168)
+        }
+        None => (String::new(), false),
+    }
+}
+
+#[derive(Template)]
+#[template(path = "clamd.html")]
+struct ClamdPage {
+    nav: Nav,
+    rows: Vec<crate::metrics::ClamdStatus>,
+}
+
+async fn clamd_status(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
+    let (s, u) = match auth.require(Role::Viewer) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    render(
+        StatusCode::OK,
+        &ClamdPage {
+            nav: Nav::new("clamd", &s, &u),
+            rows: st.metrics.clamd_status(),
+        },
+    )
 }
 
 async fn dashboard(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
@@ -506,11 +555,52 @@ async fn dashboard(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
             *m = "no response".to_owned();
         }
     }
+    let endpoints = endpoints
+        .into_iter()
+        .map(|e| {
+            let (age, stale) = match &e.status {
+                Status::Up(v) => signature_age(v),
+                _ => (String::new(), false),
+            };
+            (e, age, stale)
+        })
+        .collect();
+    let day = st
+        .db
+        .job_counts_since(crate::db::now_ms() - 86_400_000)
+        .await
+        .unwrap_or_default();
+    let active = st.db.count_active_jobs().await.unwrap_or_default();
+    // Job details are operator data; viewers see the counts only.
+    let recent = if u.role.allows(Role::Operator) {
+        let names = scan::endpoint_names(&st).await;
+        st.db
+            .list_jobs(&crate::db::jobs::JobFilter::default(), 0, 8)
+            .await
+            .map(|(j, _)| j.iter().map(|j| scan::row(j, &names)).collect())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let mut controls = Vec::new();
+    for sc in st.db.list_schedules().await.unwrap_or_default() {
+        if !sc.eicar_check {
+            continue;
+        }
+        if let Ok(Some(j)) = st.db.last_control_job(&sc.id).await {
+            let ok = j.verdict.as_deref() == Some(crate::db::jobs::OK);
+            controls.push((sc.name.clone(), admin::fmt_ts(j.submitted_at), ok));
+        }
+    }
     render(
         StatusCode::OK,
         &DashboardPage {
             nav: Nav::new("dashboard", &s, &u),
             endpoints,
+            day,
+            active,
+            recent,
+            controls,
         },
     )
 }

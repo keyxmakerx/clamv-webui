@@ -466,3 +466,34 @@ async fn identities_link_and_cascade() {
         );
     }
 }
+
+#[tokio::test]
+async fn processed_files_are_forgotten_by_folder() {
+    for db in databases().await {
+        let kind = db.kind();
+        let root = format!("/w/{}_a%b!", &new_id()[..8]);
+        let inside = format!("{root}/x.bin");
+        let deep = format!("{root}/sub/y.bin");
+        let sibling = format!("{root}x/z.bin");
+        let lookalike = format!("{}/q.bin", root.replace('_', "Z"));
+        for p in [&inside, &deep, &sibling, &lookalike] {
+            db.record_processed(p, 1, 2, "OK").await.expect("record");
+        }
+        assert_eq!(
+            db.forget_processed_under(&root).await.expect("forget"),
+            2,
+            "{kind:?}"
+        );
+        assert!(db.processed(&inside).await.expect("q").is_none());
+        assert!(
+            db.processed(&sibling).await.expect("q").is_some(),
+            "{kind:?} sibling kept"
+        );
+        assert!(
+            db.processed(&lookalike).await.expect("q").is_some(),
+            "{kind:?} _ is literal"
+        );
+        let _ = db.forget_processed_under(&format!("{root}x")).await;
+        let _ = db.forget_processed_under(&root.replace('_', "Z")).await;
+    }
+}

@@ -285,6 +285,7 @@ async fn route_table_by_role() {
     let (app, st) = app().await;
     let pages: &[(&str, Role)] = &[
         ("/dashboard", Role::Viewer),
+        ("/clamd", Role::Viewer),
         ("/admin/users", Role::Admin),
         ("/admin/audit", Role::Admin),
         ("/admin/endpoints", Role::Admin),
@@ -616,4 +617,61 @@ async fn settings_are_reviewed_then_saved() {
     .await;
     assert_eq!(res.status(), StatusCode::OK);
     assert_eq!(st.db.list_settings().await.expect("list").len(), 1);
+}
+
+#[tokio::test]
+async fn reset_admin_recovers_a_locked_out_admin() {
+    use clamv_webui::auth::Role;
+    let (app, st) = app().await;
+    let admin = st
+        .db
+        .user_by_username("admin")
+        .await
+        .expect("q")
+        .expect("admin");
+    st.db
+        .set_role_enabled(&admin.id, Role::Viewer, false)
+        .await
+        .expect("break it");
+    let dir = std::env::temp_dir().join(format!("cvw-reset-{}", clamv_webui::db::new_id()));
+    let file = clamv_webui::auth::bootstrap::reset_admin(&st.db, &dir)
+        .await
+        .expect("reset");
+    let pw = std::fs::read_to_string(&file)
+        .expect("file")
+        .trim()
+        .to_owned();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&file).expect("meta").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+    let u = st
+        .db
+        .user_by_username("admin")
+        .await
+        .expect("q")
+        .expect("admin");
+    assert!(u.enabled && u.role == Role::Admin && u.must_change_password);
+    let res = app
+        .oneshot(form(
+            "/login",
+            &format!("username=admin&password={}", urlencode(&pw)),
+            None,
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(res.headers()[header::LOCATION], "/account/password");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+fn urlencode(s: &str) -> String {
+    s.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect()
 }

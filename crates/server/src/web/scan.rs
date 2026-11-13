@@ -411,7 +411,7 @@ pub struct JobRow {
     pub problems: usize,
 }
 
-fn badge(verdict: &str) -> &'static str {
+pub(crate) fn badge(verdict: &str) -> &'static str {
     match verdict {
         jobs::OK => "bg-success",
         jobs::VIRUS_FOUND => "bg-danger",
@@ -445,7 +445,7 @@ fn fmt_size(b: Option<i64>) -> String {
     }
 }
 
-fn row(j: &Job, names: &std::collections::HashMap<i64, String>) -> JobRow {
+pub(crate) fn row(j: &Job, names: &std::collections::HashMap<i64, String>) -> JobRow {
     JobRow {
         id: j.id.clone(),
         kind: j.kind.clone(),
@@ -464,7 +464,7 @@ fn row(j: &Job, names: &std::collections::HashMap<i64, String>) -> JobRow {
     }
 }
 
-async fn endpoint_names(st: &AppState) -> std::collections::HashMap<i64, String> {
+pub(crate) async fn endpoint_names(st: &AppState) -> std::collections::HashMap<i64, String> {
     st.db
         .list_endpoints()
         .await

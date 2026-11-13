@@ -65,6 +65,21 @@ struct Slot {
     version: [Option<f64>; 3],
 }
 
+/// One endpoint's latest sample, formatted for display.
+pub struct ClamdStatus {
+    pub name: String,
+    pub available: bool,
+    pub sampled: String,
+    pub threads: String,
+    pub busy_pct: u8,
+    pub queue: String,
+    pub memory: String,
+    pub version: String,
+    pub database: String,
+    pub database_age: String,
+    pub stale: bool,
+}
+
 pub struct Metrics {
     counters: Mutex<Counters>,
     slots: Mutex<Vec<Slot>>,
@@ -155,6 +170,61 @@ impl Metrics {
 
     fn slot_snapshot(&self) -> Vec<Slot> {
         self.slots.lock().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    /// The latest clamd samples for the status page.
+    pub fn clamd_status(&self) -> Vec<ClamdStatus> {
+        let now = crate::db::now_ms() / 1000;
+        let f = |v: Option<f64>| v.map_or_else(|| "?".to_owned(), |x| num(Some(x)));
+        let mb = |v: Option<f64>| {
+            v.map_or_else(|| "?".to_owned(), |b| format!("{:.1} MiB", b / 1_048_576.0))
+        };
+        self.slot_snapshot()
+            .into_iter()
+            .map(|s| ClamdStatus {
+                name: s.name.clone(),
+                available: s.available,
+                sampled: if s.last_success == 0 {
+                    "never".into()
+                } else {
+                    format!("{} s ago", now - s.last_success)
+                },
+                threads: format!(
+                    "{} live, {} busy, {} idle, max {}",
+                    f(s.live),
+                    f(s.busy),
+                    f(s.idle),
+                    f(s.max)
+                ),
+                busy_pct: match (s.busy, s.max) {
+                    (Some(b), Some(m)) if m > 0.0 => {
+                        ((b / m) * 100.0).round().clamp(0.0, 100.0) as u8
+                    }
+                    _ => 0,
+                },
+                queue: f(s.queue),
+                memory: format!("{} of {}", mb(s.pools_used), mb(s.pools_total)),
+                version: match s.version {
+                    [Some(a), Some(b), c] => {
+                        format!("{}.{}.{}", a as i64, b as i64, c.map_or(0, |x| x as i64))
+                    }
+                    _ => "?".into(),
+                },
+                database: s.db_version.map_or_else(|| "?".into(), |v| num(Some(v))),
+                database_age: s.db_time.map_or_else(
+                    || "?".into(),
+                    |t| {
+                        let h = (now - t).max(0) / 3600;
+                        if h < 48 {
+                            format!("{h} h")
+                        } else {
+                            format!("{} days", h / 24)
+                        }
+                    },
+                ),
+                stale: s.db_time.is_some_and(|t| now - t > STALE_SIGNATURE_SECS),
+            })
+            .collect()
     }
 }
 

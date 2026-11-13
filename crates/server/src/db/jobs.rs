@@ -281,6 +281,30 @@ impl Db {
         Ok((q, r))
     }
 
+    /// Finished jobs since `since_ms`: (total, virus found, error).
+    pub async fn job_counts_since(&self, since_ms: i64) -> Result<(i64, i64, i64), DbError> {
+        let count = |verdict: Option<&'static str>| async move {
+            let q = match verdict {
+                Some(_) => {
+                    "SELECT COUNT(*) FROM scan_jobs WHERE status = 'FINISHED' AND submitted_at >= ? AND verdict = ?"
+                }
+                None => {
+                    "SELECT COUNT(*) FROM scan_jobs WHERE status = 'FINISHED' AND submitted_at >= ?"
+                }
+            };
+            let mut s = sqlx::query_scalar::<_, i64>(self.sql(q)).bind(since_ms);
+            if let Some(v) = verdict {
+                s = s.bind(v);
+            }
+            s.fetch_one(self.pool()).await
+        };
+        Ok((
+            count(None).await?,
+            count(Some(VIRUS_FOUND)).await?,
+            count(Some(ERROR)).await?,
+        ))
+    }
+
     /// Delete finished jobs submitted before `before_ms` (N5).
     pub async fn prune_jobs(&self, before_ms: i64) -> Result<u64, DbError> {
         let r = sqlx::query(

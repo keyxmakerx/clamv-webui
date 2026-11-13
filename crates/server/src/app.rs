@@ -141,6 +141,16 @@ pub fn router(state: Arc<AppState>, cfg: &Config) -> Router {
     app.layer(TraceLayer::new_for_http())
 }
 
+/// `reset-admin` subcommand: open the database and reset the admin account.
+pub async fn reset_admin(cfg: &Config) -> anyhow::Result<std::path::PathBuf> {
+    prepare_data_dir(&cfg.data_dir)?;
+    let url = cfg.database_url()?;
+    let db = Db::open(&url, 1)
+        .await
+        .map_err(|e| anyhow::anyhow!("database {}: {e}", redact_url(&url)))?;
+    crate::auth::bootstrap::reset_admin(&db, &cfg.data_dir).await
+}
+
 pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     prepare_data_dir(&cfg.data_dir)?;
     crate::webhook::Target::from_config(&cfg)?;
@@ -268,6 +278,25 @@ fn spawn_housekeeping(state: Arc<AppState>) {
                     }
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e, "job prune failed"),
+                }
+            }
+            let days = state.cfg.audit_retention_days;
+            if days > 0 {
+                let ms = i64::try_from(days.saturating_mul(86_400_000)).unwrap_or(i64::MAX);
+                match state
+                    .db
+                    .prune_audit(crate::db::now_ms().saturating_sub(ms))
+                    .await
+                {
+                    Ok(n) if n > 0 => {
+                        tracing::info!(
+                            event = "audit.pruned",
+                            removed = n,
+                            "old audit events deleted"
+                        )
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!(error = %e, "audit prune failed"),
                 }
             }
         }

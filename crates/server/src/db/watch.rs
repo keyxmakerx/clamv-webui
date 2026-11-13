@@ -151,6 +151,23 @@ impl Db {
         .await?)
     }
 
+    /// Forget every file recorded under a folder (after its watch is removed).
+    pub async fn forget_processed_under(&self, dir: &str) -> Result<u64, DbError> {
+        let esc: String = dir
+            .trim_end_matches('/')
+            .chars()
+            .flat_map(|c| match c {
+                '!' | '%' | '_' => vec!['!', c],
+                c => vec![c],
+            })
+            .collect();
+        let r = sqlx::query(self.sql("DELETE FROM processed_files WHERE path LIKE ? ESCAPE '!'"))
+            .bind(format!("{esc}/%"))
+            .execute(self.pool())
+            .await?;
+        Ok(r.rows_affected())
+    }
+
     /// Forget files handled before `before_ms`; they are checked again on the next pass (N5).
     pub async fn prune_processed(&self, before_ms: i64) -> Result<u64, DbError> {
         let r = sqlx::query(self.sql("DELETE FROM processed_files WHERE processed_at < ?"))

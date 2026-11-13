@@ -1,22 +1,46 @@
 {% extends "shell.html" %}
+{% block head %}<meta http-equiv="refresh" content="30">{% endblock %}
 {% block title %}Dashboard · ClamAV Web UI{% endblock %}
 {% block content %}
 <h1 class="h3">Dashboard</h1>
+<div class="row g-3 mt-1">
+<div class="col-6 col-md-3"><section class="card h-100"><div class="card-body"><div class="small muted">Scans, last 24 h</div><div class="h3 mb-0">{{ day.0 }}</div></div></section></div>
+<div class="col-6 col-md-3"><section class="card h-100"><div class="card-body"><div class="small muted">Detections, last 24 h</div><div class="h3 mb-0{% if day.1 > 0 %} text-danger{% endif %}">{{ day.1 }}</div></div></section></div>
+<div class="col-6 col-md-3"><section class="card h-100"><div class="card-body"><div class="small muted">Failed scans, last 24 h</div><div class="h3 mb-0{% if day.2 > 0 %} text-warning{% endif %}">{{ day.2 }}</div></div></section></div>
+<div class="col-6 col-md-3"><section class="card h-100"><div class="card-body"><div class="small muted">Queued · running</div><div class="h3 mb-0">{{ active.0 }} · {{ active.1 }}</div></div></section></div>
+</div>
 <section class="card mt-3"><div class="card-body table-responsive">
 <h2 class="h5">clamd endpoints</h2>
 {% if endpoints.is_empty() %}<p class="muted">No endpoints configured.</p>{% else %}
 <table class="table align-middle">
 <thead><tr><th>Name</th><th>Address</th><th>Status</th></tr></thead>
 <tbody>
-{% for e in endpoints %}
+{% for (e, age, stale) in endpoints %}
 <tr><td><strong>{{ e.name }}</strong>{% if e.is_default %} <span class="badge bg-primary">default</span>{% endif %}</td>
 <td><code>{{ e.address }}</code></td>
 <td>{% match e.status %}
-{% when Status::Up with (v) %}<span class="badge bg-success">reachable</span> <span class="small">{{ v }}</span>
+{% when Status::Up with (v) %}<span class="badge bg-success">reachable</span> <span class="small">{{ v }}</span>{% if !age.is_empty() %}<div class="small{% if *stale %} text-danger{% else %} muted{% endif %}">{{ age }}{% if *stale %}: check freshclam{% endif %}</div>{% endif %}
 {% when Status::Down with (m) %}<span class="badge bg-danger">unreachable</span> <span class="small">{{ m }}</span>
 {% when Status::Disabled %}<span class="badge bg-secondary">disabled</span>
 {% endmatch %}</td></tr>
 {% endfor %}
 </tbody></table>{% endif %}
 </div></section>
+{% if !controls.is_empty() %}<section class="card mt-3"><div class="card-body">
+<h2 class="h5">EICAR checks</h2>
+<ul class="mb-0">{% for (name, at, ok) in controls %}<li><strong>{{ name }}</strong>: {% if *ok %}<span class="text-success">detected</span>{% else %}<span class="text-danger">failed, scan results cannot be trusted</span>{% endif %} <span class="small muted">{{ at }}</span></li>{% endfor %}</ul>
+</div></section>{% endif %}
+{% if nav.is_operator %}<section class="card mt-3"><div class="card-body table-responsive">
+<h2 class="h5">Recent jobs <a class="small" href="/jobs">all jobs</a></h2>
+<table class="table table-sm align-middle">
+<thead><tr><th>Submitted</th><th>Type</th><th>Target</th><th>Result</th></tr></thead>
+<tbody>
+{% for r in recent %}<tr>
+<td class="small text-nowrap"><a href="/jobs/{{ r.id }}">{{ r.submitted }}</a></td>
+<td>{{ r.kind }}</td>
+<td class="small text-break">{{ r.target }}</td>
+<td>{% if r.verdict.is_empty() %}<span class="badge bg-secondary">{{ r.status }}</span>{% else %}<span class="badge {{ self.badge(r.verdict) }}">{{ r.verdict }}</span>{% endif %}{% if !r.signatures.is_empty() %} <span class="small">{{ r.signatures }}</span>{% endif %}</td>
+</tr>{% else %}<tr><td colspan="4" class="muted">No jobs yet.</td></tr>{% endfor %}
+</tbody></table>
+</div></section>{% endif %}
 {% endblock %}

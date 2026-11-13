@@ -12,6 +12,19 @@ async fn main() -> ExitCode {
     let cli = Cli::parse();
     match cli.command.unwrap_or(Command::Serve) {
         Command::Healthcheck => healthcheck::run(&cli.config).await,
+        Command::ResetAdmin => {
+            logging::init(&cli.config);
+            match app::reset_admin(&cli.config).await {
+                Ok(file) => {
+                    println!("New admin password written to {}", file.display());
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "reset-admin failed");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Command::Serve => {
             logging::init(&cli.config);
             match app::serve(cli.config).await {

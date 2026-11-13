@@ -20,6 +20,8 @@ pub enum Command {
     Serve,
     /// Probe /healthz on the local listener; for container HEALTHCHECK.
     Healthcheck,
+    /// Give `admin` a new one-time password in DATA_DIR/bootstrap-admin-password.
+    ResetAdmin,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -316,6 +318,15 @@ pub struct Config {
     /// Finished jobs older than this are deleted. 0 keeps them forever.
     #[arg(long, env = "JOB_RETENTION_DAYS", default_value_t = 90, global = true)]
     pub job_retention_days: u64,
+
+    /// Audit events older than this are deleted. 0 keeps them forever.
+    #[arg(
+        long,
+        env = "AUDIT_RETENTION_DAYS",
+        default_value_t = 365,
+        global = true
+    )]
+    pub audit_retention_days: u64,
 
     /// PEM certificate chain for HTTPS. With TLS_KEY_FILE, serves HTTPS instead of HTTP.
     #[arg(long, env = "TLS_CERT_FILE", global = true, requires = "tls_key_file")]
