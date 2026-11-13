@@ -19,8 +19,8 @@ use axum::routing::get;
 use serde::Deserialize;
 
 use crate::app::AppState;
-use crate::auth::password::{self, Verified};
-use crate::auth::{Role, lockout::LockScope};
+use crate::auth::login::Failure;
+use crate::auth::{Role, password};
 use crate::db::audit::AuditEntry;
 use crate::db::users::User;
 use session::{Auth, clear_cookie, client_ip, set_cookie};
@@ -181,59 +181,28 @@ async fn login(
             },
         )
     };
-    if st.lockout.check(&username, ip).is_err() {
-        tracing::warn!(event = "auth.locked", user = %username, ip = %ip, "login refused while locked");
-        return page(
-            StatusCode::TOO_MANY_REQUESTS,
-            "Too many login attempts. Try again later.",
-        );
-    }
-    let user = match st.db.user_by_username(&username).await {
+    let user = match crate::auth::login::authenticate(
+        &st,
+        &username,
+        &f.password,
+        ip,
+        req_parts.user_agent.as_deref(),
+        "UI",
+    )
+    .await
+    {
         Ok(u) => u,
-        Err(e) => {
-            tracing::error!(error = %e, "user lookup failed");
+        Err(Failure::Locked) => {
+            return page(
+                StatusCode::TOO_MANY_REQUESTS,
+                "Too many login attempts. Try again later.",
+            );
+        }
+        Err(Failure::Bad) => return page(StatusCode::UNAUTHORIZED, BAD_LOGIN),
+        Err(Failure::Unavailable) => {
             return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
         }
     };
-    let verdict = match &user {
-        Some(u) if u.enabled => password::verify(&f.password, &u.password_hash),
-        _ => {
-            password::verify_dummy(&f.password);
-            Verified::No
-        }
-    };
-    let Some(user) = user.filter(|_| verdict != Verified::No) else {
-        tracing::warn!(event = "auth.failed", user = %username, ip = %ip, "login failed");
-        if let Some(scope) = st.lockout.fail(&username, ip) {
-            let scope = match scope {
-                LockScope::AccountFromIp => "account+ip",
-                LockScope::Account => "account",
-                LockScope::Ip => "ip",
-            };
-            tracing::warn!(event = "auth.locked", user = %username, ip = %ip, scope, "login locked");
-        }
-        st.db
-            .audit(AuditEntry {
-                username: Some(username.clone()),
-                action: "LOGIN",
-                outcome: "FAILED",
-                transport: Some("UI"),
-                ip: Some(ip.to_string()),
-                user_agent: req_parts.user_agent.clone(),
-                ..Default::default()
-            })
-            .await;
-        return page(StatusCode::UNAUTHORIZED, BAD_LOGIN);
-    };
-    st.lockout.success(&username, ip);
-    if verdict == Verified::YesRehash
-        && let Ok(h) = password::hash(&f.password)
-    {
-        let _ = st
-            .db
-            .set_password(&user.id, &h, user.must_change_password, false)
-            .await;
-    }
     // Fresh session id on every login (no fixation); drop any old one.
     if let Some((old, _)) = auth.0 {
         let _ = st.db.delete_session_by_hash(&old.id_hash).await;
@@ -355,13 +324,22 @@ async fn change_password(
             },
         )
     };
-    if st.lockout.check(&u.username, info.ip).is_err() {
-        return fail("Too many attempts. Try again later.");
-    }
-    if password::verify(&f.current, &u.password_hash) == Verified::No {
-        tracing::warn!(event = "auth.failed", user = %u.username, ip = %info.ip, "password change: wrong current password");
-        st.lockout.fail(&u.username, info.ip);
-        return fail("Current password is wrong.");
+    match crate::auth::login::authenticate(
+        &st,
+        &u.username,
+        &f.current,
+        info.ip,
+        info.user_agent.as_deref(),
+        "UI",
+    )
+    .await
+    {
+        Ok(_) => {}
+        Err(Failure::Locked) => return fail("Too many attempts. Try again later."),
+        Err(Failure::Bad) => return fail("Current password is wrong."),
+        Err(Failure::Unavailable) => {
+            return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+        }
     }
     if f.new != f.confirm {
         return fail("The new passwords do not match.");
@@ -369,9 +347,11 @@ async fn change_password(
     if f.new == f.current {
         return fail("Choose a password different from the current one.");
     }
-    let hash = match password::hash(&f.new) {
-        Ok(h) => h,
-        Err(e) => return fail(&e.to_string()),
+    let new_pw = f.new.clone();
+    let hash = match tokio::task::spawn_blocking(move || password::hash(&new_pw)).await {
+        Ok(Ok(h)) => h,
+        Ok(Err(e)) => return fail(&e.to_string()),
+        Err(_) => return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable."),
     };
     if let Err(e) = st.db.set_password(&u.id, &hash, false, true).await {
         tracing::error!(error = %e, "password update failed");

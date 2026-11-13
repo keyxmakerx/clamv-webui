@@ -20,12 +20,18 @@ pub struct AppState {
     pub db: Db,
     pub lockout: Lockout,
     pub runner: crate::scan::Runner,
+    /// Scan submissions per credential (Java `api.v1.scan-rate-limit-per-minute`).
+    pub scan_rate: crate::auth::ratelimit::RateLimit,
 }
 
 impl AppState {
     pub fn new(cfg: Config, db: Db) -> Self {
         Self {
             runner: crate::scan::Runner::new(cfg.scan_concurrency),
+            scan_rate: crate::auth::ratelimit::RateLimit::new(
+                30,
+                std::time::Duration::from_secs(60),
+            ),
             cfg,
             db,
             lockout: Lockout::new(LockoutPolicy::default()),
@@ -87,6 +93,7 @@ pub fn router(state: Arc<AppState>, cfg: &Config) -> Router {
     let pages = Router::new()
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+        .merge(crate::api::routes())
         .merge(crate::web::routes())
         .layer(tower_http::limit::RequestBodyLimitLayer::new(64 * 1024))
         .layer(TimeoutLayer::with_status_code(
@@ -101,6 +108,7 @@ pub fn router(state: Arc<AppState>, cfg: &Config) -> Router {
     let upload_limit = usize::try_from(per_file.saturating_mul(cfg.upload_max_files.max(1) as u64))
         .unwrap_or(usize::MAX);
     let uploads = crate::web::scan::upload_routes()
+        .merge(crate::api::upload_routes())
         .layer(axum::extract::DefaultBodyLimit::disable())
         .layer(tower_http::limit::RequestBodyLimitLayer::new(upload_limit));
     let mut app = pages

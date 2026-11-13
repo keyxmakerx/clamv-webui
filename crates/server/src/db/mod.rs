@@ -9,6 +9,7 @@ pub mod endpoints;
 pub mod jobs;
 pub mod sessions;
 pub mod settings;
+pub mod tokens;
 pub mod users;
 
 use std::borrow::Cow;

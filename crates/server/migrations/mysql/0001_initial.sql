@@ -1,7 +1,7 @@
 -- Initial schema. Portable types only: ids are UUIDv7 text, times are unix milliseconds, booleans are 0/1.
 
 CREATE TABLE endpoints (
-    id BIGINT PRIMARY KEY,
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
     name VARCHAR(64) NOT NULL,
     address VARCHAR(512) NOT NULL,
     enabled BIGINT NOT NULL,
@@ -37,7 +37,7 @@ CREATE INDEX idx_sessions_user ON sessions(user_id);
 CREATE INDEX idx_sessions_expires ON sessions(expires_at);
 
 CREATE TABLE api_tokens (
-    id BIGINT PRIMARY KEY,
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
     label VARCHAR(100) NOT NULL,
     token_hash VARCHAR(64) NOT NULL,
     prefix VARCHAR(16) NOT NULL,
@@ -53,7 +53,7 @@ CREATE TABLE api_tokens (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
 CREATE TABLE audit_events (
-    id VARCHAR(36) PRIMARY KEY,
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
     at BIGINT NOT NULL,
     username VARCHAR(64),
     action VARCHAR(64) NOT NULL,

@@ -3,6 +3,7 @@
 // Handlers return axum Responses as errors by design.
 #![allow(clippy::result_large_err)]
 
+pub mod api;
 pub mod app;
 pub mod auth;
 pub mod config;
@@ -10,4 +11,5 @@ pub mod db;
 pub mod healthcheck;
 pub mod logging;
 pub mod scan;
+pub mod timefmt;
 pub mod web;

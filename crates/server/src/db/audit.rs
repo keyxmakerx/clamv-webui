@@ -2,7 +2,7 @@
 
 use sqlx::Row;
 
-use super::{Db, DbError, new_id, now_ms};
+use super::{Db, DbError, now_ms};
 
 #[derive(Debug, Clone, Default)]
 pub struct AuditEntry {
@@ -28,6 +28,18 @@ pub struct AuditRow {
     pub ip: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct AuditApiRow {
+    pub id: i64,
+    pub at: i64,
+    pub username: Option<String>,
+    pub action: String,
+    pub outcome: Option<String>,
+    pub transport: Option<String>,
+    pub endpoint_id: Option<i64>,
+    pub job_id: Option<String>,
+}
+
 impl Db {
     /// Record an event. A failed insert is logged, never fatal to the caller.
     pub async fn audit(&self, e: AuditEntry) {
@@ -44,10 +56,9 @@ impl Db {
         let details: Option<String> = e.details.map(|d| d.chars().take(2000).collect());
         let ua: Option<String> = e.user_agent.map(|d| d.chars().take(255).collect());
         let r = sqlx::query(self.sql(
-            "INSERT INTO audit_events (id, at, username, action, outcome, details, job_id, transport, endpoint_id, ip, user_agent) \
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO audit_events (at, username, action, outcome, details, job_id, transport, endpoint_id, ip, user_agent) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         ))
-        .bind(new_id())
         .bind(now_ms())
         .bind(e.username)
         .bind(e.action)
@@ -67,7 +78,7 @@ impl Db {
 
     pub async fn recent_audit(&self, limit: i64) -> Result<Vec<AuditRow>, DbError> {
         let rows = sqlx::query(self.sql(
-            "SELECT at, username, action, outcome, details, job_id, ip FROM audit_events ORDER BY at DESC LIMIT ?",
+            "SELECT at, username, action, outcome, details, job_id, ip FROM audit_events ORDER BY id DESC LIMIT ?",
         ))
         .bind(limit.clamp(1, 1000))
         .fetch_all(self.pool())
@@ -85,6 +96,41 @@ impl Db {
                 })
             })
             .collect()
+    }
+
+    /// A page of events without IPs or details, newest first (for `/api/v1/audit`).
+    pub async fn audit_page(
+        &self,
+        page: i64,
+        size: i64,
+    ) -> Result<(Vec<AuditApiRow>, i64), DbError> {
+        let total: i64 = sqlx::query_scalar(self.sql("SELECT COUNT(*) FROM audit_events"))
+            .fetch_one(self.pool())
+            .await?;
+        let rows = sqlx::query(self.sql(
+            "SELECT id, at, username, action, outcome, transport, endpoint_id, job_id FROM audit_events \
+             ORDER BY id DESC LIMIT ? OFFSET ?",
+        ))
+        .bind(size)
+        .bind(page.saturating_mul(size))
+        .fetch_all(self.pool())
+        .await?;
+        let items = rows
+            .iter()
+            .map(|r| {
+                Ok(AuditApiRow {
+                    id: r.try_get("id")?,
+                    at: r.try_get("at")?,
+                    username: r.try_get("username")?,
+                    action: r.try_get("action")?,
+                    outcome: r.try_get("outcome")?,
+                    transport: r.try_get("transport")?,
+                    endpoint_id: r.try_get("endpoint_id")?,
+                    job_id: r.try_get("job_id")?,
+                })
+            })
+            .collect::<Result<_, DbError>>()?;
+        Ok((items, total))
     }
 
     /// Retention: delete entries older than `before_ms`.

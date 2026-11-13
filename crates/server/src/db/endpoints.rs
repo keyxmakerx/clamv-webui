@@ -76,11 +76,20 @@ impl Db {
                 .execute(&mut *tx)
                 .await?;
         }
-        // Integer ids keep /api/v1 compatible with clamctl.
-        let id: i64 =
-            sqlx::query_scalar(self.sql("SELECT COALESCE(MAX(id), 0) + 1 FROM endpoints"))
-                .fetch_one(&mut *tx)
-                .await?;
+        sqlx::query(self.sql(
+            "INSERT INTO endpoints (name, address, enabled, is_default, created_at) VALUES (?, ?, 1, ?, ?)",
+        ))
+        .bind(name)
+        .bind(address)
+        .bind(i64::from(is_default))
+        .bind(now_ms())
+        .execute(&mut *tx)
+        .await?;
+        // Names are unique; this reads back the generated integer id.
+        let id: i64 = sqlx::query_scalar(self.sql("SELECT id FROM endpoints WHERE name = ?"))
+            .bind(name)
+            .fetch_one(&mut *tx)
+            .await?;
         let e = Endpoint {
             id,
             name: name.to_owned(),
@@ -88,16 +97,6 @@ impl Db {
             enabled: true,
             is_default,
         };
-        sqlx::query(self.sql(
-            "INSERT INTO endpoints (id, name, address, enabled, is_default, created_at) VALUES (?, ?, ?, 1, ?, ?)",
-        ))
-        .bind(e.id)
-        .bind(&e.name)
-        .bind(&e.address)
-        .bind(i64::from(is_default))
-        .bind(now_ms())
-        .execute(&mut *tx)
-        .await?;
         tx.commit().await?;
         Ok(e)
     }

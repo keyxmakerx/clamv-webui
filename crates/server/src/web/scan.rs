@@ -154,6 +154,10 @@ async fn scan_path(
         Ok(e) => e,
         Err(m) => return scan_error(&st, &s, &u, m, input).await,
     };
+    // Pin the endpoint now so the job and its filters name a real one.
+    let Some(ep) = scan::pick_endpoint(&st, endpoint_id).await else {
+        return scan_error(&st, &s, &u, "No enabled clamd endpoint.", input).await;
+    };
     let real = match scan::resolve_path(&st.cfg.scan_roots, &input).await {
         Ok(p) => p,
         Err(m) => {
@@ -170,7 +174,7 @@ async fn scan_path(
         .create_job(NewJob {
             kind: scan::KIND_PATH,
             target,
-            endpoint_id,
+            endpoint_id: Some(ep.id),
             schedule_id: None,
             submitted_by: Some(&u.username),
             transport: "UI",
@@ -208,7 +212,7 @@ async fn audit_scan(st: &AppState, u: &User, info: &RequestInfo, job: &Job, acti
 // ---- upload scan ----
 
 /// A display name only: never used as a path.
-fn display_name(raw: Option<&str>) -> String {
+pub(crate) fn display_name(raw: Option<&str>) -> String {
     let base = raw.unwrap_or("").rsplit(['/', '\\']).next().unwrap_or("");
     let clean: String = base.chars().filter(|c| !c.is_control()).take(255).collect();
     let clean = clean.trim();
@@ -220,7 +224,12 @@ fn display_name(raw: Option<&str>) -> String {
 }
 
 /// Stream one multipart file straight into clamd INSTREAM. Nothing touches disk (S3).
-async fn scan_field(st: &AppState, ep: &Endpoint, mut field: Field<'_>, name: &str) -> Outcome {
+pub(crate) async fn scan_field(
+    st: &AppState,
+    ep: &Endpoint,
+    mut field: Field<'_>,
+    name: &str,
+) -> Outcome {
     let Ok(addr) = ep.parsed() else {
         return scan::failure(
             scan::CONFIGURATION_UNAVAILABLE,

@@ -336,3 +336,57 @@ async fn jobs_claim_filter_and_prune() {
         db.close().await;
     }
 }
+
+#[tokio::test]
+async fn tokens_and_audit_pages() {
+    use clamv_webui::db::audit::AuditEntry;
+    use clamv_webui::db::tokens::NewToken;
+    for db in databases().await {
+        let kind = db.kind();
+        let scopes = vec!["jobs:read".to_owned(), "bogus".to_owned()];
+        let (secret, t) = db
+            .create_token(NewToken {
+                label: "ci",
+                scopes: &scopes,
+                endpoint_ids: Some(&[7, 8]),
+                path_roots: Some(&["/data/tv".to_owned()]),
+                created_by: "admin",
+                expires_at: None,
+            })
+            .await
+            .expect("create");
+        assert_eq!(
+            t.scopes,
+            vec!["jobs:read".to_owned()],
+            "{kind:?}: unknown scope dropped"
+        );
+        assert_eq!(t.endpoint_ids, Some(vec![7, 8]));
+        let found = db
+            .token_by_secret(&secret)
+            .await
+            .expect("q")
+            .expect("found");
+        assert_eq!(found.id, t.id, "{kind:?}");
+        assert!(db.token_by_secret("cvw_nope").await.expect("q").is_none());
+        assert!(db.revoke_token(t.id).await.expect("revoke"));
+        assert!(!db.revoke_token(t.id).await.expect("revoke twice"));
+        assert!(
+            db.token_by_secret(&secret).await.expect("q").is_none(),
+            "{kind:?}"
+        );
+        for _ in 0..3 {
+            db.audit(AuditEntry {
+                action: "TEST",
+                outcome: "OK",
+                endpoint_id: Some(1),
+                ..Default::default()
+            })
+            .await;
+        }
+        let (rows, total) = db.audit_page(0, 2).await.expect("page");
+        assert_eq!(rows.len(), 2, "{kind:?}");
+        assert!(total >= 3);
+        assert!(rows[0].id > rows[1].id, "{kind:?}: newest first");
+        db.close().await;
+    }
+}
