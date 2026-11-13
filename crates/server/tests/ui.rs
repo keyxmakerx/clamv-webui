@@ -250,3 +250,104 @@ async fn assets_and_404() {
     let res = app.oneshot(get("/../Cargo.toml", None)).await.expect("res");
     assert_eq!(res.status(), StatusCode::NOT_FOUND);
 }
+
+/// Every page, every role: the route table is explicit and tested (audit lesson 8).
+#[tokio::test]
+async fn route_table_by_role() {
+    use clamv_webui::auth::{Role, password};
+    let (app, st) = app().await;
+    let pages: &[(&str, Role)] = &[
+        ("/dashboard", Role::Viewer),
+        ("/admin/users", Role::Admin),
+        ("/admin/audit", Role::Admin),
+    ];
+    let posts: &[(&str, Role)] = &[
+        ("/admin/users", Role::Admin),
+        ("/admin/users/x/role", Role::Admin),
+        ("/admin/users/x/password", Role::Admin),
+        ("/admin/users/x/delete", Role::Admin),
+    ];
+    for role in [Role::Viewer, Role::Operator, Role::Admin] {
+        let h = password::hash("role-test-password").expect("hash");
+        let u = st
+            .db
+            .create_user(&format!("t-{role}"), &h, role, false)
+            .await
+            .expect("user");
+        let (raw, s) = st
+            .db
+            .create_session(&u.id, 3_600_000, None, None)
+            .await
+            .expect("session");
+        let c = format!("clamv_session={raw}");
+        for (path, need) in pages {
+            let res = app.clone().oneshot(get(path, Some(&c))).await.expect("res");
+            let want = if role.allows(*need) {
+                StatusCode::OK
+            } else {
+                StatusCode::FORBIDDEN
+            };
+            assert_eq!(res.status(), want, "GET {path} as {role}");
+        }
+        for (path, need) in posts {
+            let res = app
+                .clone()
+                .oneshot(form(
+                    path,
+                    &format!("_csrf={}&role=VIEWER&username=zz&password=x", s.csrf_token),
+                    Some(&c),
+                ))
+                .await
+                .expect("res");
+            if role.allows(*need) {
+                assert_ne!(res.status(), StatusCode::FORBIDDEN, "POST {path} as {role}");
+            } else {
+                assert_eq!(res.status(), StatusCode::FORBIDDEN, "POST {path} as {role}");
+            }
+        }
+        // Anonymous never gets in.
+        for (path, _) in pages {
+            let res = app.clone().oneshot(get(path, None)).await.expect("res");
+            assert_eq!(res.status(), StatusCode::SEE_OTHER, "GET {path} anonymous");
+        }
+    }
+}
+
+#[tokio::test]
+async fn last_admin_cannot_be_removed() {
+    use clamv_webui::auth::Role;
+    let (app, st) = app().await;
+    let admin = st
+        .db
+        .user_by_username("admin")
+        .await
+        .expect("q")
+        .expect("admin");
+    st.db
+        .set_password(&admin.id, &admin.password_hash, false, false)
+        .await
+        .expect("clear flag");
+    let (raw, s) = st
+        .db
+        .create_session(&admin.id, 3_600_000, None, None)
+        .await
+        .expect("session");
+    let c = format!("clamv_session={raw}");
+    let res = app
+        .clone()
+        .oneshot(form(
+            &format!("/admin/users/{}/role", admin.id),
+            &format!("_csrf={}&role=VIEWER&enabled=1", s.csrf_token),
+            Some(&c),
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        body(res)
+            .await
+            .contains("At least one enabled admin must remain.")
+    );
+    let still = st.db.user_by_id(&admin.id).await.expect("q").expect("u");
+    assert_eq!(still.role, Role::Admin);
+}

@@ -1,5 +1,6 @@
 //! Browser UI: pages, login, static assets.
 
+pub mod admin;
 pub mod csrf;
 pub mod session;
 
@@ -16,6 +17,7 @@ use serde::Deserialize;
 use crate::app::AppState;
 use crate::auth::password::{self, Verified};
 use crate::auth::{Role, lockout::LockScope};
+use crate::db::audit::AuditEntry;
 use crate::db::users::User;
 use session::{Auth, clear_cookie, client_ip, set_cookie};
 
@@ -33,6 +35,7 @@ pub fn routes() -> Router<Arc<AppState>> {
             get(password_page).post(change_password),
         )
         .route("/dashboard", get(dashboard))
+        .merge(admin::routes())
         .route("/{*path}", get(asset))
 }
 
@@ -48,7 +51,7 @@ pub struct Nav {
 }
 
 impl Nav {
-    fn new(page: &'static str, s: &crate::db::sessions::Session, u: &User) -> Self {
+    pub fn new(page: &'static str, s: &crate::db::sessions::Session, u: &User) -> Self {
         Self {
             page,
             username: u.username.clone(),
@@ -61,7 +64,7 @@ impl Nav {
     }
 }
 
-fn render<T: Template>(status: StatusCode, t: &T) -> Response {
+pub fn render<T: Template>(status: StatusCode, t: &T) -> Response {
     match t.render() {
         Ok(html) => (status, [(header::CACHE_CONTROL, "no-store")], Html(html)).into_response(),
         Err(e) => {
@@ -201,6 +204,17 @@ async fn login(
             };
             tracing::warn!(event = "auth.locked", user = %username, ip = %ip, scope, "login locked");
         }
+        st.db
+            .audit(AuditEntry {
+                username: Some(username.clone()),
+                action: "LOGIN",
+                outcome: "FAILED",
+                transport: Some("UI"),
+                ip: Some(ip.to_string()),
+                user_agent: req_parts.user_agent.clone(),
+                ..Default::default()
+            })
+            .await;
         return page(StatusCode::UNAUTHORIZED, BAD_LOGIN);
     };
     st.lockout.success(&username, ip);
@@ -230,6 +244,17 @@ async fn login(
         }
     };
     let _ = st.db.touch_login(&user.id).await;
+    st.db
+        .audit(AuditEntry {
+            username: Some(user.username.clone()),
+            action: "LOGIN",
+            outcome: "OK",
+            transport: Some("UI"),
+            ip: Some(ip.to_string()),
+            user_agent: req_parts.user_agent.clone(),
+            ..Default::default()
+        })
+        .await;
     tracing::info!(event = "auth.login", user = %user.username, ip = %ip, "signed in");
     let to = if user.must_change_password {
         "/account/password"
@@ -344,6 +369,16 @@ async fn change_password(
         tracing::error!(error = %e, "password update failed");
         return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
     }
+    st.db
+        .audit(AuditEntry {
+            username: Some(u.username.clone()),
+            action: "PASSWORD_CHANGE",
+            outcome: "OK",
+            transport: Some("UI"),
+            ip: Some(info.ip.to_string()),
+            ..Default::default()
+        })
+        .await;
     tracing::info!(event = "auth.password_changed", user = %u.username, ip = %info.ip, "password changed; sessions ended");
     (
         [(header::SET_COOKIE, clear_cookie(st.cfg.cookie_secure))],

@@ -191,3 +191,27 @@ async fn users_and_sessions() {
         db.close().await;
     }
 }
+
+#[tokio::test]
+async fn audit_round_trip() {
+    use clamv_webui::db::audit::AuditEntry;
+    for db in databases().await {
+        let kind = db.kind();
+        let marker = new_id();
+        db.audit(AuditEntry {
+            username: Some("admin".into()),
+            action: "TEST",
+            outcome: "OK",
+            details: Some(marker.clone()),
+            ..Default::default()
+        })
+        .await;
+        let rows = db.recent_audit(50).await.expect("list");
+        assert!(
+            rows.iter()
+                .any(|r| r.details.as_deref() == Some(marker.as_str())),
+            "{kind:?}"
+        );
+        db.close().await;
+    }
+}

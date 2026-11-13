@@ -7,6 +7,13 @@
 <nav class="sidebar-section tabs" aria-label="Operations"><div class="sidebar-section__title">Operations</div>
 <a class="nav-btn tab-link{% if nav.page == "dashboard" %} active{% endif %}" href="/dashboard"{% if nav.page == "dashboard" %} aria-current="page"{% endif %}><i class="fas fa-tachometer-alt" aria-hidden="true"></i>Dashboard</a>
 </nav>
+{% if nav.is_admin %}
+<div class="sidebar-divider"></div>
+<nav class="sidebar-section tabs" aria-label="Administration"><div class="sidebar-section__title">Administration</div>
+<a class="nav-btn tab-link{% if nav.page == "users" %} active{% endif %}" href="/admin/users"{% if nav.page == "users" %} aria-current="page"{% endif %}><i class="fas fa-users" aria-hidden="true"></i>Users</a>
+<a class="nav-btn tab-link{% if nav.page == "audit" %} active{% endif %}" href="/admin/audit"{% if nav.page == "audit" %} aria-current="page"{% endif %}><i class="fas fa-clipboard-list" aria-hidden="true"></i>Audit Log</a>
+</nav>
+{% endif %}
 </aside>
 <main class="app-main">
 <header class="app-topbar"><div><div class="app-title__name">ClamAV</div><div class="app-title__subtitle">Self-hosted malware scanning console</div></div>
