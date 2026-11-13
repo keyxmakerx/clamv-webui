@@ -9,6 +9,8 @@ services:
       CLAMD_HOST_ALLOWLIST: clamav  # admins can only add endpoints on these hosts
       SCAN_ROOTS: /data,/documents,/games  # clamd must see these at the same paths
       LOG_FORMAT: json  # one JSON object per line for fluent-bit
+      # TLS_SELF_SIGNED: "true"  # HTTPS for clamctl; certificate lands in ./data/tls
+      # TLS_SELF_SIGNED_NAMES: 100.82.x.y  # the mesh IP or name clients connect to
     ports:
       - "8080:8080"  # bind to the mesh IP in production, e.g. 100.82.x.y:8080:8080
     networks:

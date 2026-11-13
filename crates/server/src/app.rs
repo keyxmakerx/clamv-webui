@@ -124,8 +124,11 @@ pub fn router(state: Arc<AppState>, cfg: &Config) -> Router {
     app.layer(TraceLayer::new_for_http())
 }
 
-pub async fn serve(cfg: Config) -> anyhow::Result<()> {
+pub async fn serve(mut cfg: Config) -> anyhow::Result<()> {
     prepare_data_dir(&cfg.data_dir)?;
+    if cfg.tls_enabled() {
+        cfg.cookie_secure = true;
+    }
     let url = cfg.database_url()?;
     let db = Db::open(&url, cfg.database_max_connections)
         .await
@@ -142,11 +145,34 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     spawn_housekeeping(state.clone());
     crate::scan::start(state.clone()).await;
     let app = router(state, &cfg).into_make_service_with_connect_info::<std::net::SocketAddr>();
-    let listener = tokio::net::TcpListener::bind(cfg.listen).await?;
-    tracing::info!(listen = %cfg.listen, clamd = %cfg.clamd_endpoint, data_dir = %cfg.data_dir.display(), version = env!("CARGO_PKG_VERSION"), "started");
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown())
-        .await?;
+    let scheme = if cfg.tls_enabled() { "https" } else { "http" };
+    tracing::info!(listen = %cfg.listen, scheme, clamd = %cfg.clamd_endpoint, data_dir = %cfg.data_dir.display(), version = env!("CARGO_PKG_VERSION"), "started");
+    if cfg.tls_enabled() {
+        let (tls, cert) = crate::tls::config(&cfg).await?;
+        tracing::info!(event = "tls.ready", cert = %cert.display(), sha256 = crate::tls::fingerprint(&cert).as_deref().unwrap_or("?"), "serving HTTPS");
+        // The container HEALTHCHECK speaks plain HTTP to loopback only.
+        let health = Router::new().route("/healthz", get(healthz));
+        let hl =
+            tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, cfg.health_port)).await?;
+        tokio::spawn(async move {
+            let _ = axum::serve(hl, health).await;
+        });
+        let handle = axum_server::Handle::new();
+        let h = handle.clone();
+        tokio::spawn(async move {
+            shutdown().await;
+            h.graceful_shutdown(Some(std::time::Duration::from_secs(10)));
+        });
+        axum_server::bind_rustls(cfg.listen, tls)
+            .handle(handle)
+            .serve(app)
+            .await?;
+    } else {
+        let listener = tokio::net::TcpListener::bind(cfg.listen).await?;
+        axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown())
+            .await?;
+    }
     db.close().await;
     tracing::info!("stopped");
     Ok(())

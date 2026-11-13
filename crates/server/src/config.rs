@@ -117,7 +117,39 @@ pub struct Config {
     #[arg(long, env = "JOB_RETENTION_DAYS", default_value_t = 90, global = true)]
     pub job_retention_days: u64,
 
-    /// Mark the session cookie Secure. Leave false only when served over plain HTTP on a private network.
+    /// PEM certificate chain for HTTPS. With TLS_KEY_FILE, serves HTTPS instead of HTTP.
+    #[arg(long, env = "TLS_CERT_FILE", global = true, requires = "tls_key_file")]
+    pub tls_cert_file: Option<std::path::PathBuf>,
+
+    /// PEM private key for TLS_CERT_FILE.
+    #[arg(long, env = "TLS_KEY_FILE", global = true, requires = "tls_cert_file")]
+    pub tls_key_file: Option<std::path::PathBuf>,
+
+    /// Serve HTTPS with a self-signed certificate kept in DATA_DIR/tls (for clamctl over a private network).
+    #[arg(
+        long,
+        env = "TLS_SELF_SIGNED",
+        default_value_t = false,
+        global = true,
+        conflicts_with = "tls_cert_file"
+    )]
+    pub tls_self_signed: bool,
+
+    /// Comma-separated host names and IPs the self-signed certificate is valid for.
+    #[arg(
+        long,
+        env = "TLS_SELF_SIGNED_NAMES",
+        value_delimiter = ',',
+        default_value = "localhost",
+        global = true
+    )]
+    pub tls_self_signed_names: Vec<String>,
+
+    /// Loopback port for the plain-HTTP health probe when TLS is on.
+    #[arg(long, env = "HEALTH_PORT", default_value_t = 8081, global = true)]
+    pub health_port: u16,
+
+    /// Mark the session cookie Secure (always on with TLS). Leave false only when served over plain HTTP on a private network.
     #[arg(long, env = "COOKIE_SECURE", default_value_t = false, global = true)]
     pub cookie_secure: bool,
 
@@ -177,6 +209,10 @@ impl Config {
 
     pub fn session_max_ms(&self) -> i64 {
         i64::from(self.session_max_hours.max(1)) * 3_600_000
+    }
+
+    pub fn tls_enabled(&self) -> bool {
+        self.tls_self_signed || self.tls_cert_file.is_some()
     }
 
     pub fn request_timeout(&self) -> Duration {

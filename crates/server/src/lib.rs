@@ -12,4 +12,5 @@ pub mod healthcheck;
 pub mod logging;
 pub mod scan;
 pub mod timefmt;
+pub mod tls;
 pub mod web;

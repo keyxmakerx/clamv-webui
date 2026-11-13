@@ -11,7 +11,11 @@ use tokio::time::timeout;
 use crate::config::Config;
 
 pub async fn run(cfg: &Config) -> ExitCode {
-    let mut addr = cfg.listen;
+    let mut addr = if cfg.tls_enabled() {
+        SocketAddr::from((Ipv4Addr::LOCALHOST, cfg.health_port))
+    } else {
+        cfg.listen
+    };
     if addr.ip().is_unspecified() {
         addr = match addr {
             SocketAddr::V4(_) => SocketAddr::from((Ipv4Addr::LOCALHOST, addr.port())),
