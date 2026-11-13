@@ -1,0 +1,39 @@
+{% extends "shell.html" %}
+{% block title %}Schedules · ClamAV Web UI{% endblock %}
+{% block content %}
+<h1 class="h3">Scheduled scans</h1>
+<p class="muted">Times are UTC. A run is skipped while the previous one is still going. With the EICAR control on, each run first checks that clamd flags the EICAR test file; a miss logs <code>eicar.control_failed</code>.</p>
+<section class="card mt-3"><div class="card-body">
+<h2 class="h5">Add schedule</h2>
+{% if roots.is_empty() %}<p class="muted">Set <code>SCAN_ROOTS</code> to schedule path scans.</p>{% else %}
+<form method="post" action="/admin/schedules" class="row g-3">
+<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
+<div class="col-md-4"><label class="form-label" for="sn">Name</label><input class="form-control" id="sn" name="name" required maxlength="100" placeholder="Nightly library" autocomplete="off"></div>
+<div class="col-md-4"><label class="form-label" for="sc">When (cron, UTC)</label><input class="form-control" id="sc" name="cron" required maxlength="128" placeholder="30 2 * * *" autocomplete="off">
+<div class="form-text">minute hour day month weekday, or @daily / @weekly</div></div>
+<div class="col-md-4"><label class="form-label" for="se">Endpoint</label><select class="form-select" id="se" name="endpoint">
+{% for e in endpoints %}<option value="{% if !e.is_default %}{{ e.id }}{% endif %}"{% if e.is_default %} selected{% endif %}>{{ e.name }}{% if e.is_default %} (default){% endif %}</option>{% endfor %}</select></div>
+<div class="col-md-8"><label class="form-label" for="sp">Paths, one per line</label><textarea class="form-control" id="sp" name="paths" rows="3" required placeholder="{% for r in roots %}{{ r }}&#10;{% endfor %}"></textarea></div>
+<div class="col-md-4 d-flex align-items-end"><label class="form-check-label"><input class="form-check-input" type="checkbox" name="eicar" value="1" checked> EICAR control on every run</label></div>
+<div class="col-12"><button class="btn btn-primary" type="submit">Add schedule</button></div>
+</form>{% endif %}
+</div></section>
+<section class="card mt-3"><div class="card-body table-responsive">
+<table class="table table-sm align-middle">
+<thead><tr><th>Schedule</th><th>Paths</th><th>Next run</th><th>Last run</th><th>EICAR control</th><th></th></tr></thead>
+<tbody>
+{% for r in rows %}<tr>
+<td><strong>{{ r.name }}</strong>{% if !r.enabled %} <span class="badge bg-secondary">paused</span>{% endif %}<div class="small"><code>{{ r.cron }}</code> · {{ r.endpoint }}</div></td>
+<td class="small text-break">{% for p in r.paths %}<div>{{ p }}</div>{% endfor %}</td>
+<td class="small text-nowrap">{{ r.next }}</td>
+<td class="small text-nowrap">{% if r.last_job.is_empty() %}{{ r.last_run }}{% else %}<a href="/jobs/{{ r.last_job }}">{{ r.last_run }}</a>{% endif %}</td>
+<td>{% if !r.eicar %}<span class="muted small">off</span>{% else if r.control == "passed" %}<a href="/jobs/{{ r.control_job }}"><span class="badge bg-success">passed</span></a>{% else if r.control == "failed" %}<a href="/jobs/{{ r.control_job }}"><span class="badge bg-danger">failed</span></a>{% else %}<span class="muted small">{{ r.control }}</span>{% endif %}</td>
+<td><div class="d-flex gap-2">
+<form method="post" action="/admin/schedules/{{ r.id }}/run"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-primary" type="submit">Run now</button></form>
+<form method="post" action="/admin/schedules/{{ r.id }}/enabled"><input type="hidden" name="_csrf" value="{{ nav.csrf }}">{% if !r.enabled %}<input type="hidden" name="enabled" value="1">{% endif %}<button class="btn btn-sm btn-outline-secondary" type="submit">{% if r.enabled %}Pause{% else %}Resume{% endif %}</button></form>
+<form method="post" action="/admin/schedules/{{ r.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Delete</button></form>
+</div></td>
+</tr>{% else %}<tr><td colspan="6" class="muted">No schedules yet.</td></tr>{% endfor %}
+</tbody></table>
+</div></section>
+{% endblock %}

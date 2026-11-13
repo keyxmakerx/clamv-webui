@@ -282,3 +282,133 @@ fn form(uri: &str, body: &str, cookie: &str) -> Request<Body> {
         .body(Body::from(body.to_owned()))
         .expect("req")
 }
+
+async fn wait_finished(st: &AppState, id: &str) -> clamv_webui::db::jobs::Job {
+    for _ in 0..50 {
+        let j = st.db.job(id).await.expect("q").expect("job");
+        if j.status == "FINISHED" {
+            return j;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("job {id} did not finish");
+}
+
+#[tokio::test]
+async fn schedules_run_with_eicar_control() {
+    let base = std::env::temp_dir().join(format!("clamv-sched-{}", clamv_webui::db::new_id()));
+    let root = base.join("media");
+    std::fs::create_dir_all(root.join("movies")).expect("mkdir");
+    let roots = root.to_str().expect("utf8").to_owned();
+    let (app, st, c, t) = app(&["--scan-roots", &roots]).await;
+    clamv_webui::scan::start(st.clone()).await;
+    let bad = format!(
+        "_csrf={t}&name=n&cron=99+*+*+*+*&paths={}/movies&eicar=1",
+        root.display()
+    );
+    let res = app
+        .clone()
+        .oneshot(form("/admin/schedules", &bad, &c))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST, "bad cron");
+    let outside = format!("_csrf={t}&name=n&cron=%40daily&paths=/etc&eicar=1");
+    let res = app
+        .clone()
+        .oneshot(form("/admin/schedules", &outside, &c))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST, "path outside roots");
+    let good = format!(
+        "_csrf={t}&name=nightly&cron=30+2+*+*+*&paths={}/movies&eicar=1",
+        root.display()
+    );
+    let res = app
+        .clone()
+        .oneshot(form("/admin/schedules", &good, &c))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::OK);
+    let sch = st.db.list_schedules().await.expect("list").remove(0);
+    assert!(sch.eicar_check);
+    let res = app
+        .clone()
+        .oneshot(form(
+            &format!("/admin/schedules/{}/run", sch.id),
+            &format!("_csrf={t}"),
+            &c,
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::OK);
+    let control = st
+        .db
+        .last_control_job(&sch.id)
+        .await
+        .expect("q")
+        .expect("control job");
+    assert_eq!(
+        control.verdict.as_deref(),
+        Some("OK"),
+        "fake clamd flags EICAR"
+    );
+    let sch = st.db.schedule(&sch.id).await.expect("q").expect("s");
+    let job = wait_finished(&st, sch.last_job_id.as_deref().expect("job")).await;
+    assert_eq!(job.schedule_id.as_deref(), Some(sch.id.as_str()));
+    assert_eq!(job.verdict.as_deref(), Some("VIRUS_FOUND"));
+    let page = app
+        .clone()
+        .oneshot(
+            Request::get("/admin/schedules")
+                .header(header::COOKIE, &c)
+                .body(Body::empty())
+                .expect("req"),
+        )
+        .await
+        .expect("res");
+    let html = String::from_utf8_lossy(
+        &http_body_util::BodyExt::collect(page.into_body())
+            .await
+            .expect("b")
+            .to_bytes(),
+    )
+    .into_owned();
+    assert!(html.contains("passed") && html.contains("nightly"));
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[tokio::test]
+async fn eicar_control_failure_is_recorded() {
+    let base = std::env::temp_dir().join(format!("clamv-ctl-{}", clamv_webui::db::new_id()));
+    std::fs::create_dir_all(&base).expect("mkdir");
+    let roots = base.to_str().expect("utf8").to_owned();
+    let (_app, st, _c, _t) = app(&["--scan-roots", &roots]).await;
+    // Point the default endpoint at a closed port.
+    let dead = st
+        .db
+        .create_endpoint("dead", "tcp://127.0.0.1:1", true)
+        .await
+        .expect("ep");
+    let sch = st
+        .db
+        .create_schedule(clamv_webui::db::schedules::NewSchedule {
+            name: "s",
+            cron: "@daily",
+            paths: std::slice::from_ref(&roots),
+            endpoint_id: Some(dead.id),
+            eicar_check: true,
+        })
+        .await
+        .expect("schedule");
+    let ok = clamv_webui::schedule::control(&st, &sch, &dead).await;
+    assert!(!ok);
+    let j = st
+        .db
+        .last_control_job(&sch.id)
+        .await
+        .expect("q")
+        .expect("job");
+    assert_eq!(j.verdict.as_deref(), Some("ERROR"));
+    assert_eq!(j.error_code.as_deref(), Some("SCAN_FAILED"));
+    let _ = std::fs::remove_dir_all(&base);
+}

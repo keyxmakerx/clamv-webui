@@ -390,3 +390,41 @@ async fn tokens_and_audit_pages() {
         db.close().await;
     }
 }
+
+#[tokio::test]
+async fn schedules_claim_once() {
+    use clamv_webui::db::schedules::NewSchedule;
+    for db in databases().await {
+        let kind = db.kind();
+        let name = format!("s-{}", &new_id()[..8]);
+        let s = db
+            .create_schedule(NewSchedule {
+                name: &name,
+                cron: "@daily",
+                paths: &["/data/ü".to_owned()],
+                endpoint_id: None,
+                eicar_check: true,
+            })
+            .await
+            .expect("create");
+        assert_eq!(s.paths, vec!["/data/ü".to_owned()], "{kind:?}");
+        assert!(
+            db.claim_schedule_run(&s.id, None, 10).await.expect("claim"),
+            "{kind:?}"
+        );
+        assert!(
+            !db.claim_schedule_run(&s.id, None, 11).await.expect("claim"),
+            "{kind:?}: twice"
+        );
+        assert!(
+            db.claim_schedule_run(&s.id, Some(10), 20)
+                .await
+                .expect("claim")
+        );
+        assert_eq!(db.schedule_active_jobs(&s.id).await.expect("active"), 0);
+        db.set_schedule_enabled(&s.id, false).await.expect("pause");
+        assert!(!db.schedule(&s.id).await.expect("q").expect("s").enabled);
+        assert!(db.delete_schedule(&s.id).await.expect("delete"));
+        db.close().await;
+    }
+}

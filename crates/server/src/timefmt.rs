@@ -1,7 +1,7 @@
 //! Small UTC date helpers (no time-zone database needed).
 
 /// Civil date from days since 1970-01-01 (H. Hinnant's algorithm).
-fn civil(days: i64) -> (i64, i64, i64) {
+pub(crate) fn civil(days: i64) -> (i64, i64, i64) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
     let doe = z - era * 146_097;
@@ -14,7 +14,7 @@ fn civil(days: i64) -> (i64, i64, i64) {
 }
 
 /// Days since 1970-01-01 for a civil date.
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+pub(crate) fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = y.div_euclid(400);
     let yoe = y - era * 400;
