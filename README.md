@@ -20,7 +20,7 @@ Forked from an earlier Java application, which has been replaced entirely. Licen
 - **Two-factor sign-in**: an authenticator app (TOTP) with recovery codes, and passkeys (fingerprint, face or security key), which also sign in without a password.
 - **Users and roles**: Viewer, Operator, Admin. Local accounts, OIDC single sign-on, and LDAP with roles taken from groups on every sign-in.
 - **API** at `/api/v1` with personal tokens, used by the `clamctl` CLI and MCP server (`cli/`, `docs/CLI.md`, `docs/MCP.md`).
-- **Webhooks** for alerts (any JSON receiver, or Discord), with SSRF protection.
+- **Alerts** to up to five destinations: any JSON webhook, Discord, Slack or Mattermost, ntfy and Gotify, with priorities, signatures you can mute, and SSRF protection.
 - **Prometheus metrics** and Grafana dashboards (`dashboards/`).
 - **Settings page** for the tunables that are not locked by environment variables, with a diff before applying.
 - **Databases**: SQLite (default), PostgreSQL, MySQL, MariaDB.
@@ -115,14 +115,18 @@ Canary files: put a tempting decoy (say `/srv/secrets/passwords.kdbx`) somewhere
 | `PUBLIC_URL` | unset | The address users open, e.g. `https://clamav.example.com`; passkeys are tied to its host name |
 | `SECRET_KEY_FILE` | `DATA_DIR/secret.key` | Key that encrypts stored 2FA secrets; created on first use. Back it up with the database |
 
-### Webhooks
+### Alerts (webhook, ntfy, Gotify, Slack, Discord)
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `WEBHOOK_URL(_FILE)` | unset | `http(s)` receiver; Discord webhook URLs get a chat message |
+| `WEBHOOK_URL(_FILE)` | unset | Up to 5 comma-separated destinations, see below |
+| `WEBHOOK_IGNORE_SIGNATURES` | empty | Signature prefixes that never notify on their own, e.g. `PUA.` (still logged and listed) |
 | `WEBHOOK_EVENTS` | `alerts` | `alerts` (detections, failures, clamd down, stale signatures) or `all` |
 | `WEBHOOK_ALLOWED_CIDRS` | empty | Private ranges the receiver may resolve to, e.g. `100.82.0.0/16` |
 | `WEBHOOK_ALLOW_PRIVATE` | `false` | Allow any private address (cloud metadata stays blocked) |
+
+Destinations: a plain `https://…` URL gets the JSON event, and Discord webhook URLs get a chat message. Put a prefix in front for the others:
+`ntfy+https://ntfy.sh/<topic>` (add `?auth=…` for a protected topic), `gotify+https://gotify.example/?token=<app token>`, `slack+https://…` (Slack or Mattermost incoming webhook). Canary hits are sent at the highest priority, malware and failed EICAR checks at high.
 
 ### Metrics
 

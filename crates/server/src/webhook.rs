@@ -1,5 +1,6 @@
-//! Outgoing webhook for finished scans. Every request is pinned to addresses
-//! checked against the SSRF policy, redirects are off and the URL is never logged.
+//! Outgoing alerts: plain JSON webhooks, Discord, Slack/Mattermost, ntfy and Gotify.
+//! Every request is pinned to addresses checked against the SSRF policy,
+//! redirects are off and the URL is never logged.
 
 use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
@@ -16,6 +17,8 @@ use crate::db::jobs;
 const QUEUE: usize = 100;
 const WORKERS: usize = 2;
 const ATTEMPTS: u32 = 3;
+/// Most destinations one instance sends to.
+pub const MAX_TARGETS: usize = 5;
 
 /// What a webhook call reports. Field names follow the Java payload.
 #[derive(Debug, Clone, Serialize)]
@@ -157,16 +160,38 @@ impl Policy {
     }
 }
 
+/// How a destination wants the message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Format {
+    Json,
+    Discord,
+    Slack,
+    Ntfy,
+    Gotify,
+}
+
+impl Format {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Json => "JSON",
+            Self::Discord => "Discord",
+            Self::Slack => "Slack / Mattermost",
+            Self::Ntfy => "ntfy",
+            Self::Gotify => "Gotify",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Target {
     url: Url,
-    discord: bool,
+    format: Format,
     policy: Policy,
 }
 
 impl Target {
-    /// None when no webhook is configured; an error for a bad URL or CIDR.
-    pub fn from_config(cfg: &Config) -> anyhow::Result<Option<Self>> {
+    /// Every configured destination (none when unset); an error for a bad URL or CIDR.
+    pub fn from_config(cfg: &Config) -> anyhow::Result<Vec<Self>> {
         let raw = match &cfg.webhook_url_file {
             Some(p) => std::fs::read_to_string(p)
                 .map_err(|e| anyhow::anyhow!("cannot read WEBHOOK_URL_FILE {}: {e}", p.display()))?
@@ -179,18 +204,6 @@ impl Target {
                 .trim()
                 .to_owned(),
         };
-        if raw.is_empty() {
-            return Ok(None);
-        }
-        // The URL may hold a token, so errors never quote it.
-        let url =
-            Url::parse(&raw).map_err(|_| anyhow::anyhow!("WEBHOOK_URL is not a valid URL"))?;
-        if !matches!(url.scheme(), "http" | "https") || url.host().is_none() {
-            anyhow::bail!("WEBHOOK_URL must be an http or https URL with a host");
-        }
-        if !url.username().is_empty() || url.password().is_some() {
-            anyhow::bail!("WEBHOOK_URL must not contain credentials");
-        }
         let cidrs = cfg
             .webhook_allowed_cidrs
             .iter()
@@ -198,26 +211,85 @@ impl Target {
             .map(|c| Cidr::parse(c))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| anyhow::anyhow!("WEBHOOK_ALLOWED_CIDRS: {e}"))?;
+        let policy = Policy {
+            allow_private: cfg.webhook_allow_private,
+            cidrs,
+        };
+        let parts: Vec<&str> = raw
+            .split([',', '\n'])
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .collect();
+        if parts.len() > MAX_TARGETS {
+            anyhow::bail!("WEBHOOK_URL: at most {MAX_TARGETS} destinations");
+        }
+        parts
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                Self::parse(p, policy.clone())
+                    .map_err(|e| anyhow::anyhow!("WEBHOOK_URL destination {}: {e}", i + 1))
+            })
+            .collect()
+    }
+
+    /// `https://…` (JSON, or Discord by host), or `ntfy+`, `gotify+`, `slack+`, `json+` in front.
+    fn parse(raw: &str, policy: Policy) -> anyhow::Result<Self> {
+        let (forced, rest) = match raw.split_once('+') {
+            Some((p, rest)) if rest.starts_with("http") && !p.contains(':') => {
+                let f = match p.to_ascii_lowercase().as_str() {
+                    "ntfy" => Format::Ntfy,
+                    "gotify" => Format::Gotify,
+                    "slack" | "mattermost" => Format::Slack,
+                    "discord" => Format::Discord,
+                    "json" => Format::Json,
+                    _ => anyhow::bail!("unknown prefix; use ntfy+, gotify+, slack+ or json+"),
+                };
+                (Some(f), rest)
+            }
+            _ => (None, raw),
+        };
+        // The URL may hold a token, so errors never quote it.
+        let url = Url::parse(rest).map_err(|_| anyhow::anyhow!("not a valid URL"))?;
+        if !matches!(url.scheme(), "http" | "https") || url.host().is_none() {
+            anyhow::bail!("must be an http or https URL with a host");
+        }
+        if !url.username().is_empty() || url.password().is_some() {
+            anyhow::bail!("must not contain credentials");
+        }
         let discord = matches!(
             url.host_str(),
             Some("discord.com" | "discordapp.com" | "canary.discord.com" | "ptb.discord.com")
         ) && url.path().starts_with("/api/webhooks/");
-        Ok(Some(Self {
+        let format = forced.unwrap_or(if discord {
+            Format::Discord
+        } else {
+            Format::Json
+        });
+        if format == Format::Ntfy
+            && url
+                .path_segments()
+                .and_then(|mut s| s.next_back())
+                .is_none_or(str::is_empty)
+        {
+            anyhow::bail!("an ntfy URL ends with the topic, e.g. ntfy+https://ntfy.sh/my-topic");
+        }
+        if format == Format::Gotify && !url.query_pairs().any(|(k, _)| k == "token") {
+            anyhow::bail!("a Gotify URL needs ?token=<app token>");
+        }
+        Ok(Self {
             url,
-            discord,
-            policy: Policy {
-                allow_private: cfg.webhook_allow_private,
-                cidrs,
-            },
-        }))
+            format,
+            policy,
+        })
     }
 
     pub fn host(&self) -> String {
         self.url.host_str().unwrap_or("").to_owned()
     }
 
-    pub fn is_discord(&self) -> bool {
-        self.discord
+    pub fn format(&self) -> Format {
+        self.format
     }
 
     /// Resolve and check every address; all must pass so DNS cannot mix in a private one.
@@ -247,11 +319,64 @@ impl Target {
         Ok(addrs)
     }
 
-    fn body(&self, e: &Event) -> serde_json::Value {
-        if self.discord {
-            serde_json::json!({ "content": discord_text(e), "allowed_mentions": { "parse": [] } })
-        } else {
-            serde_json::to_value(e).unwrap_or_default()
+    /// Where to POST and what JSON to send.
+    fn request(&self, e: &Event) -> (Url, serde_json::Value) {
+        let sev = severity(e);
+        match self.format {
+            Format::Json => (
+                self.url.clone(),
+                serde_json::to_value(e).unwrap_or_default(),
+            ),
+            Format::Discord => (
+                self.url.clone(),
+                serde_json::json!({ "content": discord_text(e), "allowed_mentions": { "parse": [] } }),
+            ),
+            Format::Slack => (
+                self.url.clone(),
+                serde_json::json!({ "text": discord_text(e).replace("**", "*") }),
+            ),
+            Format::Gotify => {
+                let mut u = self.url.clone();
+                u.set_path(&format!(
+                    "{}/message",
+                    self.url
+                        .path()
+                        .trim_end_matches('/')
+                        .trim_end_matches("/message")
+                ));
+                (
+                    u,
+                    serde_json::json!({
+                        "title": title(e),
+                        "message": body_text(e),
+                        "priority": gotify_priority(sev),
+                        "extras": { "client::display": { "contentType": "text/markdown" } },
+                    }),
+                )
+            }
+            Format::Ntfy => {
+                // JSON publishing goes to the server root with the topic in the body,
+                // which keeps non-ASCII titles out of headers.
+                let mut u = self.url.clone();
+                let mut segs: Vec<String> = self
+                    .url
+                    .path_segments()
+                    .map(|s| s.map(str::to_owned).collect())
+                    .unwrap_or_default();
+                let topic = segs.pop().unwrap_or_default();
+                u.set_path(&format!("{}/", segs.join("/")));
+                (
+                    u,
+                    serde_json::json!({
+                        "topic": topic,
+                        "title": title(e),
+                        "message": body_text(e),
+                        "priority": sev,
+                        "tags": [tag(e)],
+                        "markdown": true,
+                    }),
+                )
+            }
         }
     }
 
@@ -268,13 +393,13 @@ impl Target {
             b = b.resolve_to_addrs(d, &addrs);
         }
         let client = b.build().map_err(|e| format!("client: {e}"))?;
-        let body = self.body(e);
+        let (url, body) = self.request(e);
         let mut last = String::new();
         for attempt in 1..=ATTEMPTS {
             if attempt > 1 {
                 tokio::time::sleep(Duration::from_secs(if attempt == 2 { 1 } else { 5 })).await;
             }
-            match client.post(self.url.clone()).json(&body).send().await {
+            match client.post(url.clone()).json(&body).send().await {
                 Ok(r) if r.status().is_success() => return Ok(()),
                 Ok(r) => {
                     let s = r.status();
@@ -341,6 +466,57 @@ fn clip(s: &str, n: usize) -> String {
         let mut t: String = s.chars().take(n.saturating_sub(1)).collect();
         t.push('…');
         t
+    }
+}
+
+/// 1 (min) to 5 (urgent), on ntfy's scale.
+fn severity(e: &Event) -> u8 {
+    match (e.event, e.verdict.as_str()) {
+        ("canary.tripped", _) => 5,
+        ("eicar.control_failed", _) | (_, jobs::VIRUS_FOUND) => 4,
+        ("test", _) | (_, jobs::ERROR) => 3,
+        _ if e.file_errors > 0 => 3,
+        _ => 2,
+    }
+}
+
+fn gotify_priority(sev: u8) -> u8 {
+    match sev {
+        5 => 10,
+        4 => 8,
+        3 => 5,
+        _ => 2,
+    }
+}
+
+fn tag(e: &Event) -> &'static str {
+    match severity(e) {
+        5 => "rotating_light",
+        4 => "biohazard",
+        3 => "warning",
+        _ => "white_check_mark",
+    }
+}
+
+/// One line for a notification title.
+fn title(e: &Event) -> String {
+    let t = match (e.event, e.verdict.as_str()) {
+        ("test", _) => "Test from clamv-webui".to_owned(),
+        ("canary.tripped", _) => format!("Canary file touched on {}", e.endpoint),
+        ("eicar.control_failed", _) => format!("EICAR check failed on {}", e.endpoint),
+        (_, jobs::VIRUS_FOUND) => format!("Malware found on {}", e.endpoint),
+        (_, jobs::ERROR) => format!("Scan failed on {}", e.endpoint),
+        _ => format!("Scan finished on {}", e.endpoint),
+    };
+    clip(&t, 120)
+}
+
+/// The chat text without its first line, which the title already says.
+fn body_text(e: &Event) -> String {
+    let full = discord_text(e);
+    match full.split_once('\n') {
+        Some((_, rest)) if !rest.trim().is_empty() => rest.to_owned(),
+        _ => full.replace("**", ""),
     }
 }
 
@@ -414,43 +590,80 @@ pub struct Delivery {
 
 /// Queues events for a small worker pool so scans never wait on the network.
 pub struct Notifier {
-    target: Option<Target>,
+    targets: Vec<Target>,
     events: WebhookEvents,
+    ignore: Vec<String>,
     tx: mpsc::Sender<Event>,
     rx: Mutex<Option<mpsc::Receiver<Event>>>,
-    last: Mutex<Option<Delivery>>,
+    last: Mutex<Vec<Option<Delivery>>>,
 }
 
 impl Notifier {
     pub fn new(cfg: &Config) -> Self {
-        let target = Target::from_config(cfg).unwrap_or_else(|e| {
+        let targets = Target::from_config(cfg).unwrap_or_else(|e| {
             tracing::error!(event = "webhook.config_invalid", error = %e, "webhook disabled");
-            None
+            Vec::new()
         });
         let (tx, rx) = mpsc::channel(QUEUE);
         Self {
-            target,
+            last: Mutex::new(vec![None; targets.len()]),
+            targets,
             events: cfg.webhook_events,
+            ignore: cfg
+                .webhook_ignore_signatures
+                .iter()
+                .map(|s| s.trim().to_ascii_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect(),
             tx,
             rx: Mutex::new(Some(rx)),
-            last: Mutex::new(None),
         }
     }
 
-    pub fn target(&self) -> Option<&Target> {
-        self.target.as_ref()
+    pub fn targets(&self) -> &[Target] {
+        &self.targets
+    }
+
+    /// Signature prefixes that never raise a notification on their own.
+    pub fn ignored(&self) -> &[String] {
+        &self.ignore
+    }
+
+    /// A detection whose every signature is on the ignore list, with nothing else wrong.
+    fn muted(&self, e: &Event) -> bool {
+        e.event == "scan.finished"
+            && e.verdict == jobs::VIRUS_FOUND
+            && e.file_errors == 0
+            && !e.found_viruses.is_empty()
+            && e.found_viruses.iter().all(|v| {
+                let v = v.to_ascii_lowercase();
+                self.ignore.iter().any(|p| v.starts_with(p.as_str()))
+            })
     }
 
     pub fn events(&self) -> WebhookEvents {
         self.events
     }
 
+    /// The latest delivery to any destination.
     pub fn last(&self) -> Option<Delivery> {
-        self.last.lock().ok().and_then(|g| g.clone())
+        self.last
+            .lock()
+            .ok()
+            .and_then(|g| g.iter().flatten().max_by_key(|d| d.at).cloned())
+    }
+
+    /// The latest delivery per destination, in configured order.
+    pub fn last_each(&self) -> Vec<Option<Delivery>> {
+        self.last.lock().map(|g| g.clone()).unwrap_or_default()
     }
 
     pub fn notify(&self, e: Event) {
-        if self.target.is_none() || (self.events == WebhookEvents::Alerts && !e.is_alert()) {
+        if self.targets.is_empty() || (self.events == WebhookEvents::Alerts && !e.is_alert()) {
+            return;
+        }
+        if self.muted(&e) {
+            tracing::info!(event = "webhook.muted", job_id = %e.job_id, "detection matches WEBHOOK_IGNORE_SIGNATURES; not sent");
             return;
         }
         if self.tx.try_send(e).is_err() {
@@ -463,9 +676,9 @@ impl Notifier {
 
     /// Send a test event now and report the result.
     pub async fn test(&self) -> Result<(), String> {
-        let Some(t) = &self.target else {
+        if self.targets.is_empty() {
             return Err("No webhook is configured.".into());
-        };
+        }
         let e = Event {
             event: "test",
             job_id: String::new(),
@@ -482,12 +695,26 @@ impl Notifier {
             error: None,
             finished_at: crate::timefmt::rfc3339(crate::db::now_ms()),
         };
-        let r = t.deliver(&e).await;
-        self.record(t, &e, &r);
-        r
+        let mut errs = Vec::new();
+        for (i, t) in self.targets.iter().enumerate() {
+            let r = t.deliver(&e).await;
+            self.record(i, t, &e, &r);
+            if let Err(m) = r {
+                errs.push(if self.targets.len() > 1 {
+                    format!("{} ({}): {m}", t.host(), t.format.label())
+                } else {
+                    m
+                });
+            }
+        }
+        if errs.is_empty() {
+            Ok(())
+        } else {
+            Err(errs.join("; "))
+        }
     }
 
-    fn record(&self, t: &Target, e: &Event, r: &Result<(), String>) {
+    fn record(&self, i: usize, t: &Target, e: &Event, r: &Result<(), String>) {
         match r {
             Ok(()) => {
                 tracing::info!(event = "webhook.delivered", host = %t.host(), webhook_event = e.event, job_id = %e.job_id, "webhook delivered");
@@ -496,8 +723,9 @@ impl Notifier {
                 tracing::error!(event = "webhook.failed", host = %t.host(), webhook_event = e.event, job_id = %e.job_id, reason = %m, "webhook delivery failed");
             }
         }
-        if let Ok(mut g) = self.last.lock() {
-            *g = Some(Delivery {
+        let Ok(mut g) = self.last.lock() else { return };
+        if let Some(slot) = g.get_mut(i) {
+            *slot = Some(Delivery {
                 at: crate::db::now_ms(),
                 ok: r.is_ok(),
                 detail: r.as_ref().err().cloned().unwrap_or_default(),
@@ -519,9 +747,9 @@ pub fn spawn(st: Arc<crate::app::AppState>) {
                 let Some(e) = rx.lock().await.recv().await else {
                     return;
                 };
-                if let Some(t) = st.notifier.target() {
+                for (i, t) in st.notifier.targets().iter().enumerate() {
                     let r = t.deliver(&e).await;
-                    st.notifier.record(t, &e, &r);
+                    st.notifier.record(i, t, &e, &r);
                 }
             }
         });
@@ -531,6 +759,7 @@ pub fn spawn(st: Arc<crate::app::AppState>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
 
     fn policy(private: bool, cidrs: &[&str]) -> Policy {
         Policy {
@@ -624,5 +853,126 @@ mod tests {
         assert!(t.chars().count() <= 1900);
         assert!(t.contains("and 40 more"));
         assert!(!t.contains("`x`"));
+    }
+
+    fn hit(sigs: &[&str]) -> Event {
+        let mut d = BTreeMap::new();
+        d.insert(
+            "/data/tv/x.mkv".to_owned(),
+            sigs.iter().map(|s| (*s).to_owned()).collect(),
+        );
+        Event {
+            event: "scan.finished",
+            job_id: "j".into(),
+            kind: "WATCH".into(),
+            target: "/data/tv/x.mkv".into(),
+            endpoint: "nas".into(),
+            submitted_by: None,
+            verdict: jobs::VIRUS_FOUND.into(),
+            found_viruses: sigs.iter().map(|s| (*s).to_owned()).collect(),
+            detections: d,
+            files_scanned: 1,
+            file_errors: 0,
+            error_code: None,
+            error: None,
+            finished_at: String::new(),
+        }
+    }
+
+    fn target(raw: &str) -> anyhow::Result<Target> {
+        Target::parse(raw, policy(false, &[]))
+    }
+
+    #[test]
+    fn formats_from_prefix_and_host() {
+        assert_eq!(
+            target("https://hooks.example/x").expect("t").format,
+            Format::Json
+        );
+        assert_eq!(
+            target("https://discord.com/api/webhooks/1/abc")
+                .expect("t")
+                .format,
+            Format::Discord
+        );
+        assert_eq!(
+            target("ntfy+https://ntfy.sh/alerts").expect("t").format,
+            Format::Ntfy
+        );
+        assert_eq!(
+            target("slack+https://chat.example/hooks/x")
+                .expect("t")
+                .format,
+            Format::Slack
+        );
+        assert!(target("ntfy+https://ntfy.sh/").is_err(), "topic needed");
+        assert!(target("gotify+https://g.example/").is_err(), "token needed");
+        assert!(target("smtp+https://x.example/").is_err());
+        let err = target("gotify+https://u:secret@g.example/?token=t").expect_err("creds");
+        assert!(!err.to_string().contains("secret"));
+    }
+
+    #[test]
+    fn ntfy_and_gotify_requests() {
+        let e = hit(&["Win.Trojan.Agent"]);
+        let (u, b) = target("ntfy+https://ntfy.example/sub/alerts?auth=abc")
+            .expect("t")
+            .request(&e);
+        assert_eq!(u.as_str(), "https://ntfy.example/sub/?auth=abc");
+        assert_eq!(b["topic"], "alerts");
+        assert_eq!(b["priority"], 4);
+        assert_eq!(b["title"], "Malware found on nas");
+        assert!(
+            b["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("Win.Trojan.Agent"))
+        );
+        let (u, b) = target("gotify+https://g.example/?token=t")
+            .expect("t")
+            .request(&e);
+        assert_eq!(u.as_str(), "https://g.example/message?token=t");
+        assert_eq!(b["priority"], 8);
+        let (_, b) = target("slack+https://chat.example/h")
+            .expect("t")
+            .request(&e);
+        assert!(
+            b["text"]
+                .as_str()
+                .is_some_and(|t| t.starts_with("*Malware found*"))
+        );
+    }
+
+    #[test]
+    fn ignored_signatures_mute_only_pure_matches() {
+        let cfg = crate::config::Cli::try_parse_from([
+            "clamv-webui",
+            "--webhook-url",
+            "https://hooks.example/x",
+            "--webhook-ignore-signatures",
+            "PUA.,Heuristics.Encrypted",
+        ])
+        .expect("parse")
+        .config;
+        let n = Notifier::new(&cfg);
+        assert!(n.muted(&hit(&["PUA.Win.Packer"])));
+        assert!(n.muted(&hit(&["pua.x", "Heuristics.Encrypted.Zip"])));
+        assert!(!n.muted(&hit(&["PUA.Win.Packer", "Win.Trojan.Agent"])));
+        let mut failed = hit(&["PUA.Win.Packer"]);
+        failed.file_errors = 1;
+        assert!(!n.muted(&failed));
+    }
+
+    #[test]
+    fn several_destinations_capped() {
+        let parse = |u: &str| {
+            let c = crate::config::Cli::try_parse_from(["clamv-webui", "--webhook-url", u])
+                .expect("parse")
+                .config;
+            Target::from_config(&c)
+        };
+        let two = parse("https://a.example/x, ntfy+https://ntfy.sh/t").expect("two");
+        assert_eq!(two.len(), 2);
+        assert!(parse(&["https://a.example/x"; 6].join(",")).is_err());
+        assert!(parse("").expect("none").is_empty());
     }
 }

@@ -14,7 +14,7 @@ services:
       LOG_FORMAT: json  # one JSON object per line for fluent-bit
       # TLS_SELF_SIGNED: "true"  # HTTPS for clamctl; certificate lands in ./data/tls
       # TLS_SELF_SIGNED_NAMES: 100.82.x.y  # the mesh IP or name clients connect to
-      # WEBHOOK_URL_FILE: /run/secrets/webhook_url  # alerts by POST; Discord URLs get a chat message
+      # WEBHOOK_URL_FILE: /run/secrets/webhook_url  # alert URLs, comma-separated; ntfy+, gotify+ or slack+ prefix for those
       # WEBHOOK_ALLOWED_CIDRS: 100.82.0.0/16  # needed when the receiver is on the mesh
       # METRICS_TOKEN_FILE: /run/secrets/metrics_token  # enables /metrics for Prometheus
       # OIDC_ISSUER: https://auth.example.lan  # SSO; also set OIDC_CLIENT_ID, OIDC_CLIENT_SECRET_FILE, OIDC_REDIRECT_URI

@@ -156,7 +156,7 @@ async fn show(st: &AppState, nav: Nav) -> Response {
             Kind::Bool => ("bool", 0, 0, Vec::new()),
             Kind::Number { min, max } => ("number", min, max, Vec::new()),
             Kind::Select(o) => ("select", 0, 0, o.to_vec()),
-            Kind::Cidrs => ("text", 0, 0, Vec::new()),
+            Kind::Cidrs | Kind::List => ("text", 0, 0, Vec::new()),
         };
         let row = Row {
             env: f.env,

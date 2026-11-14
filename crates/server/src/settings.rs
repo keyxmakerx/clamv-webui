@@ -18,6 +18,8 @@ pub enum Kind {
     Select(&'static [&'static str]),
     /// Comma-separated CIDRs.
     Cidrs,
+    /// Comma-separated plain words (letters, digits, `.`, `-`, `_`).
+    List,
 }
 
 pub struct Field {
@@ -99,6 +101,14 @@ pub const FIELDS: &[Field] = &[
             WebhookEvents::Alerts => "alerts".into(),
             WebhookEvents::All => "all".into(),
         },
+    },
+    Field {
+        env: "WEBHOOK_IGNORE_SIGNATURES",
+        section: "Notifications",
+        label: "Signatures that never notify",
+        help: "Comma-separated signature prefixes, e.g. PUA.,Heuristics.Encrypted. Still logged and listed.",
+        kind: Kind::List,
+        current: |c| c.webhook_ignore_signatures.join(","),
     },
     Field {
         env: "WEBHOOK_ALLOWED_CIDRS",
@@ -190,6 +200,28 @@ pub fn normalize(f: &Field, raw: &str) -> Result<Option<String>, String> {
             .find(|o| **o == v)
             .map(|o| Some((*o).to_owned()))
             .ok_or_else(|| format!("{}: pick one of {}.", f.label, opts.join(", "))),
+        Kind::List => {
+            let parts: Vec<&str> = v
+                .split(',')
+                .map(str::trim)
+                .filter(|p| !p.is_empty())
+                .collect();
+            if parts.len() > 64 {
+                return Err(format!("{}: at most 64 entries.", f.label));
+            }
+            if let Some(bad) = parts.iter().find(|p| {
+                p.len() > 128
+                    || !p
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+            }) {
+                return Err(format!(
+                    "{}: {bad:?} may only hold letters, digits, '.', '-' and '_'.",
+                    f.label
+                ));
+            }
+            Ok((!parts.is_empty()).then(|| parts.join(",")))
+        }
         Kind::Cidrs => {
             let parts: Vec<&str> = v
                 .split(',')
@@ -255,6 +287,9 @@ fn copy(env: &str, dst: &mut Config, src: &Config) {
         }
         "WATCH_POLL_SECS" => dst.watch_poll_secs = src.watch_poll_secs,
         "WEBHOOK_EVENTS" => dst.webhook_events = src.webhook_events,
+        "WEBHOOK_IGNORE_SIGNATURES" => dst
+            .webhook_ignore_signatures
+            .clone_from(&src.webhook_ignore_signatures),
         "WEBHOOK_ALLOWED_CIDRS" => dst
             .webhook_allowed_cidrs
             .clone_from(&src.webhook_allowed_cidrs),
@@ -326,6 +361,7 @@ mod tests {
                 Kind::Number { max, .. } => max.to_string(),
                 Kind::Select(o) => o[o.len() - 1].to_owned(),
                 Kind::Cidrs => "10.9.0.0/16".to_owned(),
+                Kind::List => "PUA.".to_owned(),
             };
             stored.push(Setting {
                 name: f.env.into(),

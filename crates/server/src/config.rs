@@ -151,7 +151,7 @@ pub struct Config {
     #[arg(long, env = "CANARY_FILES", value_delimiter = ',', global = true)]
     pub canary_files: Vec<std::path::PathBuf>,
 
-    /// Webhook called when a scan finishes (Discord URLs get a chat message).
+    /// Up to 5 comma-separated alert URLs; Discord is detected, prefix ntfy+, gotify+ or slack+ for those.
     #[arg(long, env = "WEBHOOK_URL", hide_env_values = true, global = true)]
     pub webhook_url: Option<String>,
 
@@ -162,6 +162,15 @@ pub struct Config {
     /// Which finished scans call the webhook.
     #[arg(long, env = "WEBHOOK_EVENTS", value_enum, default_value_t = WebhookEvents::Alerts, global = true)]
     pub webhook_events: WebhookEvents,
+
+    /// Comma-separated signature prefixes that never notify on their own, e.g. PUA.
+    #[arg(
+        long,
+        env = "WEBHOOK_IGNORE_SIGNATURES",
+        value_delimiter = ',',
+        global = true
+    )]
+    pub webhook_ignore_signatures: Vec<String>,
 
     /// Comma-separated CIDRs the webhook may reach even though they are private.
     #[arg(

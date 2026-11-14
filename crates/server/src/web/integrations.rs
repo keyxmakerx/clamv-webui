@@ -24,14 +24,17 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/admin/integrations/files/{name}", get(file))
 }
 
+/// Time, delivered, failure detail.
+type LastSend = (String, bool, String);
+
 #[derive(Template)]
 #[template(path = "admin_integrations.html")]
 struct Page {
     nav: Nav,
-    host: Option<String>,
-    discord: bool,
+    /// Host, kind, last delivery (time, ok, detail).
+    targets: Vec<(String, &'static str, Option<LastSend>)>,
     all: bool,
-    last: Option<(String, bool, String)>,
+    ignored: String,
     metrics: bool,
 }
 
@@ -85,10 +88,20 @@ fn show(st: &AppState, nav: Nav) -> Response {
         status,
         &Page {
             nav,
-            host: n.target().map(crate::webhook::Target::host),
-            discord: n.target().is_some_and(crate::webhook::Target::is_discord),
+            targets: n
+                .targets()
+                .iter()
+                .zip(n.last_each())
+                .map(|(t, l)| {
+                    (
+                        t.host(),
+                        t.format().label(),
+                        l.map(|d| (fmt_ts(d.at), d.ok, d.detail)),
+                    )
+                })
+                .collect(),
             all: n.events() == WebhookEvents::All,
-            last: n.last().map(|d| (fmt_ts(d.at), d.ok, d.detail)),
+            ignored: n.ignored().join(", "),
             metrics: st.cfg.metrics_token().is_some(),
         },
     )

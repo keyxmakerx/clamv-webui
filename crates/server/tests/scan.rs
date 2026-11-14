@@ -545,6 +545,32 @@ async fn webhook_reports_alerts_only() {
 }
 
 #[tokio::test]
+async fn alerts_reach_every_destination() {
+    let (port, mut rx) = hook_receiver().await;
+    let urls = format!("http://127.0.0.1:{port}/hook,ntfy+http://127.0.0.1:{port}/clamv");
+    let (_app, st, _, _) = app(&[
+        "--webhook-url",
+        &urls,
+        "--webhook-allowed-cidrs",
+        "127.0.0.1/32",
+    ])
+    .await;
+    assert_eq!(st.notifier.targets().len(), 2);
+    st.notifier.test().await.expect("both delivered");
+    let a = rx.recv().await.expect("json");
+    let b = rx.recv().await.expect("ntfy");
+    assert_eq!(a["event"], "test");
+    assert_eq!(b["topic"], "clamv");
+    assert_eq!(b["title"], "Test from clamv-webui");
+    assert!(
+        st.notifier
+            .last_each()
+            .iter()
+            .all(|d| d.as_ref().is_some_and(|d| d.ok))
+    );
+}
+
+#[tokio::test]
 async fn webhook_refuses_private_addresses() {
     let (port, _rx) = hook_receiver().await;
     let url = format!("http://localhost:{port}/hook");
