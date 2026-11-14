@@ -557,3 +557,37 @@ async fn integrity_runs_from_an_agent_are_stored_once_and_alerted() {
         1
     );
 }
+
+#[tokio::test]
+async fn falco_alerts_from_an_agent_are_stored_and_shown() {
+    let srv = server().await;
+    let (agent, token) = srv
+        .st
+        .db
+        .create_agent("nas-5", "admin")
+        .await
+        .expect("agent");
+    let ev = r#"{"type":"falco","alerts":[{"at":1763114400000,"priority":"Critical","rule":"Write below etc","output":"File below /etc opened for writing (file=/etc/shadow)","container":"plex"},{"at":1763114401000,"priority":"bogus\u0007","rule":"Odd","output":"x"}]}"#;
+    let res = srv
+        .app
+        .clone()
+        .oneshot(
+            Request::post("/agent/v1/events")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(ev))
+                .expect("req"),
+        )
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    let got = srv.st.db.falco_since(0, 10).await.expect("q");
+    assert_eq!(got.len(), 2);
+    assert!(got.iter().all(|a| a.agent_id == Some(agent.id)));
+    let odd = got.iter().find(|a| a.alert.rule == "Odd").expect("odd");
+    assert_eq!(
+        odd.alert.priority, "warning",
+        "unknown priorities are normalised"
+    );
+    assert_eq!(srv.st.db.falco_by_host(0).await.expect("q")[0].1, 2);
+}

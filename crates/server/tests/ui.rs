@@ -958,5 +958,6 @@ async fn this_servers_aide_report_is_read_and_shown() {
     );
     let cov = body(app.oneshot(get("/coverage", Some(&c))).await.expect("res")).await;
     assert!(cov.contains("aide: 1 added"));
+    assert!(cov.contains("no Falco alerts in 30 days"));
     let _ = std::fs::remove_dir_all(&dir);
 }

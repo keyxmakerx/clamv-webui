@@ -275,3 +275,17 @@ CREATE TABLE integrity_reports (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 CREATE INDEX idx_integrity_host ON integrity_reports(agent_id, tool, ran_at);
 CREATE INDEX idx_integrity_received ON integrity_reports(received_at);
+
+CREATE TABLE falco_events (
+    id VARCHAR(36) PRIMARY KEY,
+    agent_id BIGINT,
+    at BIGINT NOT NULL,
+    priority VARCHAR(16) NOT NULL,
+    rule VARCHAR(255) NOT NULL,
+    output TEXT NOT NULL,
+    container VARCHAR(255),
+    received_at BIGINT NOT NULL,
+    CONSTRAINT fk_falco_agent FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE INDEX idx_falco_at ON falco_events(at);
+CREATE INDEX idx_falco_host ON falco_events(agent_id, at);

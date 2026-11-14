@@ -8,6 +8,7 @@ pub mod agents;
 pub mod audit;
 pub mod canaries;
 pub mod endpoints;
+pub mod falco;
 pub mod identities;
 pub mod integrity;
 pub mod jobs;

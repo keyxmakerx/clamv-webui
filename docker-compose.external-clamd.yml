@@ -37,6 +37,7 @@ services:
       # - /var/log/aide:/var/log/aide:ro  # AIDE reports, read every 5 min
       # - /var/log/rkhunter.log:/var/log/rkhunter.log:ro  # rkhunter report
       # - /var/log/audit:/var/log/audit:ro  # lets canary alerts name who touched them
+      # - /var/log/falco:/var/log/falco:ro  # Falco JSON alerts (json_output + file_output)
       - /documents:/documents:ro
       - /games:/games:ro
 

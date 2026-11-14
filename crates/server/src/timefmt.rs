@@ -51,6 +51,43 @@ pub fn rfc3339(ms: i64) -> String {
     format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}.{frac:03}Z")
 }
 
+/// Parse `2026-11-14T10:00:00.123456789Z` or with a `+hh:mm` offset, to unix ms.
+pub fn parse_rfc3339(s: &str) -> Option<i64> {
+    let s = s.trim();
+    if s.len() < 20 {
+        return None;
+    }
+    let num = |a: usize, b: usize| -> Option<i64> { s.get(a..b)?.parse().ok() };
+    let (y, m, d) = (num(0, 4)?, num(5, 7)?, num(8, 10)?);
+    let (h, mi, sec) = (num(11, 13)?, num(14, 16)?, num(17, 19)?);
+    if s.get(4..5) != Some("-") || !matches!(s.get(10..11), Some("T" | "t" | " ")) {
+        return None;
+    }
+    if !(1..=12).contains(&m) || !(1..=31).contains(&d) || h > 23 || mi > 59 || sec > 60 {
+        return None;
+    }
+    let mut rest = &s[19..];
+    let mut ms = 0;
+    if let Some(r) = rest.strip_prefix('.') {
+        let digits: String = r.chars().take_while(char::is_ascii_digit).collect();
+        let first3: String = digits.chars().chain("000".chars()).take(3).collect();
+        ms = first3.parse().ok()?;
+        rest = &r[digits.len()..];
+    }
+    let offset = match rest {
+        "Z" | "z" => 0,
+        o if o.len() == 6 && (o.starts_with('+') || o.starts_with('-')) => {
+            let oh: i64 = o.get(1..3)?.parse().ok()?;
+            let om: i64 = o.get(4..6)?.parse().ok()?;
+            let v = (oh * 60 + om) * 60_000;
+            if o.starts_with('-') { -v } else { v }
+        }
+        _ => return None,
+    };
+    let days = days_from_civil(y, m, d);
+    Some((days * 86_400 + h * 3600 + mi * 60 + sec) * 1000 + ms - offset)
+}
+
 /// Parse clamd's signature date, e.g. `Thu Nov 12 09:00:00 2026`, as UTC.
 pub fn parse_clamd_date(s: &str) -> Option<i64> {
     let mut it = s.split_whitespace();
@@ -76,6 +113,17 @@ pub fn parse_clamd_date(s: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rfc3339_round_trip() {
+        let t = parse_rfc3339("2026-11-14T10:00:00.123456789Z").expect("parse");
+        assert_eq!(rfc3339(t), "2026-11-14T10:00:00.123Z");
+        assert_eq!(
+            parse_rfc3339("2026-11-14T12:00:00+02:00"),
+            parse_rfc3339("2026-11-14T10:00:00Z")
+        );
+        assert!(parse_rfc3339("yesterday").is_none());
+    }
 
     #[test]
     fn formats_and_parses() {

@@ -478,6 +478,8 @@ fn clip(s: &str, n: usize) -> String {
 fn severity(e: &Event) -> u8 {
     match (e.event, e.verdict.as_str()) {
         ("canary.tripped", _) => 5,
+        ("falco.alert", _) if matches!(e.kind.as_str(), "CRITICAL" | "ALERT" | "EMERGENCY") => 5,
+        ("falco.alert", _) => 4,
         ("eicar.control_failed" | "integrity.findings", _) | (_, jobs::VIRUS_FOUND) => 4,
         ("test", _) | (_, jobs::ERROR) => 3,
         _ if e.file_errors > 0 => 3,
@@ -509,6 +511,7 @@ fn title(e: &Event) -> String {
         ("test", _) => "Test from clamv-webui".to_owned(),
         ("canary.tripped", _) => format!("Canary file touched on {}", e.endpoint),
         ("eicar.control_failed", _) => format!("EICAR check failed on {}", e.endpoint),
+        ("falco.alert", _) => format!("Falco: {} on {}", e.target, e.endpoint),
         ("integrity.findings", _) => format!(
             "{} found changes on {}",
             e.kind.to_ascii_lowercase(),
@@ -558,6 +561,12 @@ fn discord_text(e: &Event) -> String {
         ("eicar.control_failed", _) => format!(
             "**EICAR check failed** on `{}`: scan results cannot be trusted.",
             clean(&e.endpoint)
+        ),
+        ("falco.alert", _) => format!(
+            "**Falco {}** on `{}`: {}",
+            e.kind.to_ascii_lowercase(),
+            clean(&e.endpoint),
+            clean(&e.target)
         ),
         ("integrity.findings", _) => format!(
             "**{} found changes** on `{}`: {}",

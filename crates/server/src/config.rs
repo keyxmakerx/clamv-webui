@@ -181,6 +181,24 @@ pub struct Config {
     )]
     pub rkhunter_log: std::path::PathBuf,
 
+    /// Falco JSON alerts on this host (json_output with file_output, mounted read-only).
+    #[arg(
+        long,
+        env = "FALCO_EVENTS",
+        default_value = "/var/log/falco/events.json",
+        global = true
+    )]
+    pub falco_events: std::path::PathBuf,
+
+    /// Lowest Falco priority kept: debug, informational, notice, warning, error, critical.
+    #[arg(
+        long,
+        env = "FALCO_MIN_PRIORITY",
+        default_value = "warning",
+        global = true
+    )]
+    pub falco_min_priority: String,
+
     /// Check GitHub once a day for a newer release and show it to admins.
     #[arg(long, env = "UPDATE_CHECK", default_value_t = true, action = clap::ArgAction::Set, global = true)]
     pub update_check: bool,

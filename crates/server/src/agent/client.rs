@@ -113,6 +113,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     spawn_realtime(a.clone()).await;
     spawn_canaries(a.clone());
     spawn_integrity(a.clone());
+    spawn_falco(a.clone());
     tokio::select! {
         () = poll_loop(a) => {}
         () = shutdown() => tracing::info!("agent stopping"),
@@ -504,6 +505,16 @@ async fn realtime_scan(a: &Agent, p: &std::path::Path) -> AgentEvent {
         report,
         failure,
     }
+}
+
+/// Forward Falco alerts from this host to the server.
+fn spawn_falco(a: Arc<Agent>) {
+    let path = a.cfg.falco_events.clone();
+    let min = crate::falco::rank(&a.cfg.falco_min_priority);
+    crate::falco::follow(path, min, move |alerts| {
+        let a = a.clone();
+        async move { send_event(&a, &AgentEvent::Falco { alerts }).await }
+    });
 }
 
 /// Send each new AIDE or rkhunter run to the server.

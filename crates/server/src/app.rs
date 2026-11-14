@@ -38,6 +38,7 @@ pub struct AppState {
     pub freshclam_conf: crate::clamdconf::Cache,
     pub updates: crate::update::Updates,
     pub canaries: crate::canary::Central,
+    pub falco_throttle: crate::falco::Throttle,
 }
 
 impl AppState {
@@ -86,6 +87,7 @@ impl AppState {
             freshclam_conf: crate::clamdconf::Cache::default(),
             updates: crate::update::Updates::default(),
             canaries: crate::canary::Central::default(),
+            falco_throttle: crate::falco::Throttle::default(),
         }
     }
 
@@ -253,6 +255,7 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     crate::agent::spawn_monitor(state.clone());
     crate::update::spawn(state.clone());
     crate::integrity::spawn(state.clone());
+    crate::falco::spawn(state.clone());
     let app = router(state, &cfg).into_make_service_with_connect_info::<std::net::SocketAddr>();
     let scheme = if cfg.tls_enabled() { "https" } else { "http" };
     tracing::info!(listen = %cfg.listen, scheme, clamd = %cfg.clamd_endpoint, data_dir = %cfg.data_dir.display(), version = env!("CARGO_PKG_VERSION"), "started");
@@ -371,10 +374,14 @@ fn spawn_housekeeping(state: Arc<AppState>) {
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e, "audit prune failed"),
                 }
-                // Integrity runs follow the audit retention.
+                // Integrity runs and Falco alerts follow the audit retention.
                 let _ = state
                     .db
                     .prune_integrity(crate::db::now_ms().saturating_sub(ms))
+                    .await;
+                let _ = state
+                    .db
+                    .prune_falco(crate::db::now_ms().saturating_sub(ms))
                     .await;
             }
         }

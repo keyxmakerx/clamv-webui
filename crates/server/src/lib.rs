@@ -15,6 +15,7 @@ pub mod clamdconf;
 pub mod config;
 pub mod cron;
 pub mod db;
+pub mod falco;
 pub mod fsevents;
 pub mod healthcheck;
 pub mod integrity;

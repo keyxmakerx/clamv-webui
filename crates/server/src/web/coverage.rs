@@ -91,7 +91,7 @@ const THREATS: [(&str, &str); 8] = [
     ),
     (
         "Suspicious behaviour at runtime",
-        "Falco alerts reach this console.",
+        "Falco on this host reports to this console.",
     ),
     (
         "Exposed services",
@@ -188,11 +188,29 @@ fn integrity(reports: &[crate::db::integrity::StoredReport], agent: Option<i64>,
     }
 }
 
-fn soon(i: usize) -> Cell {
-    match i {
-        6 => cell("soon", "Falco intake comes next"),
-        _ => cell("soon", "planned after this release"),
+fn falco(
+    by_host: &[(Option<i64>, i64, i64)],
+    week: &[(Option<i64>, i64, i64)],
+    agent: Option<i64>,
+    now: i64,
+) -> Cell {
+    match by_host.iter().find(|h| h.0 == agent) {
+        None => cell("off", "no Falco alerts in 30 days"),
+        Some((_, _, last)) => {
+            let n = week.iter().find(|h| h.0 == agent).map_or(0, |h| h.1);
+            cell(
+                "ok",
+                format!(
+                    "reporting; {n} alert(s) this week, last {}",
+                    ago(now, *last)
+                ),
+            )
+        }
     }
+}
+
+fn soon(_: usize) -> Cell {
+    cell("soon", "planned after this release")
 }
 
 fn host(
@@ -238,6 +256,12 @@ async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
     let agents = st.db.list_agents().await.unwrap_or_default();
     let watches = st.db.list_watches().await.unwrap_or_default();
     let reports = st.db.latest_integrity().await.unwrap_or_default();
+    let falco30 = st
+        .db
+        .falco_by_host(now - 30 * DAY)
+        .await
+        .unwrap_or_default();
+    let falco7 = st.db.falco_by_host(now - WEEK).await.unwrap_or_default();
 
     // This server: its own clamd endpoints, folders and canaries.
     let eps = endpoints::probe_all(&st, st.db.list_endpoints().await.unwrap_or_default()).await;
@@ -313,7 +337,8 @@ async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
             .unwrap_or_else(|| cell("off", "no clamd endpoint answers")),
     ];
     cells.push(integrity(&reports, None, now));
-    cells.extend((6..THREATS.len()).map(soon));
+    cells.push(falco(&falco30, &falco7, None, now));
+    cells.extend((7..THREATS.len()).map(soon));
     let mut hosts = vec![host(
         crate::canary::hostname(),
         "this server",
@@ -362,7 +387,8 @@ async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
             },
         ];
         cells.push(integrity(&reports, id, now));
-        cells.extend((6..THREATS.len()).map(soon));
+        cells.push(falco(&falco30, &falco7, id, now));
+        cells.extend((7..THREATS.len()).map(soon));
         hosts.push(host(
             a.name.clone(),
             "agent",

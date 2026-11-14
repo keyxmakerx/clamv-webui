@@ -916,3 +916,34 @@ async fn integrity_reports_everywhere() {
         assert!(db.delete_agent(agent.id).await.expect("del"));
     }
 }
+
+#[tokio::test]
+async fn falco_alerts_everywhere() {
+    use clamv_webui::falco::Alert;
+    for db in databases().await {
+        let kind = db.kind();
+        let base = clamv_webui::db::now_ms();
+        let a = Alert {
+            at: base,
+            priority: "error".into(),
+            rule: format!("r-{}", &new_id()[..6]),
+            output: "o".into(),
+            container: None,
+        };
+        db.add_falco_event(None, &a).await.expect("add");
+        let got = db.falco_since(base, 10).await.expect("q");
+        assert!(
+            got.iter()
+                .any(|x| x.alert.rule == a.rule && x.agent_id.is_none()),
+            "{kind:?}"
+        );
+        assert!(
+            db.falco_by_host(base)
+                .await
+                .expect("q")
+                .iter()
+                .any(|h| h.0.is_none() && h.1 >= 1)
+        );
+        db.prune_falco(0).await.expect("prune");
+    }
+}

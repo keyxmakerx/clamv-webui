@@ -305,6 +305,14 @@ async fn events(
             let _ = st.db.canary_tripped(Some(c.agent.id), &path).await;
             crate::canary::tripped(&st, &c.agent.name, &path, &what).await;
         }
+        AgentEvent::Falco { alerts } => {
+            let alerts: Vec<_> = alerts
+                .into_iter()
+                .take(500)
+                .map(crate::falco::Alert::cleaned)
+                .collect();
+            crate::falco::record(&st, Some(c.agent.id), &c.agent.name, alerts).await;
+        }
         AgentEvent::Integrity { report } => {
             if let Some(r) = report.cleaned() {
                 crate::integrity::record(&st, Some(c.agent.id), &c.agent.name, r).await;
