@@ -477,7 +477,7 @@ fn clip(s: &str, n: usize) -> String {
 /// 1 (min) to 5 (urgent), on ntfy's scale.
 fn severity(e: &Event) -> u8 {
     match (e.event, e.verdict.as_str()) {
-        ("canary.tripped", _) => 5,
+        ("canary.tripped" | "incident.correlated", _) => 5,
         ("falco.alert", _) if matches!(e.kind.as_str(), "CRITICAL" | "ALERT" | "EMERGENCY") => 5,
         ("falco.alert", _) => 4,
         ("eicar.control_failed" | "integrity.findings", _) | (_, jobs::VIRUS_FOUND) => 4,
@@ -512,6 +512,7 @@ fn title(e: &Event) -> String {
         ("canary.tripped", _) => format!("Canary file touched on {}", e.endpoint),
         ("eicar.control_failed", _) => format!("EICAR check failed on {}", e.endpoint),
         ("falco.alert", _) => format!("Falco: {} on {}", e.target, e.endpoint),
+        ("incident.correlated", _) => format!("Incident on {}", e.endpoint),
         ("integrity.findings", _) => format!(
             "{} found changes on {}",
             e.kind.to_ascii_lowercase(),
@@ -561,6 +562,12 @@ fn discord_text(e: &Event) -> String {
         ("eicar.control_failed", _) => format!(
             "**EICAR check failed** on `{}`: scan results cannot be trusted.",
             clean(&e.endpoint)
+        ),
+        ("incident.correlated", _) => format!(
+            "**Incident** on `{}`: {} saw activity within an hour. {}",
+            clean(&e.endpoint),
+            e.kind.to_ascii_lowercase().replace('+', " and "),
+            clean(&e.target)
         ),
         ("falco.alert", _) => format!(
             "**Falco {}** on `{}`: {}",

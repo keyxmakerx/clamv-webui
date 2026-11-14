@@ -77,3 +77,6 @@ body{min-height:100vh;background-attachment:fixed}
 .host-card .label{font-size:.8rem;color:var(--muted)}
 .host-score{font-variant-numeric:tabular-nums;font-size:1.4rem}
 .host-meta{font-size:.8rem;color:var(--muted);word-break:break-word}
+/* Timeline */
+.tl-linked>td{background:color-mix(in srgb,var(--danger) 14%,transparent)}
+.incident{border:1px solid var(--danger)}

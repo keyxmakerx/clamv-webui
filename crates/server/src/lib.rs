@@ -25,6 +25,7 @@ pub mod scan;
 pub mod schedule;
 pub mod settings;
 pub mod timefmt;
+pub mod timeline;
 pub mod tls;
 pub mod update;
 pub mod watch;

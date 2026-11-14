@@ -256,6 +256,7 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     crate::update::spawn(state.clone());
     crate::integrity::spawn(state.clone());
     crate::falco::spawn(state.clone());
+    crate::timeline::spawn(state.clone());
     let app = router(state, &cfg).into_make_service_with_connect_info::<std::net::SocketAddr>();
     let scheme = if cfg.tls_enabled() { "https" } else { "http" };
     tracing::info!(listen = %cfg.listen, scheme, clamd = %cfg.clamd_endpoint, data_dir = %cfg.data_dir.display(), version = env!("CARGO_PKG_VERSION"), "started");

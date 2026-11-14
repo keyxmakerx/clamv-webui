@@ -134,6 +134,30 @@ impl Db {
     }
 
     /// Retention: delete entries older than `before_ms`.
+    /// (time, details) of one action since `since`, oldest first.
+    pub async fn audit_by_action(
+        &self,
+        action: &str,
+        since: i64,
+    ) -> Result<Vec<(i64, String)>, DbError> {
+        let rows = sqlx::query(self.sql(
+            "SELECT at, details FROM audit_events WHERE action = ? AND at >= ? ORDER BY at LIMIT 5000",
+        ))
+        .bind(action)
+        .bind(since)
+        .fetch_all(self.pool())
+        .await?;
+        rows.iter()
+            .map(|r| {
+                Ok((
+                    r.try_get("at")?,
+                    r.try_get::<Option<String>, _>("details")?
+                        .unwrap_or_default(),
+                ))
+            })
+            .collect()
+    }
+
     pub async fn prune_audit(&self, before_ms: i64) -> Result<u64, DbError> {
         let r = sqlx::query(self.sql("DELETE FROM audit_events WHERE at < ?"))
             .bind(before_ms)

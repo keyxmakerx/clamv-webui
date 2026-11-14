@@ -12,6 +12,7 @@ Forked from an earlier Java application, which has been replaced entirely. Licen
 - **Coverage page**: one view of which threats each host is covered for (malware at rest and on arrival, canaries, EICAR checks, signature age), this server and every agent alike, with what is missing.
 - **Integrity checks**: AIDE and rkhunter runs from every host. Each host keeps running them on its own timer; mount the report read-only and every new run is stored, shown on the Host Checks and Coverage pages, and alerted when it finds changes.
 - **Falco intake**: follow each host's Falco JSON alerts (mounted read-only); alerts are stored and listed under Host Checks, and Error or worse notify, at most once per rule per host every 10 minutes.
+- **Timeline and incidents**: one timeline of detections, canary hits, integrity findings and Falco alerts across hosts. Two different sensors on the same host within an hour make an incident, which is highlighted, logged (`incident.correlated`) and notified once.
 - **Detections page**: every infected file across all hosts, filtered by signature, host, type and folder, with CSV export (up to 50,000 rows).
 - **Search**: the Jobs and Detections pages take free text plus `field:value` terms, for example `sig:Eicar host:nas -path:/games after:7d`. Quotes match exactly, `-` excludes, dates take `YYYY-MM-DD` or `7d`, `12h`, `30m`. Filters are remembered per browser.
 - **Display**: light and dark themes, times shown in your own time zone (or a fixed one) with a 12 or 24 hour clock, set under Account.

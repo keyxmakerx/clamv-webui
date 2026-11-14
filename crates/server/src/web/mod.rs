@@ -19,6 +19,7 @@ pub mod schedules;
 pub mod search;
 pub mod session;
 pub mod settings;
+pub mod timeline;
 pub mod tokens;
 pub mod watch;
 
@@ -73,6 +74,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(canaries::routes())
         .merge(coverage::routes())
         .merge(integrity::routes())
+        .merge(timeline::routes())
         .route(
             "/{*path}",
             get(asset).layer(tower_http::compression::CompressionLayer::new()),

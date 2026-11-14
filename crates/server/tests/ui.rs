@@ -297,6 +297,7 @@ async fn route_table_by_role() {
         ("/clamd", Role::Viewer),
         ("/coverage", Role::Viewer),
         ("/integrity", Role::Operator),
+        ("/timeline", Role::Operator),
         ("/admin/users", Role::Admin),
         ("/admin/audit", Role::Admin),
         ("/admin/endpoints", Role::Admin),

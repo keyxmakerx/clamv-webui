@@ -591,3 +591,51 @@ async fn falco_alerts_from_an_agent_are_stored_and_shown() {
     );
     assert_eq!(srv.st.db.falco_by_host(0).await.expect("q")[0].1, 2);
 }
+
+#[tokio::test]
+async fn two_sensors_on_one_host_make_one_incident() {
+    let srv = server().await;
+    let (_agent, token) = srv
+        .st
+        .db
+        .create_agent("nas-6", "admin")
+        .await
+        .expect("agent");
+    let call = |uri: &'static str, body: String| {
+        Request::post(uri)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .expect("req")
+    };
+    let ok = |r: axum::response::Response| assert!(r.status().is_success(), "{}", r.status());
+    ok(srv
+        .app
+        .clone()
+        .oneshot(call("/agent/v1/poll", HELLO.to_owned()))
+        .await
+        .expect("res"));
+    let now = clamv_webui::db::now_ms();
+    let scan = r#"{"type":"scan","path":"/data/dl/x.exe","report":{"ok":0,"detections":[{"path":"/data/dl/x.exe","text":"Win.Trojan.Agent-1"}]}}"#;
+    ok(srv
+        .app
+        .clone()
+        .oneshot(call("/agent/v1/events", scan.to_owned()))
+        .await
+        .expect("res"));
+    let falco = format!(
+        r#"{{"type":"falco","alerts":[{{"at":{},"priority":"Warning","rule":"Run shell untrusted","output":"x.exe spawned sh"}}]}}"#,
+        now + 60_000
+    );
+    ok(srv
+        .app
+        .clone()
+        .oneshot(call("/agent/v1/events", falco))
+        .await
+        .expect("res"));
+    clamv_webui::timeline::check(&srv.st).await;
+    clamv_webui::timeline::check(&srv.st).await;
+    let incidents = srv.st.db.audit_by_action("INCIDENT", 0).await.expect("q");
+    assert_eq!(incidents.len(), 1, "notified once");
+    assert!(incidents[0].1.starts_with("nas-6|") && incidents[0].1.ends_with("ClamAV+Falco"));
+}
