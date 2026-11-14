@@ -9,4 +9,5 @@ secrets/
 cli/
 docs/
 examples/
+!examples/host-checks/
 scripts/

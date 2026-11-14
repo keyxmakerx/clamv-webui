@@ -1,0 +1,27 @@
+#!/bin/sh
+# Write what this host's firewall looks like, for clamv to read; changes nothing.
+dir=/var/lib/clamv/firewall
+out=$dir/snapshot.txt
+tmp=/run/clamv-firewall/snapshot.txt
+{
+  if command -v nft >/dev/null 2>&1; then
+    echo "### nft"
+    nft list ruleset 2>&1 | head -c 400000
+  else
+    echo "### no-nft"
+  fi
+  echo "### iptables-legacy"
+  command -v iptables-legacy-save >/dev/null 2>&1 && iptables-legacy-save 2>/dev/null | grep -v '^#' | head -c 100000
+  echo "### ufw"
+  command -v ufw >/dev/null 2>&1 && ufw status 2>&1 | head -n 60
+  echo "### firewalld"
+  command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state 2>&1 | head -n 2
+  echo "### selinux"
+  command -v getenforce >/dev/null 2>&1 && getenforce 2>&1 | head -n 1
+  echo "### listening"
+  command -v ss >/dev/null 2>&1 && ss -H -tulpn 2>/dev/null | head -n 500
+  echo "### status"
+  cat "$dir/status" 2>/dev/null
+} >"$tmp"
+chmod 0644 "$tmp"
+mv -f "$tmp" "$out"

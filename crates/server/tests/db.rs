@@ -947,3 +947,47 @@ async fn falco_alerts_everywhere() {
         db.prune_falco(0).await.expect("prune");
     }
 }
+
+#[tokio::test]
+async fn firewall_plans_are_per_host() {
+    use clamv_webui::firewall::{Proto, Rule};
+    for db in databases().await {
+        let kind = db.kind();
+        let (a, _) = db
+            .create_agent(&format!("fw-{}", &new_id()[..8]), "admin")
+            .await
+            .expect("agent");
+        assert!(
+            db.firewall_plan(Some(a.id))
+                .await
+                .expect("q")
+                .rules
+                .is_empty()
+        );
+        let r = vec![Rule {
+            port: 2049,
+            proto: Proto::Udp,
+            allow: vec!["100.82.0.0/16".into(), "fd00::/8".into()],
+        }];
+        db.set_firewall_plan(Some(a.id), &r, "admin")
+            .await
+            .expect("set");
+        db.set_firewall_plan(Some(a.id), &r, "admin")
+            .await
+            .expect("set again");
+        let p = db.firewall_plan(Some(a.id)).await.expect("q");
+        assert_eq!(p.rules, r, "{kind:?}");
+        assert_eq!(p.updated_by.as_deref(), Some("admin"));
+        assert!(p.updated_at.is_some());
+        db.set_firewall_plan(Some(a.id), &[], "admin")
+            .await
+            .expect("clear");
+        assert!(
+            db.firewall_plan(Some(a.id))
+                .await
+                .expect("q")
+                .rules
+                .is_empty()
+        );
+    }
+}

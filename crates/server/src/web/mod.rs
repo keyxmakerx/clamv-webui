@@ -10,6 +10,7 @@ pub mod crowdsec;
 pub mod csrf;
 pub mod detections;
 pub mod endpoints;
+pub mod firewall;
 pub mod integrations;
 pub mod integrity;
 pub mod mfa;
@@ -77,6 +78,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(integrity::routes())
         .merge(timeline::routes())
         .merge(crowdsec::routes())
+        .merge(firewall::routes())
         .route(
             "/{*path}",
             get(asset).layer(tower_http::compression::CompressionLayer::new()),

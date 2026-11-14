@@ -41,6 +41,7 @@ pub struct AppState {
     pub falco_throttle: crate::falco::Throttle,
     pub crowdsec: crate::crowdsec::Console,
     pub host_units: crate::hostchecks::States,
+    pub firewalls: crate::firewall::Snapshots,
     /// Passkey confirmations in flight: challenge handle to (user, host, action, expiry).
     pub stepups: std::sync::Mutex<std::collections::HashMap<String, Stepup>>,
 }
@@ -105,6 +106,7 @@ impl AppState {
             canaries: crate::canary::Central::default(),
             falco_throttle: crate::falco::Throttle::default(),
             host_units: crate::hostchecks::States::default(),
+            firewalls: crate::firewall::Snapshots::default(),
             stepups: std::sync::Mutex::default(),
         }
     }
@@ -277,6 +279,7 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     crate::timeline::spawn(state.clone());
     crate::crowdsec::spawn(state.clone());
     crate::hostchecks::spawn(state.clone());
+    crate::firewall::spawn(state.clone());
     let app = router(state, &cfg).into_make_service_with_connect_info::<std::net::SocketAddr>();
     let scheme = if cfg.tls_enabled() { "https" } else { "http" };
     tracing::info!(listen = %cfg.listen, scheme, clamd = %cfg.clamd_endpoint, data_dir = %cfg.data_dir.display(), version = env!("CARGO_PKG_VERSION"), "started");

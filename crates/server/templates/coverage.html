@@ -3,7 +3,7 @@
 {% block title %}Coverage · ClamAV Web UI{% endblock %}
 {% block content %}
 <div class="page-head"><h1 class="h3">Coverage</h1></div>
-<p class="muted">What each host is protected against, this server and every agent alike. <span class="cov cov-ok">on</span> <span class="cov cov-warn">needs a look</span> <span class="cov cov-off">not covered</span> <span class="cov cov-soon">not built yet</span></p>
+<p class="muted">What each host is protected against, this server and every agent alike. <span class="cov cov-ok">on</span> <span class="cov cov-warn">needs a look</span> <span class="cov cov-off">not covered</span></p>
 <section class="card mt-3"><div class="card-body table-responsive">
 <table class="table table-sm cov-table align-top mb-0">
 <thead><tr><th>Threat</th>{% for h in hosts %}<th>{{ h.name }}</th>{% endfor %}</tr></thead>

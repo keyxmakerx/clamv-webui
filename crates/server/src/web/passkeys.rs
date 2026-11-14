@@ -615,6 +615,20 @@ async fn stepup(
     let Some(act) = crate::hostchecks::action(p.action) else {
         return jerr(StatusCode::BAD_REQUEST, "Unknown action.");
     };
+    if act.name == "firewall.apply" {
+        return match super::firewall::apply_plan(&st, &u, &info, p.host).await {
+            Ok(msg) => {
+                let mut r = jok(json!({ "ok": true, "message": msg, "reload": p.host.is_none() }));
+                // The browser's next request must open a new connection to prove it still gets through.
+                r.headers_mut().insert(
+                    axum::http::header::CONNECTION,
+                    axum::http::HeaderValue::from_static("close"),
+                );
+                r
+            }
+            Err(m) => jerr(StatusCode::BAD_REQUEST, &m),
+        };
+    }
     match super::integrity::dispatch(&st, &u, &info, p.host, act, true).await {
         Ok(msg) => jok(json!({ "ok": true, "message": msg })),
         Err(m) => jerr(StatusCode::BAD_REQUEST, &m),

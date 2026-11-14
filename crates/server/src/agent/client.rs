@@ -25,6 +25,8 @@ const HEALTHY_WITHIN_MS: i64 = 120_000;
 struct Agent {
     cfg: Config,
     http: reqwest::Client,
+    /// Never reuses a connection, so a firewall confirmation proves a new one gets through.
+    fresh: reqwest::Client,
     base: Url,
     token: String,
     clamd: clamd::Client,
@@ -38,6 +40,8 @@ struct Agent {
     canary_states: std::sync::Mutex<Option<crate::canary::States>>,
     /// clamv host-check units on this host, read every 5 minutes and after each action.
     host_units: std::sync::Mutex<Option<crate::hostchecks::UnitStates>>,
+    /// A firewall plan the host is waiting to hear we still reach the server for.
+    firewall_pending: std::sync::Mutex<Option<(String, std::time::Instant)>>,
 }
 
 /// Check the agent settings and build the HTTP client, without connecting.
@@ -85,6 +89,14 @@ fn build(cfg: Config) -> anyhow::Result<Agent> {
         .connect_timeout(Duration::from_secs(10))
         .timeout(super::POLL_HOLD + Duration::from_secs(35))
         .user_agent(concat!("clamv-webui-agent/", env!("CARGO_PKG_VERSION")))
+        .tls_backend_preconfigured(tls.clone())
+        .build()?;
+    let fresh = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(15))
+        .pool_max_idle_per_host(0)
+        .user_agent(concat!("clamv-webui-agent/", env!("CARGO_PKG_VERSION")))
         .tls_backend_preconfigured(tls)
         .build()?;
     let limits = clamd::Limits {
@@ -93,6 +105,7 @@ fn build(cfg: Config) -> anyhow::Result<Agent> {
     };
     Ok(Agent {
         http,
+        fresh,
         base,
         token,
         clamd: clamd::Client::new(cfg.clamd_endpoint.clone(), limits),
@@ -105,6 +118,7 @@ fn build(cfg: Config) -> anyhow::Result<Agent> {
         canaries: tokio::sync::watch::channel(Vec::new()).0,
         canary_states: std::sync::Mutex::new(None),
         host_units: std::sync::Mutex::new(None),
+        firewall_pending: std::sync::Mutex::new(None),
         cfg,
     })
 }
@@ -118,6 +132,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     spawn_integrity(a.clone());
     spawn_falco(a.clone());
     spawn_host_units(a.clone());
+    spawn_firewall(a.clone());
     tokio::select! {
         () = poll_loop(a) => {}
         () = shutdown() => tracing::info!("agent stopping"),
@@ -306,6 +321,7 @@ async fn execute(a: Arc<Agent>, j: Assignment, _permit: OwnedSemaphorePermit) {
             }
         }
         crate::hostchecks::KIND => host_check(&a, &j).await,
+        crate::firewall::KIND => firewall_job(&a, &j).await,
         other => {
             tracing::error!(job_id = %j.id, kind = other, "job type not supported by this agent");
             fail(scan::SCAN_FAILED)
@@ -318,7 +334,7 @@ async fn execute(a: Arc<Agent>, j: Assignment, _permit: OwnedSemaphorePermit) {
 
 /// Start one allow-listed unit; anything else the server sends is refused here too.
 async fn host_check(a: &Agent, j: &Assignment) -> ResultRequest {
-    let Some(act) = crate::hostchecks::action(&j.target) else {
+    let Some(act) = crate::hostchecks::check_action(&j.target) else {
         tracing::error!(event = "hostcheck.refused", job_id = %j.id, action = %crate::agent::proto::clean(&j.target, 64), "unknown host check");
         return fail(crate::hostchecks::FAILED);
     };
@@ -345,6 +361,107 @@ async fn host_check(a: &Agent, j: &Assignment) -> ResultRequest {
             fail(e.code)
         }
     }
+}
+
+/// Confirm a plan the host has loaded and waits on, once a new connection reaches the server.
+async fn confirm_firewall(a: &Agent) {
+    let Some((h, since)) = a.firewall_pending.lock().ok().and_then(|g| g.clone()) else {
+        return;
+    };
+    if since.elapsed() > Duration::from_secs(120) {
+        if let Ok(mut g) = a.firewall_pending.lock() {
+            *g = None;
+        }
+        return;
+    }
+    if !crate::firewall::waiting(&a.cfg.firewall_dir, &h) {
+        return;
+    }
+    let Ok(url) = a.base.join("healthz") else {
+        return;
+    };
+    // A pooled connection predates the new rules and would pass anyway.
+    let reached = a
+        .fresh
+        .get(url)
+        .send()
+        .await
+        .is_ok_and(|r| r.status().is_success());
+    if reached {
+        crate::firewall::confirm(&a.cfg.firewall_dir, &h);
+        tracing::info!(event = "firewall.confirmed", hash = %h, "firewall plan confirmed: a new connection still reaches the server");
+        if let Ok(mut g) = a.firewall_pending.lock() {
+            *g = None;
+        }
+    }
+}
+
+/// Snapshot, apply or remove, through the host's fixed firewall units only.
+async fn firewall_job(a: &Arc<Agent>, j: &Assignment) -> ResultRequest {
+    let Ok(op) = serde_json::from_str::<crate::firewall::Op>(&j.target) else {
+        return fail(crate::hostchecks::FAILED);
+    };
+    let dir = a.cfg.firewall_dir.clone();
+    let r = match op {
+        crate::firewall::Op::Snapshot => match crate::firewall::snapshot(&dir).await {
+            Ok(snapshot) => {
+                send_event(a, &AgentEvent::Firewall { snapshot }).await;
+                return ok(Report::default());
+            }
+            Err(e) => Err(e),
+        },
+        crate::firewall::Op::Apply { rules } => match crate::firewall::apply(&dir, rules).await {
+            Ok(h) => {
+                tracing::warn!(event = "firewall.applying", hash = %h, "firewall plan loading; confirming once a new connection reaches the server");
+                if let Ok(mut g) = a.firewall_pending.lock() {
+                    *g = Some((h, std::time::Instant::now()));
+                }
+                let a2 = a.clone();
+                tokio::spawn(async move {
+                    for _ in 0..28 {
+                        tokio::time::sleep(Duration::from_secs(3)).await;
+                        confirm_firewall(&a2).await;
+                        if a2.firewall_pending.lock().map_or(true, |g| g.is_none()) {
+                            break;
+                        }
+                    }
+                });
+                Ok(())
+            }
+            Err(e) => Err(e),
+        },
+        crate::firewall::Op::Remove => crate::firewall::remove().await,
+    };
+    if let Err(e) = r {
+        tracing::warn!(event = "firewall.failed", code = e.code, error = %e.message, "firewall action failed");
+        return fail(e.code);
+    }
+    let a2 = a.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(8)).await;
+        firewall_snapshot(&a2).await;
+    });
+    ok(Report::default())
+}
+
+async fn firewall_snapshot(a: &Agent) {
+    match crate::firewall::snapshot(&a.cfg.firewall_dir).await {
+        Ok(snapshot) => send_event(a, &AgentEvent::Firewall { snapshot }).await,
+        Err(e) => tracing::debug!(error = %e.message, "firewall snapshot failed"),
+    }
+}
+
+fn spawn_firewall(a: Arc<Agent>) {
+    if !a.cfg.firewall_dir.is_dir() {
+        return;
+    }
+    tokio::spawn(async move {
+        let mut t = tokio::time::interval(Duration::from_secs(900));
+        loop {
+            t.tick().await;
+            firewall_snapshot(&a).await;
+        }
+    });
 }
 
 fn spawn_host_units(a: Arc<Agent>) {

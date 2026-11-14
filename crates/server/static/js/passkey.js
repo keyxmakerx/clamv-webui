@@ -89,6 +89,7 @@
     });
     var ok = document.getElementById("stepup-ok");
     if (ok) { ok.textContent = res.message || "Done."; ok.classList.remove("d-none"); }
+    if (res.reload) { setTimeout(function () { window.location.reload(); }, 4000); }
   }
   document.addEventListener("click", function (ev) {
     var up = ev.target.closest("[data-stepup]");

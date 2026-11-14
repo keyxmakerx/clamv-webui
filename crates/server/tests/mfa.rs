@@ -743,4 +743,100 @@ async fn host_check_baselines_need_a_fresh_passkey() {
             "{j:?}"
         );
     }
+
+    // Firewall plans need the same passkey; a plan that closes SSH to everyone is refused.
+    use clamv_webui::firewall::{Proto, Rule};
+    let stepup = |host: String| {
+        let app = app.clone();
+        let session = session.clone();
+        let csrf = csrf.clone();
+        async move {
+            let ask = serde_json::json!({"csrf": csrf, "host": host, "action": "firewall.apply"});
+            let (code, opt) = json_of(&app, "/integrity/confirm/options", ask, &session).await;
+            assert_eq!(code, StatusCode::OK, "{opt}");
+            opt
+        }
+    };
+    st.db
+        .set_firewall_plan(
+            None,
+            &[Rule {
+                port: 22,
+                proto: Proto::Tcp,
+                allow: vec![],
+            }],
+            "admin",
+        )
+        .await
+        .expect("plan");
+    let opt = stepup(String::new()).await;
+    let (cd, ad, sig) = k.sign(
+        opt["publicKey"]["challenge"].as_str().expect("c"),
+        origin,
+        rp,
+    );
+    let (code, v) = json_of(
+        &app,
+        "/integrity/confirm",
+        answer(&opt, &cd, &ad, &sig),
+        &session,
+    )
+    .await;
+    assert_eq!(code, StatusCode::BAD_REQUEST);
+    assert!(
+        v["error"].as_str().unwrap_or("").contains("closes SSH"),
+        "{v}"
+    );
+    let (agent, _) = st.db.create_agent("fw-host", "admin").await.expect("agent");
+    st.db
+        .set_firewall_plan(
+            Some(agent.id),
+            &[Rule {
+                port: 2049,
+                proto: Proto::Tcp,
+                allow: vec!["100.82.0.0/16".into()],
+            }],
+            "admin",
+        )
+        .await
+        .expect("plan");
+    let opt = stepup(agent.id.to_string()).await;
+    let (cd, ad, sig) = k.sign(
+        opt["publicKey"]["challenge"].as_str().expect("c"),
+        origin,
+        rp,
+    );
+    let (code, v) = json_of(
+        &app,
+        "/integrity/confirm",
+        answer(&opt, &cd, &ad, &sig),
+        &session,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK, "{v}");
+    assert!(
+        v["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Sent to fw-host")
+    );
+    let f = clamv_webui::db::jobs::JobFilter {
+        kind: Some("FIREWALL".into()),
+        ..Default::default()
+    };
+    let jobs = st.db.list_jobs(&f, 0, 10).await.expect("jobs").0;
+    assert_eq!(jobs.len(), 1);
+    assert!(
+        jobs[0].target.contains("\"op\":\"apply\""),
+        "{}",
+        jobs[0].target
+    );
+    assert_eq!(
+        st.db
+            .audit_by_action("FIREWALL_APPLY", 0)
+            .await
+            .expect("a")
+            .len(),
+        1
+    );
 }

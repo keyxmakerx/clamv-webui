@@ -14,7 +14,7 @@ pub struct Cli {
     pub config: Config,
 }
 
-#[derive(Debug, Clone, Copy, Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 pub enum Command {
     /// Run the web server (default).
     Serve,
@@ -24,6 +24,21 @@ pub enum Command {
     ResetAdmin,
     /// Run as a remote agent: take scan jobs from AGENT_SERVER_URL and scan with the local clamd.
     Agent,
+    /// Install the host-check and firewall units on the host mounted at --root; run once as root.
+    HostSetup(HostSetup),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct HostSetup {
+    /// Where the host's / is mounted.
+    #[arg(long, default_value = "/host")]
+    pub root: std::path::PathBuf,
+    /// The uid clamv's containers run as.
+    #[arg(long, default_value_t = 10001)]
+    pub uid: u32,
+    /// Take the units, scripts and polkit rule away again.
+    #[arg(long)]
+    pub remove: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -198,6 +213,15 @@ pub struct Config {
         global = true
     )]
     pub falco_min_priority: String,
+
+    /// Folder shared with the host's clamv firewall units (examples/host-checks); mount it read-write.
+    #[arg(
+        long,
+        env = "FIREWALL_DIR",
+        default_value = "/var/lib/clamv/firewall",
+        global = true
+    )]
+    pub firewall_dir: std::path::PathBuf,
 
     /// CrowdSec Local API, e.g. http://crowdsec:8080; turns on the CrowdSec pages.
     #[arg(long, env = "CROWDSEC_LAPI_URL", global = true)]

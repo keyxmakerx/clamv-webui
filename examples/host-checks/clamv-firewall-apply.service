@@ -1,0 +1,25 @@
+# clamv: load clamv's own nftables table; one fixed script, no traffic, writes only /var/lib/clamv/firewall.
+[Unit]
+Description=clamv firewall: load clamv's own nftables table
+ConditionPathExists=/usr/local/libexec/clamv/firewall-apply
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/clamv/firewall-apply
+TimeoutStartSec=180
+ProtectSystem=strict
+RuntimeDirectory=clamv-firewall
+RuntimeDirectoryMode=0700
+ReadWritePaths=/var/lib/clamv/firewall
+PrivateTmp=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_SYS_ADMIN
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native

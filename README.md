@@ -11,7 +11,8 @@ Forked from an earlier Java application, which has been replaced entirely. Licen
 - **Dashboard**: scans, detections and failures over 24 h, 7 or 30 days, compared with the period before, with a clickable activity chart and the top signatures, folders and hosts.
 - **Coverage page**: one view of which threats each host is covered for (malware at rest and on arrival, canaries, EICAR checks, signature age), this server and every agent alike, with what is missing.
 - **Integrity checks**: AIDE and rkhunter runs from every host. Each host keeps running them on its own timer; mount the report read-only and every new run is stored, shown on the Host Checks and Coverage pages, and alerted when it finds changes.
-- **Managed AIDE and rkhunter, least privilege**: install fixed, sandboxed systemd units and a polkit rule once per host (`examples/host-checks/install.sh`); clamv, still unprivileged, can then run a check, switch the daily timers, or accept a new baseline (which asks for your passkey every time and is audited), and may start nothing else.
+- **Managed AIDE and rkhunter, least privilege**: install fixed, sandboxed systemd units and a polkit rule once per host (one `docker run … host-setup`); clamv, still unprivileged, can then run a check, switch the daily timers, or accept a new baseline (which asks for your passkey every time and is audited), and may start nothing else.
+- **Firewall, per host**: see every nftables table with its owner (Docker, CrowdSec, firewalld, ufw, fail2ban and others, read-only), what listens and where, and keep a plan of which networks may reach which port. clamv writes only its own table, checks the plan in a scratch network namespace first, applies it with your passkey, and the host rolls it back after 90 s unless clamv still reaches it over a new connection.
 - **CrowdSec console**: connect to a CrowdSec Local API as a watcher for an overview with an attack map, alerts over time and top countries, scenarios, AS and targets; searchable alerts with event details; active and ended decisions with duplicates folded; and bans or captchas added and removed by admins (audited, refusing your own address and very wide ranges). CrowdSec alerts also join the Timeline and the Coverage page.
 - **Falco intake**: follow each host's Falco JSON alerts (mounted read-only); alerts are stored and listed under Host Checks, and Error or worse notify, at most once per rule per host every 10 minutes.
 - **Timeline and incidents**: one timeline of detections, canary hits, integrity findings, Falco and CrowdSec alerts across hosts. Two different sensors on the same host within an hour make an incident, which is highlighted, logged (`incident.correlated`) and notified once.
@@ -153,9 +154,23 @@ Destinations: a plain `https://…` URL gets the JSON event, and Discord webhook
 
 clamv refreshes every minute and re-reads the whole window hourly. Bans are sent the way `cscli decisions add` sends them, so every bouncer applies them. Deleting alerts needs CrowdSec's `trusted_ips`, so clamv doesn't offer it. A LAPI that stops answering is logged (`crowdsec.lapi_down`) and notified, and so is its recovery.
 
-### Managed host checks
+### Managed host checks and firewall
 
-On each host, run `sudo examples/host-checks/install.sh` once and mount `/run/dbus/system_bus_socket` read-only into the clamv or agent container. The script adds a `clamv` user with the container's uid (10001), the units `clamv-aide-check`, `clamv-aide-accept`, `clamv-rkhunter-check` and `clamv-rkhunter-propupd` (each one fixed command, read-only system, no network, few capabilities), daily timers, and a polkit rule that lets `clamv` start those units and switch the two timers, and nothing else. Reports still reach clamv through `AIDE_LOG` and `RKHUNTER_LOG`.
+Docker alone covers scans, canaries, CrowdSec and reading reports. Managed AIDE and rkhunter and the Firewall page also need a one-time setup on each host, which the image does itself:
+
+```sh
+docker run --rm --user 0 -v /:/host ghcr.io/keyxmakerx/clamv-webui:latest host-setup
+```
+
+It adds a `clamv` user with the containers' uid (10001, or `--uid`), the units `clamv-aide-check`, `clamv-aide-accept`, `clamv-rkhunter-check`, `clamv-rkhunter-propupd`, `clamv-firewall-snapshot`, `clamv-firewall-apply` and `clamv-firewall-remove` (each one fixed script, read-only system, no network, few capabilities), daily timers, `/var/lib/clamv/firewall`, and a polkit rule that lets `clamv` start those units and switch the two timers, and nothing else. `host-setup --remove` takes it away again. Without Docker, `sudo examples/host-checks/install.sh` does the same. AIDE and rkhunter themselves are host packages.
+
+Then mount `/run/dbus/system_bus_socket` read-only and `/var/lib/clamv/firewall` read-write into the clamv or agent container. Reports still reach clamv through `AIDE_LOG` and `RKHUNTER_LOG`.
+
+| Variable | Default | What |
+|---|---|---|
+| `FIREWALL_DIR` | `/var/lib/clamv/firewall` | Where the snapshot, plan and apply status are exchanged with the host's units. |
+
+The firewall plan only narrows: each rule lets the listed networks reach a port and drops everyone else, in clamv's own `inet clamv` table at priority -5, after established traffic and loopback. Ports published by Docker go through Docker's own chains first and are best limited in compose. clamv refuses a plan that closes SSH to everyone or blocks its own port for your address, and iptables-legacy rules, which nftables cannot override, are flagged.
 
 ### Metrics
 
@@ -198,6 +213,7 @@ The Settings page (Admin) can change the scan, retention, watch, webhook-policy 
 - OIDC uses PKCE, state and nonce, and only asymmetric signatures. LDAP requires TLS.
 - The CrowdSec watcher password is never logged. Admins add bans; their own address, loopback and anything wider than /8 (IPv4) or /32 (IPv6) is refused, and `CROWDSEC_READ_ONLY` removes writes.
 - Managed host checks never run as root inside clamv: systemd starts fixed units on a polkit allow-list, the agent refuses any action outside it too, and a baseline change needs a fresh passkey assertion bound to that action and host.
+- The firewall units accept only the inside of clamv's own table: the apply script refuses table, ruleset, flush, delete and similar keywords, checks the plan in an empty network namespace where it must create exactly `inet clamv`, keeps the previous table, and restores it after 90 s unless the hash is confirmed. clamv confirms only once a new connection gets through, and every apply is logged (`firewall.apply`), audited and needs a passkey.
 - Agent tokens are stored hashed, can be rotated or disabled, and only reach the agent endpoints. Results from an agent are size-limited and cleaned before they are stored, and each agent may send at most 1200 events a minute.
 
 Report vulnerabilities privately through GitHub security advisories.

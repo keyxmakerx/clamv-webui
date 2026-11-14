@@ -9,6 +9,7 @@ pub mod audit;
 pub mod canaries;
 pub mod endpoints;
 pub mod falco;
+pub mod firewall;
 pub mod identities;
 pub mod integrity;
 pub mod jobs;

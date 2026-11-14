@@ -681,3 +681,65 @@ async fn host_checks_run_only_allow_listed_units() {
     assert!(seen);
     handle.abort();
 }
+
+#[tokio::test]
+async fn firewall_jobs_go_through_the_fixed_units_only() {
+    let srv = server().await;
+    let clamd = fake_clamd().await;
+    let root = std::env::temp_dir().join(format!("clamv-agent-{}", clamv_webui::db::new_id()));
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let root_s = root.to_str().expect("utf8").to_owned();
+    let (agent, token) = srv
+        .st
+        .db
+        .create_agent("fw-1", "admin")
+        .await
+        .expect("agent");
+    let snap = queue(&srv.st, "FIREWALL", r#"{"op":"snapshot"}"#, agent.id).await;
+    let bad = queue(
+        &srv.st,
+        "FIREWALL",
+        r#"{"op":"exec","cmd":"nft flush ruleset"}"#,
+        agent.id,
+    )
+    .await;
+    let cli = agent_cli(&srv.url, &token, clamd, &root_s);
+    let handle = tokio::spawn(clamv_webui::agent::client::run(cli.config));
+    // No systemd for clamv in tests: the snapshot fails with a host-check reason.
+    let j = wait_done(&srv.st, &snap.id).await;
+    assert!(
+        j.error_code
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("HOSTCHECK_"),
+        "{j:?}"
+    );
+    let j = wait_done(&srv.st, &bad.id).await;
+    assert_eq!(j.error_code.as_deref(), Some("HOSTCHECK_FAILED"));
+    handle.abort();
+    // A snapshot an agent sends is kept for that agent.
+    let call = |uri: &'static str, body: String| {
+        Request::post(uri)
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .expect("req")
+    };
+    let ok = |r: axum::response::Response| assert!(r.status().is_success(), "{}", r.status());
+    ok(srv
+        .app
+        .clone()
+        .oneshot(call("/agent/v1/poll", HELLO.to_owned()))
+        .await
+        .expect("res"));
+    let ev = serde_json::json!({"type": "firewall", "snapshot": "### nft\ntable inet filter {\n}\n### status\napplied 1700000000 abc\n"}).to_string();
+    ok(srv
+        .app
+        .clone()
+        .oneshot(call("/agent/v1/events", ev))
+        .await
+        .expect("res"));
+    let s = srv.st.firewalls.get(Some(agent.id)).expect("snapshot").0;
+    assert_eq!(s.tables.len(), 1);
+    assert_eq!(s.status.expect("status").state, "applied");
+}

@@ -289,3 +289,10 @@ CREATE TABLE falco_events (
 );
 CREATE INDEX idx_falco_at ON falco_events(at);
 CREATE INDEX idx_falco_host ON falco_events(agent_id, at);
+
+CREATE TABLE firewall_plans (
+    host VARCHAR(40) PRIMARY KEY,
+    rules_json TEXT NOT NULL,
+    updated_by VARCHAR(255),
+    updated_at BIGINT NOT NULL
+);

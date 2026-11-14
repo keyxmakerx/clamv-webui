@@ -28,7 +28,7 @@ pub struct Action {
     pub label: &'static str,
 }
 
-pub const ACTIONS: [Action; 8] = [
+pub const ACTIONS: [Action; 11] = [
     Action {
         name: "aide.check",
         unit: "clamv-aide-check.service",
@@ -85,7 +85,34 @@ pub const ACTIONS: [Action; 8] = [
         passkey: false,
         label: "Daily rkhunter off",
     },
+    // Firewall units are started only by the firewall code, never from a host-check job.
+    Action {
+        name: "firewall.snapshot",
+        unit: "clamv-firewall-snapshot.service",
+        stop: false,
+        passkey: false,
+        label: "Read firewall",
+    },
+    Action {
+        name: "firewall.apply",
+        unit: "clamv-firewall-apply.service",
+        stop: false,
+        passkey: true,
+        label: "Apply firewall plan",
+    },
+    Action {
+        name: "firewall.remove",
+        unit: "clamv-firewall-remove.service",
+        stop: false,
+        passkey: false,
+        label: "Remove clamv's firewall table",
+    },
 ];
+
+/// An action a host-check job or the Host Checks page may ask for.
+pub fn check_action(name: &str) -> Option<&'static Action> {
+    action(name).filter(|a| !a.name.starts_with("firewall."))
+}
 
 pub fn action(name: &str) -> Option<&'static Action> {
     ACTIONS.iter().find(|a| a.name == name)
@@ -146,10 +173,10 @@ pub fn message(code: &str) -> &'static str {
     match code {
         NO_BUS => "No system D-Bus here; mount /run/dbus/system_bus_socket into the container.",
         DENIED => {
-            "systemd refused; install the polkit rule from examples/host-checks and run clamv as the clamv user."
+            "systemd refused; run host-setup on the host and run clamv as the clamv user (uid 10001)."
         }
         NOT_INSTALLED => {
-            "The clamv host-check units are not installed; run examples/host-checks/install.sh."
+            "The clamv host units are not installed; run the image with host-setup on the host."
         }
         _ => "systemd could not start the unit; see the host's journal.",
     }

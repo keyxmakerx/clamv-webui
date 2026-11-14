@@ -316,6 +316,9 @@ async fn events(
                 .collect();
             crate::falco::record(&st, Some(c.agent.id), &c.agent.name, alerts).await;
         }
+        AgentEvent::Firewall { snapshot } => {
+            st.firewalls.set(Some(c.agent.id), snapshot);
+        }
         AgentEvent::Integrity { report } => {
             if let Some(r) = report.cleaned() {
                 crate::integrity::record(&st, Some(c.agent.id), &c.agent.name, r).await;

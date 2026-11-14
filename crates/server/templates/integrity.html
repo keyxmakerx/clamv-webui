@@ -18,7 +18,7 @@
 </tbody></table>
 </div></section>
 <h2 class="h5 mt-4">Managed checks</h2>
-<p class="muted">clamv can start AIDE and rkhunter itself without root: each host installs fixed, sandboxed systemd units and a polkit rule once (<code>examples/host-checks/install.sh</code>), and clamv may only start those units and switch their timers. Accepting a new baseline asks for your passkey every time.</p>
+<p class="muted">clamv can start AIDE and rkhunter itself without root: each host installs fixed, sandboxed systemd units and a polkit rule once (<code>host-setup</code>), and clamv may only start those units and switch their timers. Accepting a new baseline asks for your passkey every time.</p>
 <div id="passkey-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
 <div id="stepup-ok" class="alert alert-success py-2 small d-none" role="status"></div>
 <section class="card mt-2"><div class="card-body table-responsive">
@@ -37,7 +37,7 @@
 </tr>{% endfor %}
 </tbody></table>
 <details class="small"><summary class="muted">How to set a host up</summary>
-<ol class="mb-0 mt-1"><li>Copy <code>examples/host-checks</code> to the host and run <code>sudo ./install.sh</code>. It adds a <code>clamv</code> user with clamv's container uid (10001), the units and the polkit rule.</li>
+<ol class="mb-0 mt-1"><li>On the host, run <code>docker run --rm --user 0 -v /:/host ghcr.io/keyxmakerx/clamv-webui:latest host-setup</code>. It adds a <code>clamv</code> user with clamv's container uid (10001), the units and the polkit rule.</li>
 <li>Mount the host's <code>/run/dbus/system_bus_socket</code> read-only into the clamv or agent container.</li>
 <li>Reports land where clamv already reads them (<code>/var/log/aide/aide.log</code>, <code>/var/log/rkhunter.log</code>).</li></ol></details>
 </div></section>

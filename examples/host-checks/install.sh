@@ -11,12 +11,16 @@ if ! id clamv >/dev/null 2>&1; then
   useradd --system --uid "$uid" --no-create-home --shell /usr/sbin/nologin clamv
 fi
 install -d -m 0755 /usr/local/libexec/clamv /var/log/aide
-install -m 0755 "$here/aide-accept" /usr/local/libexec/clamv/aide-accept
+install -d -m 0750 -o clamv -g root /var/lib/clamv/firewall
+for s in aide-accept firewall-snapshot firewall-apply firewall-remove; do
+  install -m 0755 "$here/$s" "/usr/local/libexec/clamv/$s"
+done
 for u in clamv-aide-check.service clamv-aide-check.timer clamv-aide-accept.service \
-         clamv-rkhunter-check.service clamv-rkhunter-check.timer clamv-rkhunter-propupd.service; do
+         clamv-rkhunter-check.service clamv-rkhunter-check.timer clamv-rkhunter-propupd.service \
+         clamv-firewall-snapshot.service clamv-firewall-apply.service clamv-firewall-remove.service; do
   install -m 0644 "$here/$u" "/etc/systemd/system/$u"
 done
 install -d -m 0755 /etc/polkit-1/rules.d
 install -m 0644 "$here/50-clamv-host-checks.rules" /etc/polkit-1/rules.d/50-clamv-host-checks.rules
 systemctl daemon-reload
-echo "Installed. Turn the daily timers on from clamv's Host Checks page."
+echo "Installed. Mount /var/lib/clamv/firewall read-write into clamv for the Firewall page."

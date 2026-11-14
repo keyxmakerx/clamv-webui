@@ -1,0 +1,43 @@
+#!/bin/sh
+# Load clamv's own nftables table from plan.nft; refuse anything else; roll back unless clamv confirms.
+set -u
+dir=/var/lib/clamv/firewall
+# Work on root-only copies in the unit's RuntimeDirectory, so clamv cannot swap files mid-check.
+run=/run/clamv-firewall
+plan=$run/plan.nft
+full=$run/full.nft
+status() {
+  printf '%s %s %s\n' "$1" "$(date +%s)" "$2" >"$run/status" && mv -f "$run/status" "$dir/status"
+}
+[ -f "$dir/plan.nft" ] && [ ! -L "$dir/plan.nft" ] || { status refused "-"; exit 1; }
+head -c 65536 "$dir/plan.nft" >"$plan"
+hash=$(sha256sum "$plan" | cut -d' ' -f1)
+# The plan is the inside of one table: no other tables, no ruleset or file commands, braces never close the table.
+if grep -Eqi '(^|[^a-z_-])(table|ruleset|include|define|flush|reset|destroy|delete|insert|replace|add|create|rename|export|import|monitor)([^a-z_-]|$)' "$plan"; then
+  status refused "$hash"; exit 1
+fi
+if ! awk '{ n = gsub(/\{/, "{"); m = gsub(/\}/, "}"); d += n - m; if (d < 0) bad = 1 } END { exit (bad || d != 0) }' "$plan"; then
+  status refused "$hash"; exit 1
+fi
+{ echo "table inet clamv {}"; echo "delete table inet clamv"; echo "table inet clamv {"; cat "$plan"; echo "}"; } >"$full"
+# Load it in an empty network namespace first: it must parse and create exactly one table, ours.
+tables=$(unshare --net sh -c "nft -f '$full' && nft list tables" 2>/dev/null) || { status refused "$hash"; exit 1; }
+[ "$tables" = "table inet clamv" ] || { status refused "$hash"; exit 1; }
+nft list table inet clamv >"$run/previous.nft" 2>/dev/null || : >"$run/previous.nft"
+rm -f "$dir/confirm"
+nft -f "$full" || { status failed "$hash"; exit 1; }
+status pending "$hash"
+i=0
+while [ "$i" -lt 90 ]; do
+  if [ "$(cat "$dir/confirm" 2>/dev/null)" = "$hash" ]; then
+    status applied "$hash"; exit 0
+  fi
+  sleep 1; i=$((i + 1))
+done
+if [ -s "$run/previous.nft" ]; then
+  { echo "table inet clamv {}"; echo "delete table inet clamv"; cat "$run/previous.nft"; } | nft -f -
+else
+  nft delete table inet clamv 2>/dev/null
+fi
+status rolled_back "$hash"
+exit 1

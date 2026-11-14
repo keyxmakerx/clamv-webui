@@ -314,6 +314,7 @@ async fn route_table_by_role() {
         ("/admin/settings", Role::Admin),
         ("/admin/agents", Role::Admin),
         ("/admin/clamd-config", Role::Admin),
+        ("/admin/firewall", Role::Admin),
     ];
     let posts: &[(&str, Role)] = &[
         ("/admin/users", Role::Admin),
@@ -332,6 +333,10 @@ async fn route_table_by_role() {
         ("/crowdsec/decisions/remove", Role::Admin),
         ("/crowdsec/refresh", Role::Admin),
         ("/integrity/run", Role::Admin),
+        ("/admin/firewall/rules", Role::Admin),
+        ("/admin/firewall/rules/delete", Role::Admin),
+        ("/admin/firewall/refresh", Role::Admin),
+        ("/admin/firewall/remove", Role::Admin),
         ("/admin/api-tokens", Role::Admin),
         ("/admin/api-tokens/x/revoke", Role::Admin),
         ("/admin/schedules", Role::Admin),
@@ -970,4 +975,82 @@ async fn this_servers_aide_report_is_read_and_shown() {
     assert!(cov.contains("aide: 1 added"));
     assert!(cov.contains("no Falco alerts in 30 days"));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn firewall_plan_is_checked_and_previewed() {
+    let (app, st) = app().await;
+    let (c, t) = admin_cookie(&st).await;
+    let post = |uri: &'static str, body: String| {
+        let app = app.clone();
+        let c = c.clone();
+        async move { app.oneshot(form(uri, &body, Some(&c))).await.expect("res") }
+    };
+    let res = post(
+        "/admin/firewall/rules",
+        format!("_csrf={t}&host=&port=2049&proto=tcp&allow=100.82.0.0%2F16%2C+10.0.0.0%2F8"),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let page = body(res).await;
+    assert!(page.contains("Added 2049/tcp"));
+    assert!(page.contains("tcp dport 2049 ip saddr { 10.0.0.0/8, 100.82.0.0/16 } accept"));
+    assert!(page.contains("tcp dport 2049 drop"));
+    for bad in [
+        "port=0&proto=tcp&allow=",
+        "port=70000&proto=tcp&allow=",
+        "port=80&proto=tcp&allow=not-a-cidr",
+        "port=80&proto=tcp&allow=1.2.3.4%2F8%3B+flush+ruleset",
+    ] {
+        let res = post("/admin/firewall/rules", format!("_csrf={t}&host=&{bad}")).await;
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{bad}");
+    }
+    let plan = st.db.firewall_plan(None).await.expect("plan");
+    assert_eq!(plan.rules.len(), 1);
+    assert_eq!(plan.rules[0].allow, ["10.0.0.0/8", "100.82.0.0/16"]);
+    // An agent has its own plan.
+    let (a, _) = st.db.create_agent("vps-fw", "admin").await.expect("agent");
+    let res = post(
+        "/admin/firewall/rules",
+        format!(
+            "_csrf={t}&host={}&port=22&proto=tcp&allow=100.82.0.0%2F16",
+            a.id
+        ),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        st.db
+            .firewall_plan(Some(a.id))
+            .await
+            .expect("p")
+            .rules
+            .len(),
+        1
+    );
+    assert_eq!(st.db.firewall_plan(None).await.expect("p").rules.len(), 1);
+    let res = post(
+        "/admin/firewall/rules",
+        format!("_csrf={t}&host=999999&port=22&proto=tcp&allow="),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    // No systemd here: reading the firewall says so instead of failing silently.
+    let res = post("/admin/firewall/refresh", format!("_csrf={t}&host=")).await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let res = post(
+        "/admin/firewall/rules/delete",
+        format!("_csrf={t}&host=&port=2049&proto=tcp"),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(st.db.firewall_plan(None).await.expect("p").rules.is_empty());
+    assert_eq!(
+        st.db
+            .audit_by_action("FIREWALL_PLAN", 0)
+            .await
+            .expect("a")
+            .len(),
+        3
+    );
 }

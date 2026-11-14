@@ -106,6 +106,10 @@ pub enum AgentEvent {
     Integrity {
         report: crate::integrity::Report,
     },
+    /// What the host's firewall snapshot unit wrote.
+    Firewall {
+        snapshot: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

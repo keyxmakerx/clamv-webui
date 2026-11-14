@@ -47,6 +47,9 @@ pub(super) async fn dispatch(
     act: &'static Action,
     confirmed: bool,
 ) -> Result<String, String> {
+    if act.name.starts_with("firewall.") {
+        return Err("Unknown action.".into());
+    }
     if act.passkey && !confirmed {
         return Err(format!("{} needs your passkey.", act.label));
     }
@@ -120,7 +123,7 @@ async fn run(
     };
     let mut nav = Nav::new("integrity", &s, &me);
     let r = match (
-        crate::hostchecks::action(&f.action),
+        crate::hostchecks::check_action(&f.action),
         parse_host(&st, &f.host).await,
     ) {
         (None, _) => Err("Unknown action.".to_owned()),

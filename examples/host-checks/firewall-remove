@@ -1,0 +1,6 @@
+#!/bin/sh
+# Remove clamv's own nftables table, and nothing else.
+dir=/var/lib/clamv/firewall
+nft delete table inet clamv 2>/dev/null
+printf 'removed %s -\n' "$(date +%s)" >/run/clamv-firewall/status && mv -f /run/clamv-firewall/status "$dir/status"
+exit 0

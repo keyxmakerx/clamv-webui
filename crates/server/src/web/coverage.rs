@@ -26,7 +26,7 @@ const WEEK: i64 = 7 * DAY;
 
 #[derive(Clone)]
 pub struct Cell {
-    /// ok, warn, off or soon.
+    /// ok, warn or off.
     pub state: &'static str,
     pub text: String,
 }
@@ -99,7 +99,7 @@ const THREATS: [(&str, &str); 9] = [
     ),
     (
         "Exposed services",
-        "The host firewall is known and planned from here.",
+        "Exposed ports are limited to the networks that need them.",
     ),
 ];
 
@@ -213,10 +213,6 @@ fn falco(
     }
 }
 
-fn soon(_: usize) -> Cell {
-    cell("soon", "planned after this release")
-}
-
 fn host(
     name: String,
     role: &'static str,
@@ -226,7 +222,7 @@ fn host(
     roots: String,
     cells: Vec<Cell>,
 ) -> Host {
-    let counted: Vec<&Cell> = cells.iter().filter(|c| c.state != "soon").collect();
+    let counted: Vec<&Cell> = cells.iter().collect();
     Host {
         name,
         role,
@@ -237,6 +233,34 @@ fn host(
         on: counted.iter().filter(|c| c.state == "ok").count(),
         of: counted.len(),
         items: THREATS.iter().map(|t| t.0).zip(cells).collect(),
+    }
+}
+
+/// Firewall: read from here, the last apply held, and every exposed port planned.
+async fn firewall(st: &AppState, host: Option<i64>) -> Cell {
+    let Some((snap, _)) = st.firewalls.get(host) else {
+        return cell("off", "not read; needs host-setup and the firewall folder");
+    };
+    if let Some(a) = &snap.status
+        && matches!(a.state.as_str(), "rolled_back" | "refused" | "failed")
+    {
+        return cell("warn", format!("last apply {}", a.state.replace('_', " ")));
+    }
+    let plan = st.db.firewall_plan(host).await.unwrap_or_default();
+    let open = snap
+        .listening
+        .iter()
+        .filter(|l| crate::firewall::exposed(l))
+        .filter(|l| {
+            !plan
+                .rules
+                .iter()
+                .any(|r| r.port == l.port && r.proto.as_str() == l.proto)
+        })
+        .count();
+    match open {
+        0 => cell("ok", "every exposed port is planned"),
+        n => cell("warn", format!("{n} exposed port(s) open to all")),
     }
 }
 
@@ -369,7 +393,7 @@ async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
     cells.push(integrity(&reports, None, now));
     cells.push(falco(&falco30, &falco7, None, now));
     cells.push(crowdsec(&st, &crate::canary::hostname(), &cs_hosts));
-    cells.extend((8..THREATS.len()).map(soon));
+    cells.push(firewall(&st, None).await);
     let mut hosts = vec![host(
         crate::canary::hostname(),
         "this server",
@@ -420,7 +444,7 @@ async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
         cells.push(integrity(&reports, id, now));
         cells.push(falco(&falco30, &falco7, id, now));
         cells.push(crowdsec(&st, &a.name, &cs_hosts));
-        cells.extend((8..THREATS.len()).map(soon));
+        cells.push(firewall(&st, id).await);
         hosts.push(host(
             a.name.clone(),
             "agent",

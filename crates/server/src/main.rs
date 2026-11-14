@@ -35,6 +35,13 @@ async fn main() -> ExitCode {
                 }
             }
         }
+        Command::HostSetup(h) => match clamv_webui::hostsetup::run(&h).await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("host-setup failed: {e:#}");
+                ExitCode::FAILURE
+            }
+        },
         Command::Serve => {
             logging::init(&cli.config);
             match app::serve(cli.config).await {
