@@ -26,6 +26,8 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/account/passkeys/{id}/delete", post(remove))
         .route("/login/passkey/options", post(login_options))
         .route("/login/passkey", post(login))
+        .route("/integrity/confirm/options", post(stepup_options))
+        .route("/integrity/confirm", post(stepup))
 }
 
 /// (origin, relying-party id): PUBLIC_URL when set, otherwise the Host the browser used.
@@ -448,5 +450,173 @@ struct Redirect303(&'static str);
 impl IntoResponse for Redirect303 {
     fn into_response(self) -> Response {
         axum::response::Redirect::to(self.0).into_response()
+    }
+}
+
+// ---- step-up: a fresh passkey assertion before a host check that changes a baseline ----
+
+#[derive(Deserialize)]
+struct StepupOptionsBody {
+    #[serde(default)]
+    csrf: String,
+    #[serde(default)]
+    host: String,
+    #[serde(default)]
+    action: String,
+}
+
+async fn stepup_options(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    headers: HeaderMap,
+    Json(b): Json<StepupOptionsBody>,
+) -> Response {
+    let Ok((s, u)) = auth.require(Role::Admin) else {
+        return jerr(StatusCode::FORBIDDEN, "Admins only.");
+    };
+    if !csrf::token_ok(&s.csrf_token, Some(&b.csrf)) {
+        return jerr(StatusCode::FORBIDDEN, "Reload the page and try again.");
+    }
+    let Some(act) = crate::hostchecks::action(&b.action).filter(|a| a.passkey) else {
+        return jerr(StatusCode::BAD_REQUEST, "Unknown action.");
+    };
+    let host = match super::integrity::parse_host(&st, &b.host).await {
+        Ok(h) => h,
+        Err(m) => return jerr(StatusCode::BAD_REQUEST, &m),
+    };
+    let Some((_, rp_id)) = relying_party(&st, &headers) else {
+        return jerr(StatusCode::BAD_REQUEST, "Set PUBLIC_URL to use passkeys.");
+    };
+    let keys = st.db.list_passkeys(&u.id).await.unwrap_or_default();
+    if keys.is_empty() {
+        return jerr(
+            StatusCode::BAD_REQUEST,
+            "This needs a passkey. Add one under Account first.",
+        );
+    }
+    let Ok((handle, challenge)) = st.db.create_challenge("stepup", Some(&u.id)).await else {
+        return jerr(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+    };
+    if let Ok(mut g) = st.stepups.lock() {
+        let now = crate::db::now_ms();
+        g.retain(|_, v| v.expires > now);
+        if g.len() > 1000 {
+            return jerr(StatusCode::TOO_MANY_REQUESTS, "Try again in a minute.");
+        }
+        g.insert(
+            handle.clone(),
+            crate::app::Stepup {
+                user_id: u.id.clone(),
+                host,
+                action: act.name,
+                expires: now + 120_000,
+            },
+        );
+    }
+    jok(json!({
+        "handle": handle,
+        "publicKey": {
+            "challenge": challenge,
+            "rpId": rp_id,
+            "allowCredentials": keys.iter().map(|k| json!({ "type": "public-key", "id": k.cred_id })).collect::<Vec<_>>(),
+            "userVerification": "required",
+            "timeout": 120000
+        }
+    }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StepupBody {
+    #[serde(default)]
+    csrf: String,
+    handle: String,
+    id: String,
+    client_data_json: String,
+    authenticator_data: String,
+    signature: String,
+}
+
+async fn stepup(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    info: RequestInfo,
+    headers: HeaderMap,
+    Json(b): Json<StepupBody>,
+) -> Response {
+    let Ok((s, u)) = auth.require(Role::Admin) else {
+        return jerr(StatusCode::FORBIDDEN, "Admins only.");
+    };
+    if !csrf::token_ok(&s.csrf_token, Some(&b.csrf)) {
+        return jerr(StatusCode::FORBIDDEN, "Reload the page and try again.");
+    }
+    let key = format!("2fa:{}", u.id);
+    if st.mfa_lockout.check(&key, info.ip).is_err() {
+        return jerr(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many attempts. Try again later.",
+        );
+    }
+    let pending = st.stepups.lock().ok().and_then(|mut g| g.remove(&b.handle));
+    let (Ok(Some(ch)), Some(p)) = (st.db.take_challenge(&b.handle).await, pending) else {
+        return jerr(StatusCode::BAD_REQUEST, "This request expired. Try again.");
+    };
+    if ch.purpose != "stepup"
+        || ch.user_id.as_deref() != Some(u.id.as_str())
+        || p.user_id != u.id
+        || p.expires <= crate::db::now_ms()
+    {
+        return jerr(StatusCode::BAD_REQUEST, "This request expired. Try again.");
+    }
+    let Some((origin, rp_id)) = relying_party(&st, &headers) else {
+        return jerr(StatusCode::BAD_REQUEST, "Set PUBLIC_URL to use passkeys.");
+    };
+    let reject = |why: String| {
+        tracing::warn!(event = "auth.stepup_failed", user = %u.username, ip = %info.ip, reason = %why, "passkey confirmation rejected");
+        let _ = st.mfa_lockout.fail(&key, info.ip);
+        jerr(StatusCode::UNAUTHORIZED, "That passkey was not accepted.")
+    };
+    let pk = match st.db.passkey_by_cred(&b.id).await {
+        Ok(Some(k)) if k.user_id == u.id => k,
+        _ => return reject("not one of this user's passkeys".into()),
+    };
+    let (Ok(cd), Ok(ad), Ok(sig)) = (
+        unb64u(&b.client_data_json),
+        unb64u(&b.authenticator_data),
+        unb64u(&b.signature),
+    ) else {
+        return jerr(
+            StatusCode::BAD_REQUEST,
+            "The browser sent an unreadable answer.",
+        );
+    };
+    let count = match webauthn::verify_assertion(
+        &cd,
+        &ad,
+        &sig,
+        &ch.challenge,
+        &origin,
+        &rp_id,
+        &pk.public_key,
+    ) {
+        Ok(c) => c,
+        Err(e) => return reject(e.to_string()),
+    };
+    if !st
+        .db
+        .use_passkey(&pk.id, pk.sign_count, count)
+        .await
+        .unwrap_or(false)
+    {
+        tracing::error!(event = "auth.passkey_cloned", user_id = %u.id, "passkey counter went backwards: it may have been copied");
+        return reject("counter went backwards".into());
+    }
+    st.mfa_lockout.success(&key, info.ip);
+    let Some(act) = crate::hostchecks::action(p.action) else {
+        return jerr(StatusCode::BAD_REQUEST, "Unknown action.");
+    };
+    match super::integrity::dispatch(&st, &u, &info, p.host, act, true).await {
+        Ok(msg) => jok(json!({ "ok": true, "message": msg })),
+        Err(m) => jerr(StatusCode::BAD_REQUEST, &m),
     }
 }

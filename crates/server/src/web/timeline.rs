@@ -54,6 +54,7 @@ impl TimelinePage {
             "ClamAV" => "bg-danger",
             "Canary" => "bg-warning text-dark",
             "Integrity" => "bg-info text-dark",
+            "CrowdSec" => "bg-primary",
             _ => "bg-secondary",
         }
     }

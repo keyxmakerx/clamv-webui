@@ -80,3 +80,13 @@ body{min-height:100vh;background-attachment:fixed}
 /* Timeline */
 .tl-linked>td{background:color-mix(in srgb,var(--danger) 14%,transparent)}
 .incident{border:1px solid var(--danger)}
+.attack-map{width:100%;height:auto;display:block;margin-top:.5rem}
+.map-land{opacity:.35}
+.map-dot{fill:var(--warn);fill-opacity:.75;stroke:var(--card);stroke-width:.3}
+.map-dot-ban{fill:var(--danger)}
+.attack-map a:hover .map-dot{fill-opacity:1;stroke:var(--text)}
+.lg-ban{background:var(--danger)}
+.legend-dot .lg-hit{background:var(--warn)}
+.cs-meta{display:grid;grid-template-columns:max-content 1fr;gap:2px 10px;margin:0}
+.cs-meta dt{color:var(--muted);font-weight:normal}
+.cs-meta dd{margin:0}

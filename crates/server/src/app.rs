@@ -39,6 +39,18 @@ pub struct AppState {
     pub updates: crate::update::Updates,
     pub canaries: crate::canary::Central,
     pub falco_throttle: crate::falco::Throttle,
+    pub crowdsec: crate::crowdsec::Console,
+    pub host_units: crate::hostchecks::States,
+    /// Passkey confirmations in flight: challenge handle to (user, host, action, expiry).
+    pub stepups: std::sync::Mutex<std::collections::HashMap<String, Stepup>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Stepup {
+    pub user_id: String,
+    pub host: Option<i64>,
+    pub action: &'static str,
+    pub expires: i64,
 }
 
 impl AppState {
@@ -62,6 +74,10 @@ impl AppState {
             oidc: crate::auth::oidc::Oidc::from_config(&cfg).unwrap_or_else(|e| {
                 tracing::error!(event = "oidc.config_invalid", error = %e, "SSO disabled");
                 None
+            }),
+            crowdsec: crate::crowdsec::Console::from_config(&cfg).unwrap_or_else(|e| {
+                tracing::error!(event = "crowdsec.config_invalid", error = %e, "CrowdSec pages disabled");
+                crate::crowdsec::Console::default()
             }),
             trusted_proxies: cfg
                 .trusted_proxies
@@ -88,6 +104,8 @@ impl AppState {
             updates: crate::update::Updates::default(),
             canaries: crate::canary::Central::default(),
             falco_throttle: crate::falco::Throttle::default(),
+            host_units: crate::hostchecks::States::default(),
+            stepups: std::sync::Mutex::default(),
         }
     }
 
@@ -257,6 +275,8 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     crate::integrity::spawn(state.clone());
     crate::falco::spawn(state.clone());
     crate::timeline::spawn(state.clone());
+    crate::crowdsec::spawn(state.clone());
+    crate::hostchecks::spawn(state.clone());
     let app = router(state, &cfg).into_make_service_with_connect_info::<std::net::SocketAddr>();
     let scheme = if cfg.tls_enabled() { "https" } else { "http" };
     tracing::info!(listen = %cfg.listen, scheme, clamd = %cfg.clamd_endpoint, data_dir = %cfg.data_dir.display(), version = env!("CARGO_PKG_VERSION"), "started");

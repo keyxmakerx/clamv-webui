@@ -11,8 +11,10 @@ Forked from an earlier Java application, which has been replaced entirely. Licen
 - **Dashboard**: scans, detections and failures over 24 h, 7 or 30 days, compared with the period before, with a clickable activity chart and the top signatures, folders and hosts.
 - **Coverage page**: one view of which threats each host is covered for (malware at rest and on arrival, canaries, EICAR checks, signature age), this server and every agent alike, with what is missing.
 - **Integrity checks**: AIDE and rkhunter runs from every host. Each host keeps running them on its own timer; mount the report read-only and every new run is stored, shown on the Host Checks and Coverage pages, and alerted when it finds changes.
+- **Managed AIDE and rkhunter, least privilege**: install fixed, sandboxed systemd units and a polkit rule once per host (`examples/host-checks/install.sh`); clamv, still unprivileged, can then run a check, switch the daily timers, or accept a new baseline (which asks for your passkey every time and is audited), and may start nothing else.
+- **CrowdSec console**: connect to a CrowdSec Local API as a watcher for an overview with an attack map, alerts over time and top countries, scenarios, AS and targets; searchable alerts with event details; active and ended decisions with duplicates folded; and bans or captchas added and removed by admins (audited, refusing your own address and very wide ranges). CrowdSec alerts also join the Timeline and the Coverage page.
 - **Falco intake**: follow each host's Falco JSON alerts (mounted read-only); alerts are stored and listed under Host Checks, and Error or worse notify, at most once per rule per host every 10 minutes.
-- **Timeline and incidents**: one timeline of detections, canary hits, integrity findings and Falco alerts across hosts. Two different sensors on the same host within an hour make an incident, which is highlighted, logged (`incident.correlated`) and notified once.
+- **Timeline and incidents**: one timeline of detections, canary hits, integrity findings, Falco and CrowdSec alerts across hosts. Two different sensors on the same host within an hour make an incident, which is highlighted, logged (`incident.correlated`) and notified once.
 - **Detections page**: every infected file across all hosts, filtered by signature, host, type and folder, with CSV export (up to 50,000 rows).
 - **Search**: the Jobs and Detections pages take free text plus `field:value` terms, for example `sig:Eicar host:nas -path:/games after:7d`. Quotes match exactly, `-` excludes, dates take `YYYY-MM-DD` or `7d`, `12h`, `30m`. Filters are remembered per browser.
 - **Display**: light and dark themes, times shown in your own time zone (or a fixed one) with a 12 or 24 hour clock, set under Account.
@@ -137,6 +139,24 @@ To have alerts name who touched a canary, add the auditd rule the page shows (`-
 Destinations: a plain `https://…` URL gets the JSON event, and Discord webhook URLs get a chat message. Put a prefix in front for the others:
 `ntfy+https://ntfy.sh/<topic>` (add `?auth=…` for a protected topic), `gotify+https://gotify.example/?token=<app token>`, `slack+https://…` (Slack or Mattermost incoming webhook). Canary hits are sent at the highest priority, malware and failed EICAR checks at high.
 
+### CrowdSec
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `CROWDSEC_LAPI_URL` | unset | Local API, e.g. `http://crowdsec:8080`; turns on the CrowdSec pages |
+| `CROWDSEC_MACHINE_ID` | `clamv-webui` | Watcher added with `cscli machines add clamv-webui --password "$(cat crowdsec_pw)"` |
+| `CROWDSEC_PASSWORD(_FILE)` | unset | That watcher's password |
+| `CROWDSEC_CA_FILE` | unset | Extra CA for an https LAPI |
+| `CROWDSEC_INCLUDE_CAPI` | `false` | Also show the community blocklist (large) |
+| `CROWDSEC_READ_ONLY` | `false` | Hide the ban and unban buttons |
+| `CROWDSEC_LOOKBACK_HOURS` | `168` | Hours of alerts kept in memory (nothing is stored in the database) |
+
+clamv refreshes every minute and re-reads the whole window hourly. Bans are sent the way `cscli decisions add` sends them, so every bouncer applies them. Deleting alerts needs CrowdSec's `trusted_ips`, so clamv doesn't offer it. A LAPI that stops answering is logged (`crowdsec.lapi_down`) and notified, and so is its recovery.
+
+### Managed host checks
+
+On each host, run `sudo examples/host-checks/install.sh` once and mount `/run/dbus/system_bus_socket` read-only into the clamv or agent container. The script adds a `clamv` user with the container's uid (10001), the units `clamv-aide-check`, `clamv-aide-accept`, `clamv-rkhunter-check` and `clamv-rkhunter-propupd` (each one fixed command, read-only system, no network, few capabilities), daily timers, and a polkit rule that lets `clamv` start those units and switch the two timers, and nothing else. Reports still reach clamv through `AIDE_LOG` and `RKHUNTER_LOG`.
+
 ### Metrics
 
 `METRICS_TOKEN(_FILE)` (16+ characters) enables `/metrics` and `/actuator/prometheus`, read with `Authorization: Bearer <token>`. Without a token both return 404. See `dashboards/prometheus.yml.example`.
@@ -176,6 +196,8 @@ The Settings page (Admin) can change the scan, retention, watch, webhook-policy 
 - File names in notifications have bidirectional-override characters replaced, so `cv\u202Efdp.exe` cannot pose as a PDF; Slack text is escaped so names cannot carry mentions or links.
 - Webhook delivery pins the resolved address, refuses private and metadata ranges unless allowed, follows no redirects, and never logs the URL.
 - OIDC uses PKCE, state and nonce, and only asymmetric signatures. LDAP requires TLS.
+- The CrowdSec watcher password is never logged. Admins add bans; their own address, loopback and anything wider than /8 (IPv4) or /32 (IPv6) is refused, and `CROWDSEC_READ_ONLY` removes writes.
+- Managed host checks never run as root inside clamv: systemd starts fixed units on a polkit allow-list, the agent refuses any action outside it too, and a baseline change needs a fresh passkey assertion bound to that action and host.
 - Agent tokens are stored hashed, can be rotated or disabled, and only reach the agent endpoints. Results from an agent are size-limited and cleaned before they are stored, and each agent may send at most 1200 events a minute.
 
 Report vulnerabilities privately through GitHub security advisories.

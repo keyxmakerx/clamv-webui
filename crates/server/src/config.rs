@@ -199,6 +199,48 @@ pub struct Config {
     )]
     pub falco_min_priority: String,
 
+    /// CrowdSec Local API, e.g. http://crowdsec:8080; turns on the CrowdSec pages.
+    #[arg(long, env = "CROWDSEC_LAPI_URL", global = true)]
+    pub crowdsec_lapi_url: Option<String>,
+
+    /// Watcher name added with `cscli machines add`.
+    #[arg(
+        long,
+        env = "CROWDSEC_MACHINE_ID",
+        default_value = "clamv-webui",
+        global = true
+    )]
+    pub crowdsec_machine_id: String,
+
+    /// That watcher's password.
+    #[arg(long, env = "CROWDSEC_PASSWORD", hide_env_values = true, global = true)]
+    pub crowdsec_password: Option<String>,
+
+    /// File holding the watcher password (Docker secret). Wins over CROWDSEC_PASSWORD.
+    #[arg(long, env = "CROWDSEC_PASSWORD_FILE", global = true)]
+    pub crowdsec_password_file: Option<std::path::PathBuf>,
+
+    /// Extra CA bundle for an https LAPI.
+    #[arg(long, env = "CROWDSEC_CA_FILE", global = true)]
+    pub crowdsec_ca_file: Option<std::path::PathBuf>,
+
+    /// Also show the community blocklist (CAPI); large.
+    #[arg(long, env = "CROWDSEC_INCLUDE_CAPI", default_value_t = false, action = clap::ArgAction::Set, global = true)]
+    pub crowdsec_include_capi: bool,
+
+    /// Show CrowdSec without the ban and unban buttons.
+    #[arg(long, env = "CROWDSEC_READ_ONLY", default_value_t = false, action = clap::ArgAction::Set, global = true)]
+    pub crowdsec_read_only: bool,
+
+    /// Hours of CrowdSec alerts kept in memory (1 to 720).
+    #[arg(
+        long,
+        env = "CROWDSEC_LOOKBACK_HOURS",
+        default_value_t = 168,
+        global = true
+    )]
+    pub crowdsec_lookback_hours: u32,
+
     /// Check GitHub once a day for a newer release and show it to admins.
     #[arg(long, env = "UPDATE_CHECK", default_value_t = true, action = clap::ArgAction::Set, global = true)]
     pub update_check: bool,

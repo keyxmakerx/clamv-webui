@@ -1,5 +1,5 @@
 //! One timeline across sensors: ClamAV detections, canary hits, AIDE and
-//! rkhunter findings and Falco alerts. Events on the same host from two or
+//! rkhunter findings, Falco alerts and CrowdSec alerts. Events on the same host from two or
 //! more different sensors within an hour of each other form an incident,
 //! which is logged and notified once.
 
@@ -17,7 +17,7 @@ pub const WINDOW_MS: i64 = 3_600_000;
 pub struct Item {
     pub at: i64,
     pub host: String,
-    /// ClamAV, Canary, Integrity or Falco.
+    /// ClamAV, Canary, Integrity, Falco or CrowdSec.
     pub sensor: &'static str,
     pub title: String,
     pub detail: String,
@@ -129,6 +129,22 @@ pub async fn collect(st: &AppState, since: i64) -> Vec<Item> {
             href: "/integrity".into(),
         });
     }
+    for a in st.crowdsec.alerts(since, |a| !a.simulated) {
+        out.push(Item {
+            at: a.created_at,
+            host: a.machine.clone(),
+            sensor: "CrowdSec",
+            title: a.scenario.clone(),
+            detail: format!("from {} {}", a.value, a.country),
+            href: format!(
+                "/crowdsec/alerts?q=ip%3D{}",
+                url::form_urlencoded::byte_serialize(a.value.as_bytes()).collect::<String>()
+            ),
+        });
+        if out.len() > 20_000 {
+            break;
+        }
+    }
     out.sort_by_key(|i| std::cmp::Reverse(i.at));
     out
 }
@@ -148,7 +164,8 @@ pub fn incidents(items: &[Item]) -> Vec<Incident> {
             let mut sensors: Vec<&'static str> = chain.iter().map(|i| i.sensor).collect();
             sensors.sort_unstable();
             sensors.dedup();
-            if sensors.len() >= 2 {
+            // Internet noise plus a chatty Falco rule is not an incident on its own.
+            if sensors.len() >= 2 && sensors != ["CrowdSec", "Falco"] {
                 out.push(Incident {
                     host: host.to_owned(),
                     first: chain[0].at,
@@ -262,5 +279,20 @@ mod tests {
         assert_eq!(inc[0].sensors, vec!["ClamAV", "Falco"]);
         assert_eq!(inc[0].items.len(), 3);
         assert_eq!(inc[0].key(), "nas|0");
+    }
+
+    #[test]
+    fn crowdsec_pairs_with_findings_but_not_with_falco_alone() {
+        let m = 60_000;
+        let items = vec![
+            item(0, "edge", "CrowdSec"),
+            item(10 * m, "edge", "Falco"),
+            item(0, "nas", "CrowdSec"),
+            item(30 * m, "nas", "ClamAV"),
+        ];
+        let inc = incidents(&items);
+        assert_eq!(inc.len(), 1);
+        assert_eq!(inc[0].host, "nas");
+        assert_eq!(inc[0].sensors, vec!["ClamAV", "CrowdSec"]);
     }
 }

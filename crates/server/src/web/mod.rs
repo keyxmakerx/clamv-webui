@@ -6,6 +6,7 @@ pub mod canaries;
 pub mod charts;
 pub mod clamdconf;
 pub mod coverage;
+pub mod crowdsec;
 pub mod csrf;
 pub mod detections;
 pub mod endpoints;
@@ -75,6 +76,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(coverage::routes())
         .merge(integrity::routes())
         .merge(timeline::routes())
+        .merge(crowdsec::routes())
         .route(
             "/{*path}",
             get(asset).layer(tower_http::compression::CompressionLayer::new()),

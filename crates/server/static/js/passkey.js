@@ -1,4 +1,4 @@
-// Passkeys: add one (account page), sign in with one, or use one as the second step.
+// Passkeys: add one (account page), sign in with one, use one as the second step, or confirm a host check.
 (function () {
   "use strict";
   function toBytes(s) {
@@ -70,7 +70,37 @@
     });
     window.location.assign(res.redirect || "/dashboard");
   }
+  async function stepUp(btn) {
+    var csrf = btn.getAttribute("data-csrf");
+    var opt = await post("/integrity/confirm/options", {
+      csrf: csrf, host: btn.getAttribute("data-host") || "", action: btn.getAttribute("data-stepup")
+    });
+    var pk = opt.publicKey;
+    pk.challenge = toBytes(pk.challenge);
+    pk.allowCredentials = (pk.allowCredentials || []).map(function (c) { return { type: c.type, id: toBytes(c.id) }; });
+    var cred = await navigator.credentials.get({ publicKey: pk });
+    var res = await post("/integrity/confirm", {
+      csrf: csrf,
+      handle: opt.handle,
+      id: toB64u(cred.rawId),
+      clientDataJson: toB64u(cred.response.clientDataJSON),
+      authenticatorData: toB64u(cred.response.authenticatorData),
+      signature: toB64u(cred.response.signature)
+    });
+    var ok = document.getElementById("stepup-ok");
+    if (ok) { ok.textContent = res.message || "Done."; ok.classList.remove("d-none"); }
+  }
   document.addEventListener("click", function (ev) {
+    var up = ev.target.closest("[data-stepup]");
+    if (up) {
+      ev.preventDefault();
+      if (!supported()) return;
+      up.disabled = true;
+      stepUp(up).catch(function (e) {
+        showError(e && e.name === "NotAllowedError" ? "Cancelled or timed out." : (e.message || String(e)));
+      }).finally(function () { up.disabled = false; });
+      return;
+    }
     var btn = ev.target.closest("[data-passkey]");
     if (!btn) return;
     ev.preventDefault();

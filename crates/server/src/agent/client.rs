@@ -36,6 +36,8 @@ struct Agent {
     conf: crate::clamdconf::Cache,
     canaries: tokio::sync::watch::Sender<Vec<crate::canary::Spec>>,
     canary_states: std::sync::Mutex<Option<crate::canary::States>>,
+    /// clamv host-check units on this host, read every 5 minutes and after each action.
+    host_units: std::sync::Mutex<Option<crate::hostchecks::UnitStates>>,
 }
 
 /// Check the agent settings and build the HTTP client, without connecting.
@@ -102,6 +104,7 @@ fn build(cfg: Config) -> anyhow::Result<Agent> {
         conf: crate::clamdconf::Cache::default(),
         canaries: tokio::sync::watch::channel(Vec::new()).0,
         canary_states: std::sync::Mutex::new(None),
+        host_units: std::sync::Mutex::new(None),
         cfg,
     })
 }
@@ -114,6 +117,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     spawn_canaries(a.clone());
     spawn_integrity(a.clone());
     spawn_falco(a.clone());
+    spawn_host_units(a.clone());
     tokio::select! {
         () = poll_loop(a) => {}
         () = shutdown() => tracing::info!("agent stopping"),
@@ -171,6 +175,7 @@ async fn poll_loop(a: Arc<Agent>) {
             running: a.running.lock().await.iter().cloned().collect(),
             wait: free > 0,
             canaries: canary_states(&a),
+            host_checks: a.host_units.lock().ok().and_then(|g| g.clone()),
         };
         match poll_once(&a, &req).await {
             Ok(resp) => {
@@ -300,6 +305,7 @@ async fn execute(a: Arc<Agent>, j: Assignment, _permit: OwnedSemaphorePermit) {
                 _ => fail(scan::SCAN_FAILED),
             }
         }
+        crate::hostchecks::KIND => host_check(&a, &j).await,
         other => {
             tracing::error!(job_id = %j.id, kind = other, "job type not supported by this agent");
             fail(scan::SCAN_FAILED)
@@ -308,6 +314,50 @@ async fn execute(a: Arc<Agent>, j: Assignment, _permit: OwnedSemaphorePermit) {
     deliver(&a, &j.id, &body).await;
     a.running.lock().await.remove(&j.id);
     a.freed.notify_one();
+}
+
+/// Start one allow-listed unit; anything else the server sends is refused here too.
+async fn host_check(a: &Agent, j: &Assignment) -> ResultRequest {
+    let Some(act) = crate::hostchecks::action(&j.target) else {
+        tracing::error!(event = "hostcheck.refused", job_id = %j.id, action = %crate::agent::proto::clean(&j.target, 64), "unknown host check");
+        return fail(crate::hostchecks::FAILED);
+    };
+    let r = crate::hostchecks::run(act).await;
+    if let Ok(mut g) = a.host_units.lock() {
+        *g = None;
+    }
+    let states = crate::hostchecks::probe().await;
+    if let Ok(mut g) = a.host_units.lock() {
+        *g = Some(states);
+    }
+    match r {
+        Ok(()) => {
+            tracing::info!(
+                event = "hostcheck.started",
+                action = act.name,
+                unit = act.unit,
+                "host check started"
+            );
+            ok(Report::default())
+        }
+        Err(e) => {
+            tracing::warn!(event = "hostcheck.failed", action = act.name, unit = act.unit, code = e.code, error = %e.message, "host check could not start");
+            fail(e.code)
+        }
+    }
+}
+
+fn spawn_host_units(a: Arc<Agent>) {
+    tokio::spawn(async move {
+        let mut t = tokio::time::interval(Duration::from_secs(300));
+        loop {
+            t.tick().await;
+            let s = crate::hostchecks::probe().await;
+            if let Ok(mut g) = a.host_units.lock() {
+                *g = Some(s);
+            }
+        }
+    });
 }
 
 fn ok(r: Report) -> ResultRequest {

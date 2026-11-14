@@ -479,7 +479,8 @@ fn severity(e: &Event) -> u8 {
     match (e.event, e.verdict.as_str()) {
         ("canary.tripped" | "incident.correlated", _) => 5,
         ("falco.alert", _) if matches!(e.kind.as_str(), "CRITICAL" | "ALERT" | "EMERGENCY") => 5,
-        ("falco.alert", _) => 4,
+        ("falco.alert" | "crowdsec.lapi_down", _) => 4,
+        ("crowdsec.lapi_up", _) => 2,
         ("eicar.control_failed" | "integrity.findings", _) | (_, jobs::VIRUS_FOUND) => 4,
         ("test", _) | (_, jobs::ERROR) => 3,
         _ if e.file_errors > 0 => 3,
@@ -513,6 +514,8 @@ fn title(e: &Event) -> String {
         ("eicar.control_failed", _) => format!("EICAR check failed on {}", e.endpoint),
         ("falco.alert", _) => format!("Falco: {} on {}", e.target, e.endpoint),
         ("incident.correlated", _) => format!("Incident on {}", e.endpoint),
+        ("crowdsec.lapi_down", _) => "CrowdSec LAPI unreachable".to_owned(),
+        ("crowdsec.lapi_up", _) => "CrowdSec LAPI reachable again".to_owned(),
         ("integrity.findings", _) => format!(
             "{} found changes on {}",
             e.kind.to_ascii_lowercase(),
@@ -569,6 +572,15 @@ fn discord_text(e: &Event) -> String {
             e.kind.to_ascii_lowercase().replace('+', " and "),
             clean(&e.target)
         ),
+        ("crowdsec.lapi_down", _) => format!(
+            "**CrowdSec LAPI unreachable** at `{}`: {}. Ban lists in clamv are stale.",
+            clean(&e.target),
+            clean(e.error.as_deref().unwrap_or("no answer"))
+        ),
+        ("crowdsec.lapi_up", _) => format!(
+            "**CrowdSec LAPI reachable again** at `{}`.",
+            clean(&e.target)
+        ),
         ("falco.alert", _) => format!(
             "**Falco {}** on `{}`: {}",
             e.kind.to_ascii_lowercase(),
@@ -623,7 +635,9 @@ fn discord_text(e: &Event) -> String {
         Some(m) if e.event == "integrity.findings" => {
             lines.extend(m.lines().map(|f| format!("- `{}`", clean(f))));
         }
-        Some(m) if e.event != "canary.tripped" => lines.push(format!("Reason: {}", clean(m))),
+        Some(m) if !matches!(e.event, "canary.tripped" | "crowdsec.lapi_down") => {
+            lines.push(format!("Reason: {}", clean(m)))
+        }
         _ => {}
     }
     if !e.job_id.is_empty() {

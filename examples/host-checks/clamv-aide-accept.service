@@ -1,0 +1,30 @@
+# clamv: accept AIDE's current state as the new baseline (needs a passkey in clamv).
+[Unit]
+Description=clamv host check: accept AIDE baseline
+ConditionPathExists=/usr/bin/aide
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/clamv/aide-accept
+Nice=19
+IOSchedulingClass=idle
+ProtectSystem=strict
+ReadWritePaths=/var/lib/aide /var/log/aide
+PrivateTmp=yes
+PrivateNetwork=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_CHOWN CAP_FOWNER
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources

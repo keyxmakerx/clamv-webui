@@ -554,3 +554,193 @@ async fn basic_auth_cannot_skip_the_second_factor() {
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
     assert!(text(res).await.contains("second_factor_required"));
 }
+
+async fn json_of(
+    app: &Router,
+    uri: &str,
+    body: serde_json::Value,
+    session: &str,
+) -> (StatusCode, serde_json::Value) {
+    let res = app
+        .clone()
+        .oneshot(json(uri, &body, session))
+        .await
+        .expect("res");
+    let code = res.status();
+    (
+        code,
+        serde_json::from_str(&text(res).await).unwrap_or_default(),
+    )
+}
+
+#[tokio::test]
+async fn host_check_baselines_need_a_fresh_passkey() {
+    let origin = "https://clamav.example.com";
+    let rp = "clamav.example.com";
+    let (app, st) = app(&["--public-url", origin]).await;
+    let res = sign_in(&app).await;
+    let session = pair(&cookies(&res)[0]);
+    let page = text(
+        app.clone()
+            .oneshot(get("/account/security", &session))
+            .await
+            .expect("res"),
+    )
+    .await;
+    let csrf = between(&page, "data-csrf=\"", "\"").to_owned();
+    let ask = serde_json::json!({"csrf": csrf, "host": "", "action": "aide.accept"});
+
+    // Without a passkey there is nothing to confirm with.
+    let (code, v) = json_of(&app, "/integrity/confirm/options", ask.clone(), &session).await;
+    assert_eq!(code, StatusCode::BAD_REQUEST);
+    assert!(
+        v["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("needs a passkey")
+    );
+
+    let (_, opt) = json_of(
+        &app,
+        "/account/passkeys/options",
+        serde_json::json!({"csrf": csrf}),
+        &session,
+    )
+    .await;
+    let mut k = SoftKey::new();
+    let (cd, att) = k.register(
+        opt["publicKey"]["challenge"].as_str().expect("c"),
+        origin,
+        rp,
+    );
+    let (code, _) = json_of(
+        &app,
+        "/account/passkeys",
+        serde_json::json!({"csrf": csrf, "handle": opt["handle"], "name": "Key", "clientDataJson": b64u(&cd), "attestationObject": b64u(&att)}),
+        &session,
+    )
+    .await;
+    assert_eq!(code, StatusCode::OK);
+
+    // A form post cannot skip the passkey; plain checks can be started from a form.
+    let res = app
+        .clone()
+        .oneshot(form(
+            "/integrity/run",
+            &format!("_csrf={csrf}&host=&action=aide.accept"),
+            &session,
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert!(text(res).await.contains("needs your passkey"));
+    let res = app
+        .clone()
+        .oneshot(form(
+            "/integrity/run",
+            &format!("_csrf={csrf}&host=&action=../../bin/sh"),
+            &session,
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let res = app
+        .clone()
+        .oneshot(form(
+            "/integrity/run",
+            &format!("_csrf={csrf}&host=&action=aide.check"),
+            &session,
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(text(res).await.contains("Run AIDE now sent to"));
+    let (code, _) = json_of(
+        &app,
+        "/integrity/confirm/options",
+        serde_json::json!({"csrf": csrf, "host": "", "action": "aide.check"}),
+        &session,
+    )
+    .await;
+    assert_eq!(code, StatusCode::BAD_REQUEST);
+
+    // A signature for another site is refused.
+    let (_, opt) = json_of(&app, "/integrity/confirm/options", ask.clone(), &session).await;
+    let (cd, ad, sig) = k.sign(
+        opt["publicKey"]["challenge"].as_str().expect("c"),
+        "https://evil.example",
+        rp,
+    );
+    let cred = b64u(&k.cred_id);
+    let answer = |opt: &serde_json::Value, cd: &[u8], ad: &[u8], sig: &[u8]| {
+        serde_json::json!({"csrf": csrf, "handle": opt["handle"], "id": cred,
+            "clientDataJson": b64u(cd), "authenticatorData": b64u(ad), "signature": b64u(sig)})
+    };
+    let (code, _) = json_of(
+        &app,
+        "/integrity/confirm",
+        answer(&opt, &cd, &ad, &sig),
+        &session,
+    )
+    .await;
+    assert_eq!(code, StatusCode::UNAUTHORIZED);
+
+    // The real thing starts the unit once; the same answer cannot be replayed.
+    let (_, opt) = json_of(&app, "/integrity/confirm/options", ask.clone(), &session).await;
+    let (cd, ad, sig) = k.sign(
+        opt["publicKey"]["challenge"].as_str().expect("c"),
+        origin,
+        rp,
+    );
+    let body = answer(&opt, &cd, &ad, &sig);
+    let (code, v) = json_of(&app, "/integrity/confirm", body.clone(), &session).await;
+    assert_eq!(code, StatusCode::OK, "{v}");
+    assert!(
+        v["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("Accept AIDE baseline sent to")
+    );
+    let (code, _) = json_of(&app, "/integrity/confirm", body, &session).await;
+    assert_eq!(code, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        st.db
+            .audit_by_action("HOSTCHECK_BASELINE", 0)
+            .await
+            .expect("audit")
+            .len(),
+        1
+    );
+    assert_eq!(
+        st.db
+            .audit_by_action("HOSTCHECK", 0)
+            .await
+            .expect("audit")
+            .len(),
+        1
+    );
+
+    // There is no systemd for clamv here, so the jobs end with a host-check error, not a crash.
+    let f = clamv_webui::db::jobs::JobFilter {
+        kind: Some("HOSTCHECK".into()),
+        ..Default::default()
+    };
+    let mut done = Vec::new();
+    for _ in 0..100 {
+        done = st.db.list_jobs(&f, 0, 10).await.expect("jobs").0;
+        if done.len() == 2 && done.iter().all(|j| j.finished_at.is_some()) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(done.len(), 2);
+    for j in &done {
+        assert!(
+            j.error_code
+                .as_deref()
+                .unwrap_or("")
+                .starts_with("HOSTCHECK_"),
+            "{j:?}"
+        );
+    }
+}

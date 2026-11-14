@@ -64,7 +64,7 @@ struct CoveragePage {
     threats: Vec<Threat>,
 }
 
-const THREATS: [(&str, &str); 8] = [
+const THREATS: [(&str, &str); 9] = [
     (
         "Malware in stored files",
         "A scanner is up and has scanned this host in the last week.",
@@ -92,6 +92,10 @@ const THREATS: [(&str, &str); 8] = [
     (
         "Suspicious behaviour at runtime",
         "Falco on this host reports to this console.",
+    ),
+    (
+        "Brute force and scans from the network",
+        "CrowdSec's LAPI answers and this host's watcher reports to it.",
     ),
     (
         "Exposed services",
@@ -236,6 +240,28 @@ fn host(
     }
 }
 
+/// CrowdSec: connected, up, and alerts from a watcher with this host's name.
+fn crowdsec(
+    st: &AppState,
+    host: &str,
+    by_machine: &std::collections::HashMap<String, usize>,
+) -> Cell {
+    if !st.crowdsec.configured() {
+        return cell("off", "CROWDSEC_LAPI_URL not set");
+    }
+    let s = st.crowdsec.status();
+    if !s.up {
+        return cell("off", "LAPI unreachable");
+    }
+    match by_machine.get(&host.to_lowercase()) {
+        Some(n) => cell("ok", format!("{n} alert(s) this week")),
+        None => cell(
+            "warn",
+            format!("no alerts from a watcher named {host} this week"),
+        ),
+    }
+}
+
 async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
     let (s, u) = match auth.require(Role::Viewer) {
         Ok(x) => x,
@@ -262,6 +288,10 @@ async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
         .await
         .unwrap_or_default();
     let falco7 = st.db.falco_by_host(now - WEEK).await.unwrap_or_default();
+    let mut cs_hosts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for a in st.crowdsec.alerts(now - WEEK, |_| true) {
+        *cs_hosts.entry(a.machine.to_lowercase()).or_default() += 1;
+    }
 
     // This server: its own clamd endpoints, folders and canaries.
     let eps = endpoints::probe_all(&st, st.db.list_endpoints().await.unwrap_or_default()).await;
@@ -338,7 +368,8 @@ async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
     ];
     cells.push(integrity(&reports, None, now));
     cells.push(falco(&falco30, &falco7, None, now));
-    cells.extend((7..THREATS.len()).map(soon));
+    cells.push(crowdsec(&st, &crate::canary::hostname(), &cs_hosts));
+    cells.extend((8..THREATS.len()).map(soon));
     let mut hosts = vec![host(
         crate::canary::hostname(),
         "this server",
@@ -388,7 +419,8 @@ async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
         ];
         cells.push(integrity(&reports, id, now));
         cells.push(falco(&falco30, &falco7, id, now));
-        cells.extend((7..THREATS.len()).map(soon));
+        cells.push(crowdsec(&st, &a.name, &cs_hosts));
+        cells.extend((8..THREATS.len()).map(soon));
         hosts.push(host(
             a.name.clone(),
             "agent",

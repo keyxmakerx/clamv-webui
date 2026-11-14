@@ -29,6 +29,7 @@ services:
       # - /var/log/rkhunter.log:/var/log/rkhunter.log:ro  # rkhunter report
       # - /var/log/audit:/var/log/audit:ro  # lets canary alerts name who touched them
       # - /var/log/falco:/var/log/falco:ro  # Falco JSON alerts (json_output + file_output)
+      # - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro  # managed AIDE/rkhunter (examples/host-checks)
 
 secrets:
   agent_token:

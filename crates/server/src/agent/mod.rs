@@ -181,6 +181,9 @@ async fn poll(
         tracing::info!(event = "agent.online", agent = %c.agent.name, ip = %ip, version = %version, clamd = clamd_version.as_deref().unwrap_or("-"), "agent connected");
     }
     reconcile(&st, &c.agent, &req.running).await;
+    if let Some(u) = req.host_checks.clone() {
+        st.host_units.set(Some(c.agent.id), u.cleaned());
+    }
     for cs in req
         .canaries
         .iter()
@@ -363,7 +366,12 @@ async fn events(
 }
 
 fn failure_outcome(f: &Failure) -> jobs::Outcome {
+    use crate::hostchecks as hc;
     match f.code.as_str() {
+        hc::NO_BUS => scan::failure(hc::NO_BUS, hc::message(hc::NO_BUS)),
+        hc::DENIED => scan::failure(hc::DENIED, hc::message(hc::DENIED)),
+        hc::NOT_INSTALLED => scan::failure(hc::NOT_INSTALLED, hc::message(hc::NOT_INSTALLED)),
+        hc::FAILED => scan::failure(hc::FAILED, hc::message(hc::FAILED)),
         scan::POLICY_REJECTED => scan::failure(scan::POLICY_REJECTED, scan::PATH_REJECTED),
         scan::CONFIGURATION_UNAVAILABLE => scan::failure(
             scan::CONFIGURATION_UNAVAILABLE,

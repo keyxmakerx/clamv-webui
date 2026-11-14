@@ -28,6 +28,9 @@ pub struct PollRequest {
     /// Whether each canary could be watched, by path.
     #[serde(default)]
     pub canaries: Vec<CanaryState>,
+    /// Which clamv host-check units this host has, read every few minutes.
+    #[serde(default)]
+    pub host_checks: Option<crate::hostchecks::UnitStates>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

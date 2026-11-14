@@ -639,3 +639,45 @@ async fn two_sensors_on_one_host_make_one_incident() {
     assert_eq!(incidents.len(), 1, "notified once");
     assert!(incidents[0].1.starts_with("nas-6|") && incidents[0].1.ends_with("ClamAV+Falco"));
 }
+
+#[tokio::test]
+async fn host_checks_run_only_allow_listed_units() {
+    let srv = server().await;
+    let clamd = fake_clamd().await;
+    let root = std::env::temp_dir().join(format!("clamv-agent-{}", clamv_webui::db::new_id()));
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let root_s = root.to_str().expect("utf8").to_owned();
+    let (agent, token) = srv
+        .st
+        .db
+        .create_agent("vps-1", "admin")
+        .await
+        .expect("agent");
+    let ok = queue(&srv.st, "HOSTCHECK", "aide.check", agent.id).await;
+    let bad = queue(&srv.st, "HOSTCHECK", "/bin/sh -c id", agent.id).await;
+    let cli = agent_cli(&srv.url, &token, clamd, &root_s);
+    let handle = tokio::spawn(clamv_webui::agent::client::run(cli.config));
+    // No systemd for clamv in tests: the allow-listed one fails with a host-check reason.
+    let j = wait_done(&srv.st, &ok.id).await;
+    assert!(
+        j.error_code
+            .as_deref()
+            .unwrap_or("")
+            .starts_with("HOSTCHECK_"),
+        "{j:?}"
+    );
+    let j = wait_done(&srv.st, &bad.id).await;
+    assert_eq!(j.error_code.as_deref(), Some("HOSTCHECK_FAILED"));
+    // The agent tells the server what it found.
+    let mut seen = false;
+    for _ in 0..100 {
+        if srv.st.host_units.get(Some(agent.id)).is_some() {
+            seen = true;
+            break;
+        }
+        srv.st.agents.poke();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(seen);
+    handle.abort();
+}

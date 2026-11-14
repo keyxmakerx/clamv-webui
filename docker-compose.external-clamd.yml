@@ -17,6 +17,8 @@ services:
       # WEBHOOK_URL_FILE: /run/secrets/webhook_url  # alert URLs, comma-separated; ntfy+, gotify+ or slack+ prefix for those
       # WEBHOOK_ALLOWED_CIDRS: 100.82.0.0/16  # needed when the receiver is on the mesh
       # METRICS_TOKEN_FILE: /run/secrets/metrics_token  # enables /metrics for Prometheus
+      # CROWDSEC_LAPI_URL: http://crowdsec:8080  # CrowdSec console; watcher from cscli machines add
+      # CROWDSEC_PASSWORD_FILE: /run/secrets/crowdsec_pw  # that watcher's password
       # OIDC_ISSUER: https://auth.example.lan  # SSO; also set OIDC_CLIENT_ID, OIDC_CLIENT_SECRET_FILE, OIDC_REDIRECT_URI
       # OIDC_ADMIN_GROUPS: clamav-admins  # nobody without a listed group can sign in via SSO
       # LDAP_URL: ldaps://dc.example.lan  # directory sign-in; also LDAP_BIND_DN, LDAP_BIND_PASSWORD_FILE, LDAP_USER_BASE, LDAP_ADMIN_GROUPS
@@ -38,6 +40,7 @@ services:
       # - /var/log/rkhunter.log:/var/log/rkhunter.log:ro  # rkhunter report
       # - /var/log/audit:/var/log/audit:ro  # lets canary alerts name who touched them
       # - /var/log/falco:/var/log/falco:ro  # Falco JSON alerts (json_output + file_output)
+      # - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro  # managed AIDE/rkhunter (examples/host-checks)
       - /documents:/documents:ro
       - /games:/games:ro
 
