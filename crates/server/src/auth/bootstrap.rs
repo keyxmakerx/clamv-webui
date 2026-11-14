@@ -40,7 +40,8 @@ pub async fn ensure_admin(db: &Db, data_dir: &Path, supplied: Option<&str>) -> a
 }
 
 /// Recovery: give `admin` a new one-time password (written to the data dir,
-/// never printed), make it an enabled admin again, and end its sessions.
+/// never printed), make it an enabled admin again, end its sessions, and
+/// remove its second factors (a lost phone is a common reason to reset).
 pub async fn reset_admin(db: &Db, data_dir: &Path) -> anyhow::Result<std::path::PathBuf> {
     let pw = token::random_secret();
     let hash = password::hash(&pw)?;
@@ -48,6 +49,7 @@ pub async fn reset_admin(db: &Db, data_dir: &Path) -> anyhow::Result<std::path::
         Some(u) => {
             db.set_role_enabled(&u.id, Role::Admin, true).await?;
             db.set_password(&u.id, &hash, true, true).await?;
+            db.clear_mfa(&u.id).await?;
         }
         None => {
             db.create_user("admin", &hash, Role::Admin, true).await?;

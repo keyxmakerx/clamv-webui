@@ -23,6 +23,8 @@ pub struct AppState {
     /// Scan submissions per credential (Java `api.v1.scan-rate-limit-per-minute`).
     pub scan_rate: crate::auth::ratelimit::RateLimit,
     pub watcher: crate::watch::Watcher,
+    pub sealer: crate::auth::sealed::Sealer,
+    pub trusted_proxies: Vec<crate::webhook::Cidr>,
     pub notifier: crate::webhook::Notifier,
     pub metrics: crate::metrics::Metrics,
     pub oidc: Option<crate::auth::oidc::Oidc>,
@@ -50,6 +52,16 @@ impl AppState {
                 tracing::error!(event = "oidc.config_invalid", error = %e, "SSO disabled");
                 None
             }),
+            trusted_proxies: cfg
+                .trusted_proxies
+                .iter()
+                .filter_map(|c| crate::webhook::Cidr::parse(c).ok())
+                .collect(),
+            sealer: crate::auth::sealed::Sealer::new(
+                cfg.secret_key_file
+                    .clone()
+                    .unwrap_or_else(|| cfg.data_dir.join("secret.key")),
+            ),
             cfg,
             db,
             lockout: Lockout::new(LockoutPolicy::default()),
@@ -156,8 +168,12 @@ pub fn router(state: Arc<AppState>, cfg: &Config) -> Router {
     let mut app = pages
         .merge(uploads)
         .merge(agents)
-        .with_state(state)
-        .layer(axum::middleware::from_fn(crate::web::csrf::same_origin));
+        .with_state(state.clone())
+        .layer(axum::middleware::from_fn(crate::web::csrf::same_origin))
+        .layer(axum::middleware::from_fn_with_state(
+            state,
+            crate::web::session::resolve_client,
+        ));
     for (name, value) in SECURITY_HEADERS {
         app = app.layer(SetResponseHeaderLayer::overriding(
             HeaderName::from_static(name),
@@ -195,6 +211,9 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     let mut cfg = crate::settings::overlay(cfg, &db.list_settings().await.unwrap_or_default());
     crate::auth::oidc::Oidc::from_config(&cfg)?;
     crate::auth::ldap::Ldap::from_config(&cfg)?;
+    for c in &cfg.trusted_proxies {
+        crate::webhook::Cidr::parse(c).map_err(|e| anyhow::anyhow!("TRUSTED_PROXIES: {e}"))?;
+    }
     if cfg.tls_enabled() {
         cfg.cookie_secure = true;
     }

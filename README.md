@@ -13,6 +13,7 @@ Forked from an earlier Java application, which has been replaced entirely. Licen
 - **Canary files**: decoys that raise an alert (log, audit, webhook) the moment anything opens, changes or deletes them.
 - **Agents**: run the same image with `agent` on other hosts. Each agent scans its own folders with its own clamd and reports back, so one UI covers every machine. Agents connect out to the server, so they need no open port.
 - **Multiple clamd endpoints**, with a status page (signature age, threads, queue) and alerts when clamd goes down or signatures go stale.
+- **Two-factor sign-in**: an authenticator app (TOTP) with recovery codes, and passkeys (fingerprint, face or security key), which also sign in without a password.
 - **Users and roles**: Viewer, Operator, Admin. Local accounts, OIDC single sign-on, and LDAP with roles taken from groups on every sign-in.
 - **API** at `/api/v1` with personal tokens, used by the `clamctl` CLI and MCP server (`cli/`, `docs/CLI.md`, `docs/MCP.md`).
 - **Webhooks** for alerts (any JSON receiver, or Discord), with SSRF protection.
@@ -106,6 +107,9 @@ Canary files: put a tempting decoy (say `/srv/secrets/passwords.kdbx`) somewhere
 | `REQUEST_TIMEOUT_SECS` | `60` | Per-request timeout for UI and API calls |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | unset | Serve HTTPS with your certificate |
 | `TLS_SELF_SIGNED` / `TLS_SELF_SIGNED_NAMES` | `false` / unset | Generate a certificate in `DATA_DIR/tls` for the listed names or IPs |
+| `TRUSTED_PROXIES` | empty | Reverse proxies (CIDRs) whose `X-Forwarded-For`/`-Proto` are believed; see [docs/REVERSE_PROXY.md](docs/REVERSE_PROXY.md) |
+| `PUBLIC_URL` | unset | The address users open, e.g. `https://clamav.example.com`; passkeys are tied to its host name |
+| `SECRET_KEY_FILE` | `DATA_DIR/secret.key` | Key that encrypts stored 2FA secrets; created on first use. Back it up with the database |
 
 ### Webhooks
 
@@ -149,7 +153,7 @@ The Settings page (Admin) can change the scan, retention, watch, webhook-policy 
 
 - Runs as UID 10001 in a read-only container with all capabilities dropped. Scan roots should be mounted read-only; the app never writes to them.
 - Path scans resolve symlinks and must stay inside `SCAN_ROOTS`. clamd endpoints are limited to `CLAMD_HOST_ALLOWLIST`.
-- Passwords use Argon2id. Sessions are server-side with `SameSite=Strict` cookies, CSRF tokens on every form, and login rate limiting.
+- Passwords use Argon2id. Second factors: TOTP seeds are encrypted with `SECRET_KEY_FILE`, codes cannot be replayed, recovery codes are hashed and single-use, five wrong codes end the attempt. Passkeys require user verification and are checked for origin, relying party, signature and counter. Admins can reset a user's second factors; `reset-admin` clears the admin's. Sessions are server-side with `SameSite=Strict` cookies, CSRF tokens on every form, and login rate limiting.
 - A strict Content-Security-Policy (no inline script or style) and the usual security headers on every response.
 - API tokens are stored hashed and shown once. Metrics need a bearer token.
 - Webhook delivery pins the resolved address, refuses private and metadata ranges unless allowed, follows no redirects, and never logs the URL.

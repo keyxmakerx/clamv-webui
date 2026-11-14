@@ -9,6 +9,8 @@ pub mod audit;
 pub mod endpoints;
 pub mod identities;
 pub mod jobs;
+pub mod mfa;
+pub mod passkeys;
 pub mod schedules;
 pub mod sessions;
 pub mod settings;

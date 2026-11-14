@@ -8,7 +8,10 @@ pub mod login;
 pub mod oidc;
 pub mod password;
 pub mod ratelimit;
+pub mod sealed;
 pub mod token;
+pub mod totp;
+pub mod webauthn;
 
 use std::fmt;
 use std::str::FromStr;

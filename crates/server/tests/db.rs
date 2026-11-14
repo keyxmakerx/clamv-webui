@@ -602,3 +602,82 @@ async fn agents_claim_heartbeat_and_delete() {
         db.close().await;
     }
 }
+
+#[tokio::test]
+async fn second_factors_everywhere() {
+    use clamv_webui::auth::Role;
+    for db in databases().await {
+        let kind = db.kind();
+        let name = format!("mfa-{}", &new_id()[..8]);
+        let u = db
+            .create_user(&name, "x", Role::Viewer, false)
+            .await
+            .expect("user");
+        assert_eq!(
+            db.mfa_methods(&u.id).await.expect("q"),
+            (false, 0),
+            "{kind:?}"
+        );
+        let hashes = vec!["a".repeat(64), "b".repeat(64)];
+        db.enable_totp(&u.id, "v1:sealed", 100, &hashes)
+            .await
+            .expect("enable");
+        assert_eq!(db.mfa_methods(&u.id).await.expect("q"), (true, 0));
+        assert!(
+            !db.use_totp_step(&u.id, 100).await.expect("q"),
+            "{kind:?} no replay"
+        );
+        assert!(db.use_totp_step(&u.id, 101).await.expect("q"));
+        assert!(db.use_recovery_code(&u.id, &hashes[0]).await.expect("q"));
+        assert!(
+            !db.use_recovery_code(&u.id, &hashes[0]).await.expect("q"),
+            "{kind:?} once"
+        );
+        assert_eq!(db.recovery_codes_left(&u.id).await.expect("q"), 1);
+
+        let raw = db.create_mfa_pending(&u.id, "UI").await.expect("pending");
+        let p = db.mfa_pending(&raw).await.expect("q").expect("found");
+        for _ in 0..clamv_webui::db::mfa::PENDING_MAX_ATTEMPTS {
+            assert!(db.count_mfa_attempt(&p.id_hash).await.expect("q"));
+        }
+        assert!(
+            !db.count_mfa_attempt(&p.id_hash).await.expect("q"),
+            "{kind:?} capped"
+        );
+
+        db.add_passkey(&u.id, "cred-1", "Laptop", "key", 0)
+            .await
+            .expect("add");
+        assert!(
+            db.add_passkey(&u.id, "cred-1", "Dup", "key", 0)
+                .await
+                .is_err(),
+            "{kind:?} unique"
+        );
+        let k = db.passkey_by_cred("cred-1").await.expect("q").expect("k");
+        assert!(
+            db.use_passkey(&k.id, 0, 0).await.expect("q"),
+            "zero counters allowed"
+        );
+        assert!(db.use_passkey(&k.id, 0, 5).await.expect("q"));
+        assert!(
+            !db.use_passkey(&k.id, 5, 5).await.expect("q"),
+            "{kind:?} counter must grow"
+        );
+        let (h, c) = db.create_challenge("login", None).await.expect("ch");
+        let got = db.take_challenge(&h).await.expect("q").expect("once");
+        assert_eq!(got.challenge, c);
+        assert!(
+            db.take_challenge(&h).await.expect("q").is_none(),
+            "{kind:?} single use"
+        );
+
+        db.clear_mfa(&u.id).await.expect("clear");
+        assert_eq!(
+            db.mfa_methods(&u.id).await.expect("q"),
+            (false, 0),
+            "{kind:?}"
+        );
+        assert!(db.delete_user(&u.id).await.expect("delete"));
+    }
+}

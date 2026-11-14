@@ -69,6 +69,14 @@ pub struct Config {
     #[arg(long, env = "DATA_DIR", default_value = "./data", global = true)]
     pub data_dir: std::path::PathBuf,
 
+    /// Key that encrypts stored secrets (2FA seeds); created in DATA_DIR/secret.key when unset.
+    #[arg(long, env = "SECRET_KEY_FILE", global = true)]
+    pub secret_key_file: Option<std::path::PathBuf>,
+
+    /// Address users open, e.g. https://clamav.example.com; passkeys are bound to its host name.
+    #[arg(long, env = "PUBLIC_URL", global = true)]
+    pub public_url: Option<url::Url>,
+
     /// Database URL: sqlite://, postgres://, mysql:// or mariadb://. Defaults to SQLite in DATA_DIR.
     #[arg(long, env = "DATABASE_URL", hide_env_values = true, global = true)]
     pub database_url: Option<String>,
@@ -163,6 +171,10 @@ pub struct Config {
         global = true
     )]
     pub webhook_allowed_cidrs: Vec<String>,
+
+    /// Reverse proxies (CIDRs) whose X-Forwarded-For and X-Forwarded-Proto are believed. Empty: none.
+    #[arg(long, env = "TRUSTED_PROXIES", value_delimiter = ',', global = true)]
+    pub trusted_proxies: Vec<String>,
 
     /// Let the webhook reach any private, loopback or CGNAT address.
     #[arg(

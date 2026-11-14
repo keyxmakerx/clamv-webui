@@ -54,6 +54,7 @@ struct UserView {
     sso: bool,
     last_login: String,
     is_self: bool,
+    mfa: String,
 }
 
 #[derive(Template)]
@@ -80,9 +81,17 @@ async fn show_users(st: &AppState, nav: Nav, me: &User) -> Response {
             return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
         }
     };
-    let users = list
-        .into_iter()
-        .map(|x| UserView {
+    let mut users = Vec::with_capacity(list.len());
+    for x in list {
+        let (totp, keys) = st.db.mfa_methods(&x.id).await.unwrap_or_default();
+        let mfa = match (totp, keys) {
+            (false, 0) => String::new(),
+            (true, 0) => "app".to_owned(),
+            (false, n) => format!("{n} passkey(s)"),
+            (true, n) => format!("app, {n} passkey(s)"),
+        };
+        users.push(UserView {
+            mfa,
             is_self: x.id == me.id,
             id: x.id,
             username: x.username,
@@ -91,8 +100,8 @@ async fn show_users(st: &AppState, nav: Nav, me: &User) -> Response {
             must_change: x.must_change_password,
             sso: x.password_hash == crate::db::users::NO_PASSWORD,
             last_login: x.last_login_at.map_or_else(|| "never".to_owned(), fmt_ts),
-        })
-        .collect();
+        });
+    }
     let status = if nav.error.is_some() {
         StatusCode::BAD_REQUEST
     } else {

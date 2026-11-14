@@ -61,11 +61,123 @@ impl Auth {
     }
 }
 
-/// Socket peer address. Forwarded headers are ignored (audit S1).
+/// The client as resolved by `resolve_client`: forwarded headers count only
+/// when the socket peer is in TRUSTED_PROXIES (audit S1).
+#[derive(Clone, Copy, Debug)]
+pub struct ClientIp(pub IpAddr);
+
+/// Set when a trusted proxy says the browser used HTTPS.
+#[derive(Clone, Copy, Debug)]
+pub struct ForwardedHttps;
+
 pub fn client_ip(parts_ext: &axum::http::Extensions) -> IpAddr {
+    if let Some(c) = parts_ext.get::<ClientIp>() {
+        return c.0;
+    }
+    peer_ip(parts_ext)
+}
+
+fn peer_ip(parts_ext: &axum::http::Extensions) -> IpAddr {
     parts_ext
         .get::<ConnectInfo<SocketAddr>>()
         .map_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED), |c| c.0.ip())
+}
+
+/// Whether a trusted proxy reported HTTPS for this request (headers only; see `resolve_client`).
+pub fn forwarded_https(st: &AppState, h: &HeaderMap) -> bool {
+    !st.trusted_proxies.is_empty() && h.get("x-clamv-forwarded-https").is_some()
+}
+
+fn trusted(list: &[crate::webhook::Cidr], ip: IpAddr) -> bool {
+    list.iter().any(|c| c.contains(ip))
+}
+
+/// The client address: walk X-Forwarded-For from the right, skipping trusted
+/// proxies; the first untrusted hop is the client.
+pub fn forwarded_client(list: &[crate::webhook::Cidr], peer: IpAddr, xff: Option<&str>) -> IpAddr {
+    if !trusted(list, peer) {
+        return peer;
+    }
+    let Some(xff) = xff else { return peer };
+    let mut client = peer;
+    for hop in xff.rsplit(',').map(str::trim) {
+        let Ok(ip) = hop.trim_matches(|c| c == '[' || c == ']').parse::<IpAddr>() else {
+            // A malformed entry: stop at the last good address.
+            break;
+        };
+        client = ip;
+        if !trusted(list, ip) {
+            break;
+        }
+    }
+    client
+}
+
+/// Resolve the client address and scheme once per request. With HTTPS from a
+/// trusted proxy, every cookie set in the response is marked Secure.
+pub async fn resolve_client(
+    axum::extract::State(st): axum::extract::State<Arc<AppState>>,
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    // Never accept this marker from outside.
+    req.headers_mut().remove("x-clamv-forwarded-https");
+    let peer = peer_ip(req.extensions());
+    let mut https = false;
+    if trusted(&st.trusted_proxies, peer) {
+        let xff = req
+            .headers()
+            .get_all("x-forwarded-for")
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .collect::<Vec<_>>()
+            .join(",");
+        let ip = forwarded_client(
+            &st.trusted_proxies,
+            peer,
+            (!xff.is_empty()).then_some(xff.as_str()),
+        );
+        req.extensions_mut().insert(ClientIp(ip));
+        https = req
+            .headers()
+            .get("x-forwarded-proto")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(',').next())
+            .is_some_and(|p| p.trim().eq_ignore_ascii_case("https"));
+        if https {
+            req.extensions_mut().insert(ForwardedHttps);
+            req.headers_mut().insert(
+                "x-clamv-forwarded-https",
+                axum::http::HeaderValue::from_static("1"),
+            );
+        }
+    } else {
+        req.extensions_mut().insert(ClientIp(peer));
+    }
+    let mut res = next.run(req).await;
+    if https {
+        let cookies: Vec<_> = res
+            .headers_mut()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .cloned()
+            .collect();
+        if !cookies.is_empty() {
+            res.headers_mut().remove(header::SET_COOKIE);
+            for c in cookies {
+                let s = c.to_str().unwrap_or_default();
+                let v = if s.contains("; Secure") {
+                    s.to_owned()
+                } else {
+                    format!("{s}; Secure")
+                };
+                if let Ok(hv) = v.parse() {
+                    res.headers_mut().append(header::SET_COOKIE, hv);
+                }
+            }
+        }
+    }
+    res
 }
 
 pub fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -94,6 +206,39 @@ pub fn clear_cookie(secure: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn forwarded_for_is_only_believed_from_trusted_proxies() {
+        let list = vec![crate::webhook::Cidr::parse("10.0.0.0/8").expect("cidr")];
+        let ip = |s: &str| s.parse::<IpAddr>().expect("ip");
+        // Untrusted peer: headers ignored.
+        assert_eq!(
+            forwarded_client(&list, ip("203.0.113.9"), Some("1.2.3.4")),
+            ip("203.0.113.9")
+        );
+        // Trusted proxy: the client it reports.
+        assert_eq!(
+            forwarded_client(&list, ip("10.0.0.2"), Some("198.51.100.7")),
+            ip("198.51.100.7")
+        );
+        // A forged left-most entry does not win over the real hop.
+        assert_eq!(
+            forwarded_client(
+                &list,
+                ip("10.0.0.2"),
+                Some("6.6.6.6, 198.51.100.7, 10.0.0.3")
+            ),
+            ip("198.51.100.7")
+        );
+        assert_eq!(
+            forwarded_client(&list, ip("10.0.0.2"), Some("junk")),
+            ip("10.0.0.2")
+        );
+        assert_eq!(
+            forwarded_client(&list, ip("10.0.0.2"), None),
+            ip("10.0.0.2")
+        );
+    }
 
     #[test]
     fn parses_cookie_header() {

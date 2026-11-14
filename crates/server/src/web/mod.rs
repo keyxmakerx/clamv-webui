@@ -6,7 +6,9 @@ pub mod clamdconf;
 pub mod csrf;
 pub mod endpoints;
 pub mod integrations;
+pub mod mfa;
 pub mod oidc;
+pub mod passkeys;
 pub mod scan;
 pub mod schedules;
 pub mod session;
@@ -59,6 +61,8 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(integrations::routes())
         .merge(settings::routes())
         .merge(oidc::routes())
+        .merge(mfa::routes())
+        .merge(passkeys::routes())
         .route("/{*path}", get(asset))
 }
 
@@ -249,10 +253,7 @@ async fn login(
                 );
             }
         };
-        return match begin_session(&st, auth, &user, &req_parts, "LDAP").await {
-            Ok((cookie, to)) => ([(header::SET_COOKIE, cookie)], Redirect::to(to)).into_response(),
-            Err(r) => r,
-        };
+        return mfa::after_password(&st, auth, &user, &req_parts, "LDAP").await;
     }
     let user = match crate::auth::login::authenticate(
         &st,
@@ -276,10 +277,7 @@ async fn login(
             return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
         }
     };
-    match begin_session(&st, auth, &user, &req_parts, "UI").await {
-        Ok((cookie, to)) => ([(header::SET_COOKIE, cookie)], Redirect::to(to)).into_response(),
-        Err(r) => r,
-    }
+    mfa::after_password(&st, auth, &user, &req_parts, "UI").await
 }
 
 /// Create a fresh session (no fixation), audit the login, and return the cookie and landing page.

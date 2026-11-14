@@ -181,3 +181,51 @@ CREATE TABLE agents (
     CONSTRAINT uk_agents_name UNIQUE (name),
     CONSTRAINT uk_agents_token UNIQUE (token_hash)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE user_totp (
+    user_id VARCHAR(36) PRIMARY KEY,
+    secret VARCHAR(255) NOT NULL,
+    last_step BIGINT NOT NULL,
+    created_at BIGINT NOT NULL,
+    CONSTRAINT fk_totp_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE recovery_codes (
+    user_id VARCHAR(36) NOT NULL,
+    code_hash VARCHAR(64) NOT NULL,
+    used_at BIGINT,
+    PRIMARY KEY (user_id, code_hash),
+    CONSTRAINT fk_recovery_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE mfa_pending (
+    id_hash VARCHAR(64) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL,
+    transport VARCHAR(16) NOT NULL,
+    attempts BIGINT NOT NULL,
+    expires_at BIGINT NOT NULL,
+    CONSTRAINT fk_mfa_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE INDEX idx_mfa_expires ON mfa_pending(expires_at);
+
+CREATE TABLE passkeys (
+    id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL,
+    cred_id VARCHAR(512) NOT NULL,
+    name VARCHAR(64) NOT NULL,
+    public_key TEXT NOT NULL,
+    sign_count BIGINT NOT NULL,
+    created_at BIGINT NOT NULL,
+    last_used_at BIGINT,
+    CONSTRAINT uk_passkeys_cred UNIQUE (cred_id),
+    CONSTRAINT fk_passkeys_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE INDEX idx_passkeys_user ON passkeys(user_id);
+
+CREATE TABLE webauthn_challenges (
+    id_hash VARCHAR(64) PRIMARY KEY,
+    purpose VARCHAR(16) NOT NULL,
+    user_id VARCHAR(36),
+    challenge VARCHAR(64) NOT NULL,
+    expires_at BIGINT NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;

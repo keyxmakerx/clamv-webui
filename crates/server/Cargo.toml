@@ -39,12 +39,19 @@ webpki-roots = "1"
 url = "2"
 ring = "0.17"
 ldap3 = { version = "0.12", default-features = false, features = ["tls-rustls-ring"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+ciborium = { version = "0.2", default-features = false, features = ["std"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 inotify = "0.11"
 futures-core = "0.3"
 
+[features]
+# Software authenticator for integration tests; never enabled in builds.
+testkit = []
+
 [dev-dependencies]
+clamv-webui = { path = ".", features = ["testkit"] }
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
 

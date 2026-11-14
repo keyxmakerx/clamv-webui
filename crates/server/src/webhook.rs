@@ -46,13 +46,13 @@ impl Event {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Cidr {
+pub struct Cidr {
     net: IpAddr,
     bits: u8,
 }
 
 impl Cidr {
-    fn parse(s: &str) -> Result<Self, String> {
+    pub fn parse(s: &str) -> Result<Self, String> {
         let s = s.trim();
         let (ip, bits) = match s.split_once('/') {
             Some((ip, b)) => (ip, Some(b)),
@@ -71,7 +71,7 @@ impl Cidr {
         Ok(Self { net, bits })
     }
 
-    fn contains(&self, ip: IpAddr) -> bool {
+    pub fn contains(&self, ip: IpAddr) -> bool {
         match (self.net, canonical(ip)) {
             (IpAddr::V4(n), IpAddr::V4(a)) => {
                 let mask = u32::MAX.checked_shl(32 - u32::from(self.bits)).unwrap_or(0);
