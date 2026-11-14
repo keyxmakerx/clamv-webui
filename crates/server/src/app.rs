@@ -46,6 +46,8 @@ pub struct AppState {
     pub firewalls: crate::firewall::Snapshots,
     /// Passkey confirmations in flight: challenge handle to (user, host, action, expiry).
     pub stepups: std::sync::Mutex<std::collections::HashMap<String, Stepup>>,
+    /// `admin` still has its generated one-time password, so sign-in points to the file.
+    pub first_start: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Debug, Clone)]
@@ -114,6 +116,7 @@ impl AppState {
             host_units: crate::hostchecks::States::default(),
             firewalls: crate::firewall::Snapshots::default(),
             stepups: std::sync::Mutex::default(),
+            first_start: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -270,6 +273,11 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     .await?;
     seed_endpoint(&db, &cfg).await?;
     let state = Arc::new(AppState::new(cfg.clone(), db.clone()));
+    if let Ok(Some(a)) = db.user_by_username("admin").await {
+        state
+            .first_start
+            .store(a.must_change_password, std::sync::atomic::Ordering::Relaxed);
+    }
     spawn_housekeeping(state.clone());
     crate::scan::start(state.clone()).await;
     crate::schedule::spawn(state.clone());

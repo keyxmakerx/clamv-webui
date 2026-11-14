@@ -217,9 +217,9 @@ pub(crate) struct LoginPage {
     pub first_start: bool,
 }
 
-/// True while `bootstrap-admin-password` exists, so the sign-in page can point to it.
+/// True until `admin` replaces its one-time password, so the sign-in page can point to the file.
 pub(crate) fn bootstrap_file_present(st: &AppState) -> bool {
-    st.cfg.data_dir.join("bootstrap-admin-password").exists()
+    st.first_start.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 #[derive(Deserialize)]
@@ -534,6 +534,10 @@ async fn change_password(
     if let Err(e) = st.db.set_password(&u.id, &hash, false, true).await {
         tracing::error!(error = %e, "password update failed");
         return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+    }
+    if u.username == "admin" {
+        st.first_start
+            .store(false, std::sync::atomic::Ordering::Relaxed);
     }
     st.db
         .audit(AuditEntry {
