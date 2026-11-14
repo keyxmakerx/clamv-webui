@@ -166,10 +166,6 @@ It adds a `clamv` user with the containers' uid (10001, or `--uid`), the units `
 
 Then mount `/run/dbus/system_bus_socket` read-only and `/var/lib/clamv/firewall` read-write into the clamv or agent container. Reports still reach clamv through `AIDE_LOG` and `RKHUNTER_LOG`.
 
-| Variable | Default | What |
-|---|---|---|
-| `FIREWALL_DIR` | `/var/lib/clamv/firewall` | Where the snapshot, plan and apply status are exchanged with the host's units. |
-
 The firewall plan only narrows: each rule lets the listed networks reach a port and drops everyone else, in clamv's own `inet clamv` table at priority -5, after established traffic and loopback. Ports published by Docker go through Docker's own chains first and are best limited in compose. clamv refuses a plan that closes SSH to everyone or blocks its own port for your address, and iptables-legacy rules, which nftables cannot override, are flagged.
 
 ### Metrics

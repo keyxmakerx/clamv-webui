@@ -374,7 +374,7 @@ async fn confirm_firewall(a: &Agent) {
         }
         return;
     }
-    if !crate::firewall::waiting(&a.cfg.firewall_dir, &h) {
+    if !crate::firewall::waiting(crate::firewall::dir(), &h) {
         return;
     }
     let Ok(url) = a.base.join("healthz") else {
@@ -388,7 +388,7 @@ async fn confirm_firewall(a: &Agent) {
         .await
         .is_ok_and(|r| r.status().is_success());
     if reached {
-        crate::firewall::confirm(&a.cfg.firewall_dir, &h);
+        crate::firewall::confirm(crate::firewall::dir(), &h);
         tracing::info!(event = "firewall.confirmed", hash = %h, "firewall plan confirmed: a new connection still reaches the server");
         if let Ok(mut g) = a.firewall_pending.lock() {
             *g = None;
@@ -401,7 +401,7 @@ async fn firewall_job(a: &Arc<Agent>, j: &Assignment) -> ResultRequest {
     let Ok(op) = serde_json::from_str::<crate::firewall::Op>(&j.target) else {
         return fail(crate::hostchecks::FAILED);
     };
-    let dir = a.cfg.firewall_dir.clone();
+    let dir = crate::firewall::dir().to_path_buf();
     let r = match op {
         crate::firewall::Op::Snapshot => match crate::firewall::snapshot(&dir).await {
             Ok(snapshot) => {
@@ -445,14 +445,14 @@ async fn firewall_job(a: &Arc<Agent>, j: &Assignment) -> ResultRequest {
 }
 
 async fn firewall_snapshot(a: &Agent) {
-    match crate::firewall::snapshot(&a.cfg.firewall_dir).await {
+    match crate::firewall::snapshot(crate::firewall::dir()).await {
         Ok(snapshot) => send_event(a, &AgentEvent::Firewall { snapshot }).await,
         Err(e) => tracing::debug!(error = %e.message, "firewall snapshot failed"),
     }
 }
 
 fn spawn_firewall(a: Arc<Agent>) {
-    if !a.cfg.firewall_dir.is_dir() {
+    if !crate::firewall::dir().is_dir() {
         return;
     }
     tokio::spawn(async move {

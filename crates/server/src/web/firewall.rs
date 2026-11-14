@@ -121,10 +121,10 @@ async fn page(State(st): State<Arc<AppState>>, auth: Auth, Query(q): Query<HostQ
         if let Some((hash, user, at)) = pending
             && user == u.id
         {
-            let dir = crate::firewall::dir(&st);
+            let dir = crate::firewall::dir();
             let live = crate::db::now_ms() - at < CONFIRM_MS;
-            if live && crate::firewall::waiting(&dir, &hash) {
-                crate::firewall::confirm(&dir, &hash);
+            if live && crate::firewall::waiting(dir, &hash) {
+                crate::firewall::confirm(dir, &hash);
                 tracing::info!(event = "firewall.confirmed", user = %u.username, hash = %hash, "firewall plan confirmed from the browser");
                 nav.success = Some("Plan confirmed: you can still reach this server.".into());
                 clear_pending(&st);
@@ -283,7 +283,7 @@ async fn show(st: &AppState, nav: Nav, host: Option<i64>) -> Response {
                 crate::firewall::body(&plan.rules)
             ),
             pending,
-            dir: st.cfg.firewall_dir.display().to_string(),
+            dir: crate::firewall::DIR.to_owned(),
             nav,
         },
     )
@@ -574,7 +574,7 @@ pub(super) async fn apply_plan(
     let n = rules.len();
     let msg = match host {
         None => {
-            let h = crate::firewall::apply(&crate::firewall::dir(st), rules)
+            let h = crate::firewall::apply(crate::firewall::dir(), rules)
                 .await
                 .map_err(|e| format!("{} ({})", crate::hostchecks::message(e.code), e.message))?;
             if let Ok(mut g) = st.firewalls.pending.lock() {

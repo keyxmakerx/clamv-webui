@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::net::IpAddr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -417,14 +417,16 @@ impl Snapshots {
     }
 }
 
-/// Where this server's firewall files live.
-pub fn dir(st: &AppState) -> PathBuf {
-    st.cfg.firewall_dir.clone()
+/// Shared with the host's firewall units, which use this fixed path too.
+pub const DIR: &str = "/var/lib/clamv/firewall";
+
+pub fn dir() -> &'static Path {
+    Path::new(DIR)
 }
 
 /// Refresh this server's snapshot.
 pub async fn refresh_here(st: &AppState) -> Result<(), crate::hostchecks::RunError> {
-    let raw = snapshot(&dir(st)).await?;
+    let raw = snapshot(dir()).await?;
     st.firewalls.set(None, raw);
     Ok(())
 }
@@ -435,7 +437,7 @@ pub fn spawn(st: Arc<AppState>) {
         let mut t = tokio::time::interval(Duration::from_secs(900));
         loop {
             t.tick().await;
-            if dir(&st).is_dir()
+            if dir().is_dir()
                 && let Err(e) = refresh_here(&st).await
             {
                 tracing::debug!(error = %e.message, "firewall snapshot failed");

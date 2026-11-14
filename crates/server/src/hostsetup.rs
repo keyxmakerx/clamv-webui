@@ -155,7 +155,7 @@ pub async fn run(h: &HostSetup) -> anyhow::Result<()> {
         std::os::unix::fs::chown(&fw, Some(h.uid), Some(0))?;
         std::fs::set_permissions(&fw, std::fs::Permissions::from_mode(0o750))?;
     }
-    println!("  /{FIREWALL_DIR} (owner {}, 0750)", h.uid);
+    println!("  /{FIREWALL_DIR} (owned by clamv, 0750)");
     imp::reload(&bus, clamv.is_none().then_some(h.root.as_path())).await?;
     if passwd(&h.root, h.uid).0 != Some(h.uid) {
         bail!(

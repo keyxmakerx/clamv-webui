@@ -214,15 +214,6 @@ pub struct Config {
     )]
     pub falco_min_priority: String,
 
-    /// Folder shared with the host's clamv firewall units (examples/host-checks); mount it read-write.
-    #[arg(
-        long,
-        env = "FIREWALL_DIR",
-        default_value = "/var/lib/clamv/firewall",
-        global = true
-    )]
-    pub firewall_dir: std::path::PathBuf,
-
     /// CrowdSec Local API, e.g. http://crowdsec:8080; turns on the CrowdSec pages.
     #[arg(long, env = "CROWDSEC_LAPI_URL", global = true)]
     pub crowdsec_lapi_url: Option<String>,
