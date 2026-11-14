@@ -291,3 +291,57 @@ impl Db {
             .await?)
     }
 }
+
+/// Latest finished job of one kind on one host (`agent_id` None is this server).
+#[derive(Debug, Clone)]
+pub struct HostActivity {
+    pub agent_id: Option<i64>,
+    pub kind: String,
+    pub last: i64,
+}
+
+impl Db {
+    pub async fn host_activity(&self, since: i64) -> Result<Vec<HostActivity>, DbError> {
+        let rows = sqlx::query(self.sql(
+            "SELECT agent_id, kind, MAX(submitted_at) AS last FROM scan_jobs \
+             WHERE status = 'FINISHED' AND submitted_at >= ? GROUP BY agent_id, kind",
+        ))
+        .bind(since)
+        .fetch_all(self.pool())
+        .await?;
+        rows.iter()
+            .map(|r| {
+                Ok(HostActivity {
+                    agent_id: r.try_get("agent_id")?,
+                    kind: r.try_get("kind")?,
+                    last: r.try_get("last")?,
+                })
+            })
+            .collect()
+    }
+
+    /// Recent EICAR control results, newest first: (host, verdict, at).
+    pub async fn recent_controls(
+        &self,
+        since: i64,
+    ) -> Result<Vec<(Option<i64>, String, i64)>, DbError> {
+        let rows = sqlx::query(self.sql(
+            "SELECT agent_id, verdict, submitted_at FROM scan_jobs \
+             WHERE kind = 'CONTROL' AND status = 'FINISHED' AND submitted_at >= ? \
+             ORDER BY submitted_at DESC LIMIT 500",
+        ))
+        .bind(since)
+        .fetch_all(self.pool())
+        .await?;
+        rows.iter()
+            .map(|r| {
+                Ok((
+                    r.try_get("agent_id")?,
+                    r.try_get::<Option<String>, _>("verdict")?
+                        .unwrap_or_default(),
+                    r.try_get("submitted_at")?,
+                ))
+            })
+            .collect()
+    }
+}

@@ -60,3 +60,20 @@ a.kpi:hover{transform:translateY(-2px);border-color:var(--accent)}
 time[data-local]{white-space:nowrap}
 html{background:var(--bg0)}
 body{min-height:100vh;background-attachment:fixed}
+/* Coverage */
+.cov-table th,.cov-table td{vertical-align:top}
+.cov-threat{min-width:200px}
+.cov-threat small{display:block;color:var(--muted);font-weight:400}
+.cov{display:inline-flex;align-items:flex-start;gap:6px;font-size:.84rem;line-height:1.3}
+.cov::before{content:"";flex:none;width:10px;height:10px;border-radius:50%;margin-top:.25em;background:var(--muted)}
+.cov-ok::before{background:var(--success)}
+.cov-warn::before{background:var(--warn)}
+.cov-off::before{background:var(--danger)}
+.cov-soon{color:var(--muted)}
+.cov-soon::before{background:transparent;border:1px dashed var(--muted)}
+.host-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.host-card ul{list-style:none;padding:0;margin:.5rem 0 0;display:flex;flex-direction:column;gap:6px}
+.host-card li{display:grid;grid-template-columns:1fr;gap:1px}
+.host-card .label{font-size:.8rem;color:var(--muted)}
+.host-score{font-variant-numeric:tabular-nums;font-size:1.4rem}
+.host-meta{font-size:.8rem;color:var(--muted);word-break:break-word}

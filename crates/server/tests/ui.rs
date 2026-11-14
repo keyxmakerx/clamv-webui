@@ -295,6 +295,7 @@ async fn route_table_by_role() {
     let pages: &[(&str, Role)] = &[
         ("/dashboard", Role::Viewer),
         ("/clamd", Role::Viewer),
+        ("/coverage", Role::Viewer),
         ("/admin/users", Role::Admin),
         ("/admin/audit", Role::Admin),
         ("/admin/endpoints", Role::Admin),
@@ -908,5 +909,15 @@ async fn admin_manages_canaries_per_host() {
         .expect("res");
     assert!(body(res).await.contains("left in place"));
     assert_eq!(st.db.list_canaries().await.expect("q").len(), 1);
+    // Coverage lists this server and the agent, with the agent's canary waiting for it.
+    let res = app
+        .clone()
+        .oneshot(get("/coverage", Some(&c)))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::OK);
+    let html = body(res).await;
+    assert!(html.contains("edge-1") && html.contains("this server"));
+    assert!(html.contains("Ransomware and snooping") && html.contains("1 missing"));
     let _ = std::fs::remove_dir_all(&base);
 }
