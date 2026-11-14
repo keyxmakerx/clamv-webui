@@ -118,9 +118,15 @@ pub struct Nav {
     pub csrf: String,
     pub error: Option<String>,
     pub success: Option<String>,
+    pub lang: &'static str,
 }
 
 impl Nav {
+    /// `s` in this user's language.
+    pub fn t<'a>(&self, s: &'a str) -> &'a str {
+        crate::i18n::t(self.lang, s)
+    }
+
     pub fn new(page: &'static str, s: &crate::db::sessions::Session, u: &User) -> Self {
         Self {
             page,
@@ -131,6 +137,7 @@ impl Nav {
             csrf: s.csrf_token.clone(),
             error: None,
             success: None,
+            lang: s.lang,
         }
     }
 }

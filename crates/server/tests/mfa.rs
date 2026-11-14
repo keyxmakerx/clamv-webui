@@ -853,3 +853,53 @@ async fn host_check_baselines_need_a_fresh_passkey() {
         1
     );
 }
+
+#[tokio::test]
+async fn language_is_picked_from_the_cookie_or_the_browser() {
+    let (app, _) = app(&[]).await;
+    let res = sign_in(&app).await;
+    let session = pair(&cookies(&res)[0]);
+    let page = text(
+        app.clone()
+            .oneshot(get("/account/security", &session))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(page.contains("<html lang=\"en\">"));
+    assert!(page.contains("name=\"lang\""), "picker on the account page");
+    let csrf = csrf_of(&page);
+
+    let res = app
+        .clone()
+        .oneshot(form("/account/language", "_csrf=bad&lang=en", &session))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::FORBIDDEN, "CSRF checked");
+
+    let res = app
+        .clone()
+        .oneshot(form(
+            "/account/language",
+            &format!("_csrf={csrf}&lang=en"),
+            &session,
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let set = res.headers()[header::SET_COOKIE].to_str().expect("ascii");
+    assert!(set.starts_with("clamv_lang=en;") && set.contains("SameSite=Strict"));
+
+    // An unknown choice clears it, falling back to the browser's language.
+    let res = app
+        .clone()
+        .oneshot(form(
+            "/account/language",
+            &format!("_csrf={csrf}&lang=../../x"),
+            &session,
+        ))
+        .await
+        .expect("res");
+    let set = res.headers()[header::SET_COOKIE].to_str().expect("ascii");
+    assert!(set.starts_with("clamv_lang=;") && set.contains("Max-Age=0"));
+}

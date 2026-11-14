@@ -22,6 +22,7 @@ pub mod fsevents;
 pub mod healthcheck;
 pub mod hostchecks;
 pub mod hostsetup;
+pub mod i18n;
 pub mod integrity;
 pub mod logging;
 pub mod metrics;

@@ -208,6 +208,10 @@ Off until `QUARANTINE_DIR` is set (on the server, or on an agent that also allow
 
 The Settings page (Admin) can change the scan, retention, watch, webhook-policy and session tunables at runtime. A value set by an environment variable or flag is locked there. Changes are audited.
 
+### Languages
+
+Each user picks a language under **Account**; otherwise the browser's language is used, then English. Only English ships for now. To add one, copy `crates/server/i18n/en.json` to `<code>.json`, translate the values and add a line to `LANGS` in `src/i18n.rs`; missing strings show in English. The shell is wrapped so far; page text moves into the catalog as it is translated.
+
 ## Security model
 
 - Runs as UID 10001 in a read-only container with all capabilities dropped. Scan roots should be mounted read-only; the app never writes to them unless quarantine is turned on.

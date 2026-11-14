@@ -14,6 +14,8 @@ pub struct Session {
     pub created_at: i64,
     pub last_seen_at: i64,
     pub expires_at: i64,
+    /// UI language for this request; set by the web layer, not stored.
+    pub lang: &'static str,
 }
 
 impl Db {
@@ -34,6 +36,7 @@ impl Db {
             created_at: now,
             last_seen_at: now,
             expires_at: now.saturating_add(ttl_ms),
+            lang: "en",
         };
         let ua: Option<String> = user_agent.map(|u| u.chars().take(255).collect());
         sqlx::query(self.sql(
@@ -76,6 +79,7 @@ impl Db {
             created_at: row.try_get("created_at")?,
             last_seen_at: row.try_get("last_seen_at")?,
             expires_at: row.try_get("expires_at")?,
+            lang: "en",
         };
         if s.expires_at <= now || now.saturating_sub(s.last_seen_at) > idle_ms {
             self.delete_session_by_hash(&s.id_hash).await?;

@@ -33,7 +33,19 @@ impl FromRequestParts<Arc<AppState>> for Auth {
             .session_user(&raw, state.cfg.session_idle_ms())
             .await
         {
-            Ok(found) => Ok(Auth(found)),
+            Ok(found) => {
+                let lang = crate::i18n::pick(
+                    cookie(&parts.headers, crate::i18n::COOKIE).as_deref(),
+                    parts
+                        .headers
+                        .get(header::ACCEPT_LANGUAGE)
+                        .and_then(|v| v.to_str().ok()),
+                );
+                Ok(Auth(found.map(|(mut s, u)| {
+                    s.lang = lang;
+                    (s, u)
+                })))
+            }
             Err(e) => {
                 tracing::error!(error = %e, "session lookup failed");
                 Err(StatusCode::SERVICE_UNAVAILABLE.into_response())

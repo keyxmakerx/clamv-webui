@@ -28,6 +28,7 @@ pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/login/2fa", get(second_page).post(second_submit))
         .route("/account/security", get(security_page))
+        .route("/account/language", post(set_language))
         .route("/account/2fa/setup", post(setup))
         .route("/account/2fa/enable", post(enable))
         .route("/account/2fa/disable", post(disable))
@@ -416,6 +417,39 @@ async fn security_page(State(st): State<Arc<AppState>>, auth: Auth) -> Response 
         Err(r) => return r,
     };
     security(&st, &s, &u, None, None, None, Vec::new()).await
+}
+
+#[derive(Deserialize)]
+struct LangForm {
+    #[serde(rename = "_csrf")]
+    csrf: Option<String>,
+    #[serde(default)]
+    lang: String,
+}
+
+/// Remembers the language in a cookie; an empty or unknown choice goes back to the browser's.
+async fn set_language(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    Form(f): Form<LangForm>,
+) -> Response {
+    if let Err(r) = signed_in(auth, f.csrf.as_deref()) {
+        return r;
+    }
+    let (value, age) = match crate::i18n::known(&f.lang) {
+        Some(code) => (code, 31_536_000),
+        None => ("", 0),
+    };
+    let cookie = format!(
+        "{}={value}; Path=/; HttpOnly; SameSite=Strict; Max-Age={age}{}",
+        crate::i18n::COOKIE,
+        if st.cfg.cookie_secure { "; Secure" } else { "" }
+    );
+    (
+        [(header::SET_COOKIE, cookie)],
+        Redirect::to("/account/security"),
+    )
+        .into_response()
 }
 
 #[derive(Deserialize)]
