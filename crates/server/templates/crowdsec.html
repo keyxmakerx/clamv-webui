@@ -1,0 +1,38 @@
+{% extends "shell.html" %}
+{% block head %}<meta http-equiv="refresh" content="60">{% endblock %}
+{% block title %}CrowdSec · ClamAV Web UI{% endblock %}
+{% block content %}
+{% let tab = "overview" %}{% include "crowdsec_head.html" %}
+{% if status.configured %}
+<div class="d-flex align-items-center gap-2 flex-wrap mb-2"><nav class="seg" aria-label="Time range">{% for (v, l) in [("1h", "1 h"), ("24h", "24 h"), ("7d", "7 days"), ("30d", "30 days")] %}<a class="seg-btn{% if range == *v %} active{% endif %}" href="/crowdsec?range={{ v }}"{% if range == *v %} aria-current="page"{% endif %}>{{ l }}</a>{% endfor %}</nav>
+{% if !last_ok.is_empty() %}<span class="small muted">read {{ last_ok }} ago</span>{% endif %}</div>
+<div class="kpi-grid">
+{% for k in kpis %}{% if k.href.is_empty() %}<div class="kpi{% if !k.tone.is_empty() %} kpi-{{ k.tone }}{% endif %}">{% else %}<a class="kpi{% if !k.tone.is_empty() %} kpi-{{ k.tone }}{% endif %}" href="{{ k.href }}">{% endif %}
+<span class="kpi-label">{{ k.label }}</span><strong class="kpi-value">{{ k.value }}</strong>
+{% if k.href.is_empty() %}</div>{% else %}</a>{% endif %}{% endfor %}
+</div>
+<div class="grid-two mt-3 cs-top">
+<section class="card"><div class="card-body"><h2 class="h5">Attack map</h2>
+<div class="map-wrap">{{ map|safe }}</div>
+<div class="chart-legend small legend-dot"><span class="lg lg-hit"></span>alerts <span class="lg lg-ban"></span>banned now · click a dot for that country</div>
+</div></section>
+<section class="card"><div class="card-body"><h2 class="h5">Alerts over time</h2>
+<div class="chart-wrap">{{ chart|safe }}</div>
+<div class="chart-legend small"><span class="lg lg-hit"></span>alerts <span class="lg lg-ok"></span>simulated</div>
+</div></section>
+</div>
+<div class="grid-three mt-3">
+{% for (title, list) in self.tops() %}
+<section class="card"><div class="card-body"><h2 class="h6">{{ title }}</h2>
+{% for t in list %}<a class="toprow" href="{{ t.href }}"><span class="toprow-label text-break">{{ t.label }}</span><span class="toprow-n">{{ t.count }}</span><progress value="{{ t.count }}" max="{{ t.max }}"></progress></a>{% else %}<p class="muted small mb-0">Nothing in this period.</p>{% endfor %}
+</div></section>{% endfor %}
+</div>
+<section class="card mt-3"><div class="card-body table-responsive">
+<h2 class="h5">Latest alerts <a class="small" href="/crowdsec/alerts?range={{ range }}">all alerts</a></h2>
+<table class="table table-sm align-middle"><thead><tr><th>When</th><th>Source</th><th>Scenario</th><th>Target</th></tr></thead><tbody>
+{% for a in recent %}<tr><td class="small text-nowrap">{{ a.at }}</td><td class="small"><code>{{ a.source }}</code>{% if !a.country.is_empty() %} <span class="badge bg-secondary">{{ a.country }}</span>{% endif %}<div class="muted">{{ a.as_name }}</div></td>
+<td class="small">{{ a.scenario }}{% if a.simulated %} <span class="badge bg-info text-dark">simulated</span>{% endif %}</td><td class="small">{{ a.machine }}</td></tr>
+{% else %}<tr><td colspan="4" class="muted">No alerts in this period.</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,909 @@
+//! Scan submission (upload and path) and the job pages. OPERATOR and up.
+
+use std::sync::Arc;
+
+use askama::Template;
+use axum::Router;
+use axum::extract::multipart::Field;
+use axum::extract::{Form, Multipart, Path, Query, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Redirect, Response};
+use axum::routing::{get, post};
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use tokio::io::AsyncWriteExt;
+
+use super::admin::fmt_ts;
+use super::session::Auth;
+use super::{Nav, RequestInfo, csrf, error_page, render};
+use crate::app::AppState;
+use crate::auth::Role;
+use crate::db::audit::AuditEntry;
+use crate::db::endpoints::Endpoint;
+use crate::db::jobs::{self, Job, JobFilter, NewJob, Outcome};
+use crate::db::sessions::Session;
+use crate::db::users::User;
+use crate::scan;
+
+const PAGE_SIZE: i64 = 50;
+
+pub fn routes() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/scan", get(scan_page))
+        .route("/scan/path", post(scan_path))
+        .route("/jobs", get(jobs_page))
+        .route("/jobs/{id}", get(job_page))
+}
+
+/// The upload route; the caller gives it its own body limit and no request timeout.
+pub fn upload_routes() -> Router<Arc<AppState>> {
+    Router::new().route("/scan/upload", post(scan_upload))
+}
+
+// ---- scan page ----
+
+#[derive(Template)]
+#[template(path = "scan.html")]
+struct ScanPage {
+    nav: Nav,
+    endpoints: Vec<Endpoint>,
+    agents: Vec<AgentChoice>,
+    roots: Vec<String>,
+    max_mb: u64,
+    max_files: usize,
+    path: String,
+}
+
+async fn scan_page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
+    let (s, u) = match auth.require(Role::Operator) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    show_scan(&st, Nav::new("scan", &s, &u), String::new()).await
+}
+
+/// An agent offered as a scan target.
+pub(crate) struct AgentChoice {
+    pub id: i64,
+    pub name: String,
+    pub online: bool,
+    pub roots: String,
+}
+
+pub(crate) async fn agent_choices(st: &AppState) -> Vec<AgentChoice> {
+    let now = crate::db::now_ms();
+    st.db
+        .list_agents()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|a| a.enabled && a.last_seen_at.is_some())
+        .map(|a| AgentChoice {
+            online: crate::agent::is_online(&a, now),
+            roots: a.roots.join(", "),
+            id: a.id,
+            name: a.name,
+        })
+        .collect()
+}
+
+/// Where a path scan runs: this server (an endpoint, or the default) or an agent.
+pub(crate) enum RunOn {
+    Endpoint(Option<i64>),
+    Agent(crate::db::agents::Agent),
+}
+
+/// Parse the "Run on" select: empty, an endpoint id, or `a:<agent id>`.
+pub(crate) async fn chosen_target(st: &AppState, raw: Option<&str>) -> Result<RunOn, &'static str> {
+    match raw.map(str::trim).and_then(|v| v.strip_prefix("a:")) {
+        Some(id) => {
+            let id: i64 = id.parse().map_err(|_| "Unknown agent.")?;
+            match st.db.agent(id).await {
+                Ok(Some(a)) if a.enabled => Ok(RunOn::Agent(a)),
+                _ => Err("Unknown agent."),
+            }
+        }
+        None => chosen_endpoint(st, raw).await.map(RunOn::Endpoint),
+    }
+}
+
+async fn show_scan(st: &AppState, nav: Nav, path: String) -> Response {
+    let endpoints = match st.db.list_endpoints().await {
+        Ok(l) => l.into_iter().filter(|e| e.enabled).collect(),
+        Err(e) => {
+            tracing::error!(error = %e, "list endpoints failed");
+            return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+        }
+    };
+    let status = if nav.error.is_some() {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::OK
+    };
+    render(
+        status,
+        &ScanPage {
+            nav,
+            endpoints,
+            agents: agent_choices(st).await,
+            roots: st
+                .cfg
+                .scan_roots
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect(),
+            max_mb: st.cfg.clamd_max_stream_mb,
+            max_files: st.cfg.upload_max_files,
+            path,
+        },
+    )
+}
+
+async fn scan_error(st: &AppState, s: &Session, u: &User, msg: &str, path: String) -> Response {
+    let mut nav = Nav::new("scan", s, u);
+    nav.error = Some(msg.to_owned());
+    show_scan(st, nav, path).await
+}
+
+/// Empty means the default endpoint; otherwise it must exist and be enabled.
+async fn chosen_endpoint(st: &AppState, raw: Option<&str>) -> Result<Option<i64>, &'static str> {
+    match raw.map(str::trim).filter(|v| !v.is_empty()) {
+        None => Ok(None),
+        Some(v) => {
+            let id: i64 = v.parse().map_err(|_| "Unknown endpoint.")?;
+            match st.db.endpoint(id).await {
+                Ok(Some(e)) if e.enabled => Ok(Some(id)),
+                _ => Err("Unknown endpoint."),
+            }
+        }
+    }
+}
+
+// ---- path scan ----
+
+#[derive(Deserialize)]
+struct PathForm {
+    #[serde(rename = "_csrf")]
+    csrf: Option<String>,
+    #[serde(default)]
+    path: String,
+    endpoint: Option<String>,
+}
+
+async fn scan_path(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    info: RequestInfo,
+    Form(f): Form<PathForm>,
+) -> Response {
+    let (s, u) = match auth.require(Role::Operator) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    if !csrf::token_ok(&s.csrf_token, f.csrf.as_deref()) {
+        return error_page(
+            StatusCode::FORBIDDEN,
+            "Your session form expired. Reload and try again.",
+        );
+    }
+    if let Some(r) = rate_limited(&st, &u, &info) {
+        return r;
+    }
+    let input = f.path.trim().to_owned();
+    let (target, endpoint_id, agent_id) = match chosen_target(&st, f.endpoint.as_deref()).await {
+        Err(m) => return scan_error(&st, &s, &u, m, input).await,
+        Ok(RunOn::Agent(a)) => {
+            if let Some(m) = crate::agent::refuse(&a, &input) {
+                tracing::warn!(event = "scan.path_rejected", user = %u.username, ip = %info.ip, path = %input, agent = %a.name, "path outside the agent's SCAN_ROOTS");
+                return scan_error(&st, &s, &u, m, input).await;
+            }
+            // The agent resolves and checks the path again when it runs.
+            (input.clone(), None, Some(a.id))
+        }
+        Ok(RunOn::Endpoint(endpoint_id)) => {
+            if st.cfg.scan_roots.is_empty() {
+                return scan_error(
+                    &st,
+                    &s,
+                    &u,
+                    "Path scans are off: SCAN_ROOTS is not set.",
+                    input,
+                )
+                .await;
+            }
+            // Pin the endpoint now so the job and its filters name a real one.
+            let Some(ep) = scan::pick_endpoint(&st, endpoint_id).await else {
+                return scan_error(&st, &s, &u, "No enabled clamd endpoint.", input).await;
+            };
+            let real = match scan::resolve_path(&st.cfg.scan_roots, &input).await {
+                Ok(p) => p,
+                Err(m) => {
+                    tracing::warn!(event = "scan.path_rejected", user = %u.username, ip = %info.ip, path = %input, "path outside SCAN_ROOTS or missing");
+                    return scan_error(&st, &s, &u, m, input).await;
+                }
+            };
+            // Store the resolved path; it is checked again when the job runs.
+            let Some(target) = real.to_str() else {
+                return scan_error(&st, &s, &u, "Only UTF-8 paths can be queued.", input).await;
+            };
+            if st.excluded(target) {
+                return scan_error(&st, &s, &u, scan::PATH_EXCLUDED, input).await;
+            }
+            (target.to_owned(), Some(ep.id), None)
+        }
+    };
+    let job = match st
+        .db
+        .create_job(NewJob {
+            kind: scan::KIND_PATH,
+            target: &target,
+            endpoint_id,
+            schedule_id: None,
+            agent_id,
+            submitted_by: Some(&u.username),
+            transport: "UI",
+            running: false,
+        })
+        .await
+    {
+        Ok(j) => j,
+        Err(e) => {
+            tracing::error!(error = %e, "create job failed");
+            return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+        }
+    };
+    audit_scan(&st, &u, &info, &job, "SCAN_PATH").await;
+    st.runner.poke();
+    st.agents.poke();
+    Redirect::to(&format!("/jobs/{}", job.id)).into_response()
+}
+
+/// The same per-user scan budget the API uses, so a stolen session cannot flood clamd.
+fn rate_limited(st: &AppState, u: &User, info: &RequestInfo) -> Option<Response> {
+    if st.scan_rate.allow(&format!("u:{}", u.id)) {
+        return None;
+    }
+    tracing::warn!(event = "api.rate_limited", principal = %u.username, ip = %info.ip, "scan rate limit exceeded");
+    Some(error_page(
+        StatusCode::TOO_MANY_REQUESTS,
+        "Too many scans in the last minute. Wait a moment and try again.",
+    ))
+}
+
+async fn audit_scan(st: &AppState, u: &User, info: &RequestInfo, job: &Job, action: &'static str) {
+    st.db
+        .audit(AuditEntry {
+            username: Some(u.username.clone()),
+            action,
+            outcome: "OK",
+            details: Some(job.target.clone()),
+            job_id: Some(job.id.clone()),
+            transport: Some("UI"),
+            endpoint_id: job.endpoint_id,
+            ip: Some(info.ip.to_string()),
+            user_agent: info.user_agent.clone(),
+        })
+        .await;
+}
+
+// ---- upload scan ----
+
+/// A display name only: never used as a path.
+pub(crate) fn display_name(raw: Option<&str>) -> String {
+    let base = raw.unwrap_or("").rsplit(['/', '\\']).next().unwrap_or("");
+    let clean: String = base
+        .chars()
+        .filter(|c| !c.is_control() && !crate::webhook::is_bidi_control(*c))
+        .take(255)
+        .collect();
+    let clean = clean.trim();
+    if clean.is_empty() {
+        "upload".to_owned()
+    } else {
+        clean.to_owned()
+    }
+}
+
+/// Stream one multipart file straight into clamd INSTREAM. Nothing touches disk (S3).
+pub(crate) async fn scan_field(
+    st: &AppState,
+    ep: &Endpoint,
+    mut field: Field<'_>,
+    name: &str,
+) -> Outcome {
+    let Ok(addr) = ep.parsed() else {
+        return scan::failure(
+            scan::CONFIGURATION_UNAVAILABLE,
+            "Endpoint address is invalid.",
+        );
+    };
+    let client = st.clamd(addr);
+    let (mut w, r) = tokio::io::duplex(256 * 1024);
+    let feed = async {
+        let mut hasher = Sha256::new();
+        let mut size: u64 = 0;
+        loop {
+            match field.chunk().await {
+                Ok(Some(chunk)) => {
+                    hasher.update(&chunk);
+                    size += chunk.len() as u64;
+                    // clamd stopped reading (limit or error); its reply says why.
+                    if w.write_all(&chunk).await.is_err() {
+                        return Ok((None, size));
+                    }
+                }
+                Ok(None) => break,
+                Err(e) => return Err(e),
+            }
+        }
+        drop(w);
+        Ok((Some(format!("{:x}", hasher.finalize())), size))
+    };
+    let (fed, scanned) = tokio::join!(feed, client.instream(r));
+    // A broken upload must never be reported as clean: the scanner saw a truncated file.
+    let (sha, size) = match fed {
+        Ok(x) => x,
+        Err(e) => {
+            tracing::warn!(file = %name, error = %e, "upload interrupted");
+            return scan::failure(scan::SCAN_FAILED, "The upload was interrupted.");
+        }
+    };
+    let mut o = match scanned {
+        Ok(mut report) => {
+            for d in &mut report.detections {
+                d.path = name.to_owned();
+            }
+            for e in &mut report.errors {
+                e.path = name.to_owned();
+            }
+            scan::outcome(report)
+        }
+        Err(clamd::Error::StreamTooLarge(_)) => scan::failure(
+            scan::LIMIT_EXCEEDED,
+            &format!(
+                "The file is larger than the {} MiB stream limit.",
+                st.cfg.clamd_max_stream_mb
+            ),
+        ),
+        Err(e) => {
+            tracing::warn!(file = %name, endpoint = %ep.name, error = %e, "clamd stream scan failed");
+            scan::failure(scan::SCAN_FAILED, "clamd did not complete the scan.")
+        }
+    };
+    o.sha256 = sha;
+    o.size_bytes = i64::try_from(size).ok();
+    o
+}
+
+async fn scan_upload(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    info: RequestInfo,
+    mp: Result<Multipart, axum::extract::multipart::MultipartRejection>,
+) -> Response {
+    let (s, u) = match auth.require(Role::Operator) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    // Role first, then the body shape.
+    let Ok(mut mp) = mp else {
+        return error_page(
+            StatusCode::BAD_REQUEST,
+            "Send the files as multipart/form-data.",
+        );
+    };
+    // The token field comes first so nothing is scanned for a forged request.
+    let token = match mp.next_field().await {
+        Ok(Some(f)) if f.name() == Some("_csrf") => f.text().await.ok(),
+        _ => None,
+    };
+    if !csrf::token_ok(&s.csrf_token, token.as_deref()) {
+        return error_page(
+            StatusCode::FORBIDDEN,
+            "Your session form expired. Reload and try again.",
+        );
+    }
+    if let Some(r) = rate_limited(&st, &u, &info) {
+        return r;
+    }
+    let mut endpoint_id = None;
+    let mut ids: Vec<String> = Vec::new();
+    loop {
+        let field = match mp.next_field().await {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => {
+                tracing::warn!(user = %u.username, error = %e, "bad multipart upload");
+                return error_page(StatusCode::BAD_REQUEST, "The upload could not be read.");
+            }
+        };
+        match field.name() {
+            Some("endpoint") => {
+                let raw = field.text().await.unwrap_or_default();
+                match chosen_endpoint(&st, Some(&raw)).await {
+                    Ok(e) => endpoint_id = e,
+                    Err(m) => return scan_error(&st, &s, &u, m, String::new()).await,
+                }
+            }
+            Some("files") => {
+                // Browsers send an empty part when no file was picked.
+                if field.file_name().is_none_or(str::is_empty) {
+                    continue;
+                }
+                if ids.len() >= st.cfg.upload_max_files {
+                    return scan_error(
+                        &st,
+                        &s,
+                        &u,
+                        &format!("At most {} files per upload.", st.cfg.upload_max_files),
+                        String::new(),
+                    )
+                    .await;
+                }
+                let name = display_name(field.file_name());
+                let Some(ep) = scan::pick_endpoint(&st, endpoint_id).await else {
+                    return scan_error(&st, &s, &u, "No enabled clamd endpoint.", String::new())
+                        .await;
+                };
+                let job = match st
+                    .db
+                    .create_job(NewJob {
+                        kind: scan::KIND_UPLOAD,
+                        target: &name,
+                        endpoint_id: Some(ep.id),
+                        schedule_id: None,
+                        agent_id: None,
+                        submitted_by: Some(&u.username),
+                        transport: "UI",
+                        running: true,
+                    })
+                    .await
+                {
+                    Ok(j) => j,
+                    Err(e) => {
+                        tracing::error!(error = %e, "create job failed");
+                        return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+                    }
+                };
+                audit_scan(&st, &u, &info, &job, "SCAN_UPLOAD").await;
+                let o = scan_field(&st, &ep, field, &name).await;
+                scan::finish(&st, &job, &ep.name, o).await;
+                ids.push(job.id);
+            }
+            _ => {}
+        }
+    }
+    match ids.as_slice() {
+        [] => scan_error(&st, &s, &u, "Pick at least one file.", String::new()).await,
+        [one] => Redirect::to(&format!("/jobs/{one}")).into_response(),
+        _ => Redirect::to("/jobs").into_response(),
+    }
+}
+
+// ---- jobs ----
+
+pub struct JobRow {
+    pub id: String,
+    pub kind: String,
+    pub status: String,
+    pub verdict: String,
+    pub target: String,
+    pub endpoint: String,
+    pub submitted_by: String,
+    pub submitted: String,
+    pub duration: String,
+    pub signatures: String,
+    pub problems: usize,
+}
+
+pub(crate) fn badge(verdict: &str) -> &'static str {
+    match verdict {
+        jobs::OK => "bg-success",
+        jobs::VIRUS_FOUND => "bg-danger",
+        jobs::ERROR => "bg-warning text-dark",
+        _ => "bg-secondary",
+    }
+}
+
+fn fmt_duration(ms: Option<i64>) -> String {
+    match ms {
+        None => String::new(),
+        Some(ms) if ms < 1000 => format!("{ms} ms"),
+        Some(ms) if ms < 60_000 => format!("{:.1} s", ms as f64 / 1000.0),
+        Some(ms) => format!("{}m {}s", ms / 60_000, ms % 60_000 / 1000),
+    }
+}
+
+fn fmt_size(b: Option<i64>) -> String {
+    let Some(b) = b else { return String::new() };
+    let units = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut v = b as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < units.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{b} B")
+    } else {
+        format!("{v:.1} {}", units[i])
+    }
+}
+
+/// Display names for endpoints and agents.
+#[derive(Default)]
+pub struct Names {
+    endpoints: std::collections::HashMap<i64, String>,
+    agents: std::collections::HashMap<i64, String>,
+}
+
+impl Names {
+    /// Endpoint or agent with this name (case-insensitive).
+    pub(crate) fn find(&self, name: &str) -> Option<(Option<i64>, Option<i64>)> {
+        if let Some((id, _)) = self
+            .endpoints
+            .iter()
+            .find(|(_, n)| n.eq_ignore_ascii_case(name))
+        {
+            return Some((Some(*id), None));
+        }
+        self.agents
+            .iter()
+            .find(|(_, n)| n.eq_ignore_ascii_case(name))
+            .map(|(id, _)| (None, Some(*id)))
+    }
+
+    /// (value, label) pairs for a source picker, sorted by label.
+    pub(crate) fn choices(&self) -> Vec<(String, String)> {
+        let mut v: Vec<(String, String)> = self
+            .endpoints
+            .iter()
+            .map(|(id, n)| (format!("e:{id}"), n.clone()))
+            .chain(
+                self.agents
+                    .iter()
+                    .map(|(id, n)| (format!("a:{id}"), format!("{n} (agent)"))),
+            )
+            .collect();
+        v.sort_by(|a, b| a.1.cmp(&b.1));
+        v
+    }
+
+    pub(crate) fn label(&self, endpoint_id: Option<i64>, agent_id: Option<i64>) -> String {
+        match agent_id {
+            Some(a) => format!(
+                "agent: {}",
+                self.agents.get(&a).map_or("(removed)", String::as_str)
+            ),
+            None => endpoint_id
+                .and_then(|id| self.endpoints.get(&id).cloned())
+                .unwrap_or_else(|| "default".to_owned()),
+        }
+    }
+}
+
+pub(crate) fn row(j: &Job, names: &Names) -> JobRow {
+    JobRow {
+        id: j.id.clone(),
+        kind: j.kind.clone(),
+        status: j.status.clone(),
+        verdict: j.verdict.clone().unwrap_or_default(),
+        target: j.target.clone(),
+        endpoint: names.label(j.endpoint_id, j.agent_id),
+        submitted_by: j.submitted_by.clone().unwrap_or_default(),
+        submitted: fmt_ts(j.submitted_at),
+        duration: fmt_duration(j.duration_ms()),
+        signatures: j.signatures().join(", "),
+        problems: j.errors.len(),
+    }
+}
+
+pub(crate) async fn endpoint_names(st: &AppState) -> Names {
+    Names {
+        endpoints: st
+            .db
+            .list_endpoints()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| (e.id, e.name))
+            .collect(),
+        agents: st
+            .db
+            .list_agents()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|a| (a.id, a.name))
+            .collect(),
+    }
+}
+
+#[derive(Template)]
+#[template(path = "jobs.html")]
+struct JobsPage {
+    nav: Nav,
+    rows: Vec<JobRow>,
+    status: String,
+    verdict: String,
+    kind: String,
+    source: String,
+    range: String,
+    q: String,
+    sources: Vec<(String, String)>,
+    warnings: Vec<String>,
+    window: (Option<i64>, Option<i64>),
+    page: i64,
+    pages: i64,
+    total: i64,
+    refresh: bool,
+}
+
+impl JobsPage {
+    fn badge(&self, v: &str) -> &'static str {
+        badge(v)
+    }
+
+    fn unwindowed(&self) -> String {
+        let mut q = self.link(0);
+        if let Some(i) = q.find("&since=").or_else(|| q.find("&until=")) {
+            q.truncate(i);
+        }
+        q
+    }
+
+    fn link(&self, page: i64) -> String {
+        let enc = |v: &str| url::form_urlencoded::byte_serialize(v.as_bytes()).collect::<String>();
+        let mut q = format!("/jobs?page={page}");
+        for (k, v) in [
+            ("status", &self.status),
+            ("verdict", &self.verdict),
+            ("kind", &self.kind),
+            ("source", &self.source),
+            ("range", &self.range),
+            ("q", &self.q),
+        ] {
+            if !v.is_empty() {
+                q.push_str(&format!("&{k}={}", enc(v)));
+            }
+        }
+        if let Some(v) = self.window.0 {
+            q.push_str(&format!("&since={v}"));
+        }
+        if let Some(v) = self.window.1 {
+            q.push_str(&format!("&until={v}"));
+        }
+        q
+    }
+}
+
+#[derive(Deserialize)]
+struct JobsQuery {
+    page: Option<i64>,
+    status: Option<String>,
+    verdict: Option<String>,
+    kind: Option<String>,
+    source: Option<String>,
+    range: Option<String>,
+    since: Option<i64>,
+    until: Option<i64>,
+    #[serde(default)]
+    q: String,
+}
+
+/// Only known values pass through to the query.
+fn known(v: Option<String>, allowed: &[&str]) -> Option<String> {
+    v.filter(|v| allowed.contains(&v.as_str()))
+}
+
+pub(crate) const KINDS: [&str; 4] = [
+    crate::scan::KIND_UPLOAD,
+    crate::scan::KIND_PATH,
+    crate::scan::KIND_WATCH,
+    crate::schedule::KIND_CONTROL,
+];
+const STATUSES: [&str; 3] = [jobs::QUEUED, jobs::RUNNING, jobs::FINISHED];
+const VERDICTS: [&str; 3] = [jobs::OK, jobs::VIRUS_FOUND, jobs::ERROR];
+
+/// `e:<id>` or `a:<id>` from the source picker.
+pub(crate) fn parse_source(v: &str) -> (Option<i64>, Option<i64>) {
+    match v.split_once(':') {
+        Some(("e", id)) => (id.parse().ok(), None),
+        Some(("a", id)) => (None, id.parse().ok()),
+        _ => (None, None),
+    }
+}
+
+/// Lower bound for a range preset.
+pub(crate) fn range_since(range: &str, now: i64) -> Option<i64> {
+    match range {
+        "1h" => Some(now - 3_600_000),
+        "24h" => Some(now - 86_400_000),
+        "7d" => Some(now - 7 * 86_400_000),
+        "30d" => Some(now - 30 * 86_400_000),
+        _ => None,
+    }
+}
+
+async fn jobs_page(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    headers: axum::http::HeaderMap,
+    Query(q): Query<JobsQuery>,
+) -> Response {
+    let (s, u) = match auth.require(Role::Operator) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let names = endpoint_names(&st).await;
+    let now = crate::db::now_ms();
+    let offset = super::tz_offset_ms(&headers);
+    let range = known(q.range, &["1h", "24h", "7d", "30d"]).unwrap_or_default();
+    let source = q.source.unwrap_or_default();
+    let (endpoint_id, agent_id) = parse_source(&source);
+    let mut filter = JobFilter {
+        status: known(q.status, &STATUSES),
+        verdict: known(q.verdict, &VERDICTS),
+        kind: known(q.kind, &KINDS),
+        endpoint_id,
+        agent_id,
+        since: q.since.or_else(|| range_since(&range, now)),
+        until: q.until,
+        ..JobFilter::default()
+    };
+    let window = (q.since, q.until);
+    let qtext: String = q.q.chars().take(512).collect();
+    let terms = super::search::parse(&qtext);
+    let (text, not_text) = super::search::free_text(&terms);
+    filter.text = text;
+    filter.not_text = not_text;
+    let mut warnings = Vec::new();
+    for t in terms.iter().filter(|t| t.field.is_some()) {
+        let v = t.value.as_str();
+        let up = v.to_ascii_uppercase();
+        match (t.field.as_deref().unwrap_or_default(), t.negate) {
+            ("target" | "path" | "by", false) => filter.text = Some(v.to_owned()),
+            ("target" | "path" | "by", true) => filter.not_text = Some(v.to_owned()),
+            ("kind" | "type", false) if KINDS.contains(&up.as_str()) => filter.kind = Some(up),
+            ("verdict", false) if VERDICTS.contains(&up.as_str()) => filter.verdict = Some(up),
+            ("status", false) if STATUSES.contains(&up.as_str()) => filter.status = Some(up),
+            ("after" | "since", false) => match super::search::date(v, now, offset) {
+                Some(d) => filter.since = Some(d),
+                None => warnings.push(format!("Not a date: {v}")),
+            },
+            ("before" | "until", false) => match super::search::date(v, now, offset) {
+                Some(d) => filter.until = Some(d),
+                None => warnings.push(format!("Not a date: {v}")),
+            },
+            ("endpoint" | "agent" | "host", false) => match names.find(v) {
+                Some((e, a)) => {
+                    filter.endpoint_id = e;
+                    filter.agent_id = a;
+                }
+                None => warnings.push(format!("No endpoint or agent named {v}")),
+            },
+            (f, _) => warnings.push(format!("Unknown or unsupported filter: {f}")),
+        }
+    }
+    let page = q.page.unwrap_or(0).clamp(0, 100_000);
+    let (list, total) = match st.db.list_jobs(&filter, page, PAGE_SIZE).await {
+        Ok(x) => x,
+        Err(e) => {
+            tracing::error!(error = %e, "list jobs failed");
+            return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+        }
+    };
+    let refresh = list.iter().any(|j| j.status != jobs::FINISHED);
+    render(
+        StatusCode::OK,
+        &JobsPage {
+            nav: Nav::new("jobs", &s, &u),
+            rows: list.iter().map(|j| row(j, &names)).collect(),
+            status: filter.status.clone().unwrap_or_default(),
+            verdict: filter.verdict.clone().unwrap_or_default(),
+            kind: filter.kind.clone().unwrap_or_default(),
+            source,
+            range,
+            q: qtext,
+            sources: names.choices(),
+            warnings,
+            window,
+            page,
+            pages: (total + PAGE_SIZE - 1) / PAGE_SIZE,
+            total,
+            refresh,
+        },
+    )
+}
+
+#[derive(Template)]
+#[template(path = "job.html")]
+struct JobDetail {
+    nav: Nav,
+    j: JobRow,
+    sha256: String,
+    size: String,
+    started: String,
+    finished: String,
+    detections: Vec<(String, String)>,
+    errors: Vec<(String, String)>,
+    more_errors: usize,
+    error_code: String,
+    error_message: String,
+    refresh: bool,
+}
+
+impl JobDetail {
+    fn badge(&self, v: &str) -> &'static str {
+        badge(v)
+    }
+}
+
+async fn job_page(State(st): State<Arc<AppState>>, auth: Auth, Path(id): Path<String>) -> Response {
+    let (s, u) = match auth.require(Role::Operator) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let job = match st.db.job(&id).await {
+        Ok(Some(j)) => j,
+        Ok(None) => return error_page(StatusCode::NOT_FOUND, "No such job."),
+        Err(e) => {
+            tracing::error!(error = %e, "load job failed");
+            return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+        }
+    };
+    let names = endpoint_names(&st).await;
+    const SHOW: usize = 1000;
+    let detections = job
+        .detections
+        .iter()
+        .flat_map(|(p, sigs)| sigs.iter().map(move |s| (p.clone(), s.clone())))
+        .take(SHOW)
+        .collect();
+    let errors = job
+        .errors
+        .iter()
+        .take(SHOW)
+        .map(|e| (e.path.clone(), e.message.clone()))
+        .collect();
+    render(
+        StatusCode::OK,
+        &JobDetail {
+            nav: Nav::new("jobs", &s, &u),
+            j: row(&job, &names),
+            sha256: job.sha256.clone().unwrap_or_default(),
+            size: fmt_size(job.size_bytes),
+            started: job.started_at.map(fmt_ts).unwrap_or_default(),
+            finished: job.finished_at.map(fmt_ts).unwrap_or_default(),
+            detections,
+            errors,
+            more_errors: job.errors.len().saturating_sub(SHOW),
+            error_code: job.error_code.clone().unwrap_or_default(),
+            error_message: job.error_message.clone().unwrap_or_default(),
+            refresh: job.status != jobs::FINISHED,
+        },
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_names_are_basenames() {
+        assert_eq!(display_name(Some("../../etc/passwd")), "passwd");
+        assert_eq!(display_name(Some("C:\\Users\\a\\b.exe")), "b.exe");
+        assert_eq!(display_name(Some("a\u{0}b\nc")), "abc");
+        assert_eq!(display_name(Some("cv\u{202E}fdp.exe")), "cvfdp.exe");
+        assert_eq!(display_name(Some("")), "upload");
+        assert_eq!(display_name(None), "upload");
+    }
+
+    #[test]
+    fn sizes_and_durations() {
+        assert_eq!(fmt_size(Some(68)), "68 B");
+        assert_eq!(fmt_size(Some(1536)), "1.5 KiB");
+        assert_eq!(fmt_duration(Some(1500)), "1.5 s");
+        assert_eq!(fmt_duration(Some(125_000)), "2m 5s");
+    }
+}

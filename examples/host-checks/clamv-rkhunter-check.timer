@@ -1,0 +1,11 @@
+# clamv: daily rkhunter check; clamv turns it on or off, edit OnCalendar with a drop-in.
+[Unit]
+Description=clamv host check: rkhunter, daily
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,40 @@
+# Agent: scans this host's folders with its own clamd and reports to a clamv-webui server.
+services:
+  clamv-agent:
+    image: ghcr.io/keyxmakerx/clamv-webui:latest
+    container_name: clamv-agent
+    command: agent
+    restart: unless-stopped
+    environment:
+      AGENT_SERVER_URL: http://100.82.0.5:8080  # the server as this host reaches it
+      AGENT_TOKEN_FILE: /run/secrets/agent_token  # token from Admin > Agents
+      # AGENT_SERVER_FINGERPRINT: AB:CD:...  # pin the server certificate when it uses HTTPS
+      CLAMD_ENDPOINT: tcp://clamav:3310  # this host's clamd
+      SCAN_ROOTS: /data  # folders this agent may scan; clamd must see the same paths
+      # REALTIME_PATHS: /data/downloads  # scan files here as soon as they are written
+      # CANARY_FILES: /srv/secrets/passwords.kdbx  # decoy; any access alerts (mount it read-only)
+      LOG_FORMAT: json  # one JSON object per line for log shippers
+    secrets:
+      - agent_token
+    networks:
+      - media
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - /data:/data:ro
+      # - /var/log/aide:/var/log/aide:ro  # AIDE reports, read every 5 min
+      # - /var/log/rkhunter.log:/var/log/rkhunter.log:ro  # rkhunter report
+      # - /var/log/audit:/var/log/audit:ro  # lets canary alerts name who touched them
+      # - /var/log/falco:/var/log/falco:ro  # Falco JSON alerts (json_output + file_output)
+      # - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro  # managed AIDE/rkhunter (examples/host-checks)
+
+secrets:
+  agent_token:
+    file: ./agent_token  # readable by UID 10001
+
+networks:
+  media:
+    external: true

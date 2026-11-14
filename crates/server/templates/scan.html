@@ -1,0 +1,26 @@
+{% extends "shell.html" %}
+{% block title %}Scan · ClamAV Web UI{% endblock %}
+{% block content %}
+<h1 class="h3">Scan</h1>
+<section class="card mt-3"><div class="card-body">
+<h2 class="h5">Upload files</h2>
+<p class="muted small">Files stream straight to clamd and are never stored. Up to {{ max_files }} files, {{ max_mb }} MiB each.</p>
+<form method="post" action="/scan/upload" enctype="multipart/form-data" class="row g-2 align-items-end">
+<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
+<div class="col-md-3"><label class="form-label" for="ue">Endpoint</label><select class="form-select" id="ue" name="endpoint">{% for e in endpoints %}<option value="{% if !e.is_default %}{{ e.id }}{% endif %}"{% if e.is_default %} selected{% endif %}>{{ e.name }}{% if e.is_default %} (default){% endif %}</option>{% endfor %}</select></div>
+<div class="col-md-7"><label class="form-label" for="uf">Files</label><input class="form-control" id="uf" name="files" type="file" multiple required></div>
+<div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Scan</button></div>
+</form>
+</div></section>
+<section class="card mt-3"><div class="card-body">
+<h2 class="h5">Scan a server path</h2>
+{% if roots.is_empty() && agents.is_empty() %}<p class="muted">Path scans are off. Set <code>SCAN_ROOTS</code> or add an agent to allow them.</p>{% else %}
+<p class="muted small">clamd reads the path itself, so it must see the same mount.{% if !roots.is_empty() %} This server's roots: {% for r in roots %}<code>{{ r }}</code>{% if !loop.last %}, {% endif %}{% endfor %}.{% endif %}{% for a in agents %} Agent {{ a.name }}: <code>{{ a.roots }}</code>{% if !a.online %} (offline, the job waits){% endif %}.{% endfor %}</p>
+<form method="post" action="/scan/path" class="row g-2 align-items-end">
+<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
+<div class="col-md-3"><label class="form-label" for="pe">Run on</label><select class="form-select" id="pe" name="endpoint">{% if !roots.is_empty() %}<optgroup label="This server">{% for e in endpoints %}<option value="{% if !e.is_default %}{{ e.id }}{% endif %}"{% if e.is_default %} selected{% endif %}>{{ e.name }}{% if e.is_default %} (default){% endif %}</option>{% endfor %}</optgroup>{% endif %}{% if !agents.is_empty() %}<optgroup label="Agents">{% for a in agents %}<option value="a:{{ a.id }}">{{ a.name }}{% if !a.online %} (offline){% endif %}</option>{% endfor %}</optgroup>{% endif %}</select></div>
+<div class="col-md-7"><label class="form-label" for="pp">Path</label><input class="form-control" id="pp" name="path" required maxlength="4096" value="{{ path }}" placeholder="{% if let Some(r) = roots.first() %}{{ r }}{% endif %}" autocomplete="off"></div>
+<div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Queue scan</button></div>
+</form>{% endif %}
+</div></section>
+{% endblock %}

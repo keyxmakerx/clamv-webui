@@ -1,0 +1,14 @@
+{% extends "shell.html" %}
+{% block title %}Audit log · ClamAV Web UI{% endblock %}
+{% block content %}
+<h1 class="h3">Audit log</h1>
+<p class="muted">Latest 200 events. Every event is also written to the container log.</p>
+<section class="card mt-3"><div class="card-body table-responsive">
+<table class="table table-sm">
+<thead><tr><th>Time</th><th>User</th><th>Action</th><th>Outcome</th><th>Details</th><th>IP</th></tr></thead>
+<tbody>
+{% for r in rows %}<tr><td class="small text-nowrap">{{ r.at }}</td><td>{{ r.user }}</td><td><code>{{ r.action }}</code></td><td>{{ r.outcome }}</td><td class="small">{{ r.details }}</td><td class="small">{{ r.ip }}</td></tr>
+{% else %}<tr><td colspan="6" class="muted">No events yet.</td></tr>{% endfor %}
+</tbody></table>
+</div></section>
+{% endblock %}

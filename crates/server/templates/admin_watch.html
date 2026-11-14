@@ -1,0 +1,33 @@
+{% extends "shell.html" %}
+{% block title %}Watched Folders · ClamAV Web UI{% endblock %}
+{% block content %}
+<h1 class="h3">Watched folders</h1>
+<p class="muted">Every {{ poll }} s, new or changed files are queued for scanning. Files changed in the last minute wait until they settle. Symlinks are not followed.</p>
+<section class="card mt-3"><div class="card-body">
+<h2 class="h5">Watch a folder</h2>
+{% if roots.is_empty() %}<p class="muted">Set <code>SCAN_ROOTS</code> to watch folders.</p>{% else %}
+<form method="post" action="/admin/watch" class="row g-3 align-items-end">
+<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
+<div class="col-md-5"><label class="form-label" for="wp">Folder</label><input class="form-control" id="wp" name="path" required maxlength="4096" placeholder="{% if let Some(r) = roots.first() %}{{ r }}/downloads{% endif %}" autocomplete="off"></div>
+<div class="col-md-3"><label class="form-label" for="we">Endpoint</label><select class="form-select" id="we" name="endpoint">
+{% for e in endpoints %}<option value="{% if !e.is_default %}{{ e.id }}{% endif %}"{% if e.is_default %} selected{% endif %}>{{ e.name }}{% if e.is_default %} (default){% endif %}</option>{% endfor %}</select></div>
+<div class="col-md-2"><label class="form-check-label small"><input class="form-check-input" type="checkbox" name="existing" value="1"> also scan files already there</label></div>
+<div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Watch</button></div>
+</form>{% endif %}
+</div></section>
+<section class="card mt-3"><div class="card-body table-responsive">
+<table class="table table-sm align-middle">
+<thead><tr><th>Folder</th><th>Endpoint</th><th>Added</th><th></th></tr></thead>
+<tbody>
+{% for r in rows %}<tr>
+<td class="text-break"><strong>{{ r.path }}</strong>{% if !r.enabled %} <span class="badge bg-secondary">paused</span>{% endif %}</td>
+<td class="small">{{ r.endpoint }}</td>
+<td class="small">{{ r.created }}</td>
+<td><div class="d-flex gap-2">
+<form method="post" action="/admin/watch/{{ r.id }}/enabled"><input type="hidden" name="_csrf" value="{{ nav.csrf }}">{% if !r.enabled %}<input type="hidden" name="enabled" value="1">{% endif %}<button class="btn btn-sm btn-outline-secondary" type="submit">{% if r.enabled %}Pause{% else %}Resume{% endif %}</button></form>
+<form method="post" action="/admin/watch/{{ r.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Stop watching</button></form>
+</div></td>
+</tr>{% else %}<tr><td colspan="4" class="muted">No watched folders.</td></tr>{% endfor %}
+</tbody></table>
+</div></section>
+{% endblock %}

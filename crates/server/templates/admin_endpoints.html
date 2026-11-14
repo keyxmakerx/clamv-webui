@@ -1,0 +1,39 @@
+{% extends "shell.html" %}
+{% block title %}clamd Endpoints · ClamAV Web UI{% endblock %}
+{% block content %}
+<h1 class="h3">clamd endpoints</h1>
+<section class="card mt-3"><div class="card-body">
+<h2 class="h5">Add endpoint</h2>
+<form method="post" action="/admin/endpoints" class="row g-2 align-items-end">
+<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
+<div class="col-md-3"><label class="form-label" for="en">Name</label><input class="form-control" id="en" name="name" required maxlength="64" autocomplete="off"></div>
+<div class="col-md-5"><label class="form-label" for="ea">Address</label><input class="form-control" id="ea" name="address" required maxlength="512" placeholder="tcp://clamav:3310" autocomplete="off"></div>
+<div class="col-md-2"><label class="form-check-label small"><input class="form-check-input" type="checkbox" name="make_default" value="1"> make default</label></div>
+<div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Add</button></div>
+</form>
+{% if allowlist.is_empty() %}<p class="muted small mt-2">Any host is allowed. Set CLAMD_HOST_ALLOWLIST to restrict.</p>
+{% else %}<p class="muted small mt-2">Allowed hosts: <code>{{ allowlist }}</code></p>{% endif %}
+</div></section>
+<section class="card mt-3"><div class="card-body table-responsive">
+<table class="table align-middle">
+<thead><tr><th>Name</th><th>Address</th><th>Enabled</th><th></th></tr></thead>
+<tbody>
+{% for e in endpoints %}
+<tr>
+<td><strong>{{ e.name }}</strong>{% if e.is_default %} <span class="badge bg-primary">default</span>{% endif %}</td>
+<td><code>{{ e.address }}</code></td>
+<td>{% if e.is_default %}<span class="muted small">always</span>{% else %}<form method="post" action="/admin/endpoints/{{ e.id }}/enabled" class="d-flex gap-2 align-items-center">
+<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
+<label class="form-check-label small"><input class="form-check-input" type="checkbox" name="enabled" value="1"{% if e.enabled %} checked{% endif %}> enabled</label>
+<button class="btn btn-sm btn-outline-primary" type="submit">Save</button></form>{% endif %}</td>
+<td class="d-flex gap-2">
+<form method="post" action="/admin/endpoints/{{ e.id }}/test"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-secondary" type="submit">Test</button></form>
+{% if !e.is_default %}<form method="post" action="/admin/endpoints/{{ e.id }}/default"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-secondary" type="submit">Make default</button></form>
+<form method="post" action="/admin/endpoints/{{ e.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Delete</button></form>{% endif %}
+</td>
+</tr>
+{% endfor %}
+</tbody></table>
+<p class="muted small">Manual scans and schedules use the default endpoint unless they name another.</p>
+</div></section>
+{% endblock %}

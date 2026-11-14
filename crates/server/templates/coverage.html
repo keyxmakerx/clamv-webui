@@ -1,0 +1,23 @@
+{% extends "shell.html" %}
+{% block head %}<meta http-equiv="refresh" content="120">{% endblock %}
+{% block title %}Coverage · ClamAV Web UI{% endblock %}
+{% block content %}
+<div class="page-head"><h1 class="h3">Coverage</h1></div>
+<p class="muted">What each host is protected against, this server and every agent alike. <span class="cov cov-ok">on</span> <span class="cov cov-warn">needs a look</span> <span class="cov cov-off">not covered</span> <span class="cov cov-soon">not built yet</span></p>
+<section class="card mt-3"><div class="card-body table-responsive">
+<table class="table table-sm cov-table align-top mb-0">
+<thead><tr><th>Threat</th>{% for h in hosts %}<th>{{ h.name }}</th>{% endfor %}</tr></thead>
+<tbody>
+{% for t in threats %}<tr><th class="cov-threat" scope="row">{{ t.name }}<small>{{ t.what }}</small></th>
+{% for c in t.cells %}<td><span class="cov cov-{{ c.state }}">{{ c.text }}</span></td>{% endfor %}</tr>
+{% endfor %}</tbody></table>
+</div></section>
+<div class="host-grid mt-3">
+{% for h in hosts %}<section class="card host-card"><div class="card-body">
+<div class="d-flex justify-content-between align-items-start gap-2"><div><h2 class="h5 mb-0">{{ h.name }}</h2><span class="badge {% if h.online %}bg-success{% else %}bg-danger{% endif %}">{{ h.role }} · {% if h.online %}online{% else %}offline{% endif %}</span></div>
+<div class="text-end"><span class="host-score">{{ h.on }}/{{ h.of }}</span><div class="host-meta">protections on</div></div></div>
+<p class="host-meta mt-2 mb-0">Seen {{ h.seen }}{% if !h.version.is_empty() %} · {{ h.version }}{% endif %}{% if !h.roots.is_empty() %}<br>Scans {{ h.roots }}{% endif %}</p>
+<ul>{% for (label, c) in h.items %}<li><span class="label">{{ label }}</span><span class="cov cov-{{ c.state }}">{{ c.text }}</span></li>{% endfor %}</ul>
+</div></section>{% endfor %}
+</div>
+{% endblock %}

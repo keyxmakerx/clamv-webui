@@ -1,38 +1,29 @@
-# ---- build stage ----
-FROM maven:3.9-eclipse-temurin-21 AS build
+# syntax=docker/dockerfile:1
+# ---- build ----
+# Static musl binary: the runtime image then needs no libc, libgcc or OpenSSL.
+FROM rust:1-alpine AS build
+RUN apk add --no-cache musl-dev
 WORKDIR /src
-
-# Copy pom first for better caching
-COPY pom.xml ./
-RUN mvn -q -DskipTests dependency:go-offline
-
-# Copy sources and monitoring assets used by the verification suite.
-COPY src ./src
+COPY Cargo.toml Cargo.lock ./
+COPY crates ./crates
 COPY dashboards ./dashboards
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/src/target \
+    cargo build --release --locked && \
+    install -D -m 0555 target/release/clamv-webui /out/clamv-webui && \
+    install -d -m 0700 /out/data
 
-# Build the JAR with the packaged forwarded-HTTPS default; no helper script is required.
-RUN mvn -B -q verify
-
-# ---- runtime stage ----
-FROM eclipse-temurin:21-jre
+# ---- runtime: no shell, no package manager, no shared libraries ----
+FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
-
-# Native interactive clamdtop requires the actual ncurses executable and a PTY helper.
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    clamav-daemon util-linux ncurses-term && rm -rf /var/lib/apt/lists/*
-RUN test -x /usr/bin/clamdtop && test -x /usr/bin/script
-
-# Fixed numeric IDs also work with Kubernetes runAsNonRoot admission checks.
-# /bin/sh supports the shell command used by util-linux script for native clamdtop.
-RUN groupadd --gid 10001 clamav-web && \
-    useradd --uid 10001 --gid 10001 --create-home --no-log-init \
-        --shell /bin/sh clamav-web && \
-    install -d -o 10001 -g 10001 -m 0755 /app/data && \
-    install -d -o 10001 -g 10001 -m 0700 /app/conf
-
-# The runtime user can read the application, but cannot replace its code.
-COPY --from=build --chown=0:0 --chmod=0444 /src/target/clamav-web-client*.jar /app/clamav-web-client.jar
-
+COPY --from=build --chown=0:0 /out/clamv-webui /app/clamv-webui
+# Same UID/GID as the Java image, so existing volumes keep working.
+COPY --from=build --chown=10001:10001 /out/data /app/data
+VOLUME ["/app/data"]
 USER 10001:10001
+ENV LISTEN_ADDR=0.0.0.0:8080 DATA_DIR=/app/data
 EXPOSE 8080
-ENTRYPOINT ["java","-jar","/app/clamav-web-client.jar"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["/app/clamv-webui", "healthcheck"]
+ENTRYPOINT ["/app/clamv-webui"]
+CMD ["serve"]

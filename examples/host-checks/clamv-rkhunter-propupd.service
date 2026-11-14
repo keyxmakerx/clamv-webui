@@ -1,0 +1,26 @@
+# clamv: record current file properties as rkhunter's baseline (needs a passkey in clamv).
+[Unit]
+Description=clamv host check: update rkhunter properties
+ConditionPathExists=/usr/bin/rkhunter
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rkhunter --propupd --nocolors
+Nice=19
+IOSchedulingClass=idle
+ProtectSystem=strict
+ReadWritePaths=/var/lib/rkhunter /var/log
+PrivateTmp=yes
+PrivateNetwork=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native

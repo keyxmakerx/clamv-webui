@@ -1,0 +1,18 @@
+// clamv may start its own host-check units and switch their timers, nothing else.
+polkit.addRule(function (action, subject) {
+  if (action.id !== "org.freedesktop.systemd1.manage-units" || subject.user !== "clamv") {
+    return polkit.Result.NOT_HANDLED;
+  }
+  var unit = action.lookup("unit");
+  var verb = action.lookup("verb");
+  var run = ["clamv-aide-check.service", "clamv-aide-accept.service",
+             "clamv-rkhunter-check.service", "clamv-rkhunter-propupd.service"];
+  var timers = ["clamv-aide-check.timer", "clamv-rkhunter-check.timer"];
+  if (run.indexOf(unit) >= 0 && verb === "start") {
+    return polkit.Result.YES;
+  }
+  if (timers.indexOf(unit) >= 0 && (verb === "start" || verb === "stop")) {
+    return polkit.Result.YES;
+  }
+  return polkit.Result.NO;
+});

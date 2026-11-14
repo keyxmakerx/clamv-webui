@@ -1,0 +1,16 @@
+<div class="page-head"><h1 class="h3">CrowdSec</h1>
+<nav class="seg" aria-label="CrowdSec pages"><a class="seg-btn{% if tab == "overview" %} active{% endif %}" href="/crowdsec">Overview</a><a class="seg-btn{% if tab == "alerts" %} active{% endif %}" href="/crowdsec/alerts">Alerts</a><a class="seg-btn{% if tab == "decisions" %} active{% endif %}" href="/crowdsec/decisions">Decisions</a></nav>
+{% if status.configured %}<span class="small ms-auto">{% if status.up %}<span class="badge bg-success">LAPI up</span>{% else if status.last_ok.is_none() && status.error.is_none() %}<span class="badge bg-secondary">connecting</span>{% else %}<span class="badge bg-danger">LAPI down</span>{% endif %}{% if status.read_only %} <span class="badge bg-secondary">read-only</span>{% endif %}</span>
+{% if nav.is_admin %}<form method="post" action="/crowdsec/refresh"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-secondary" type="submit" title="Re-read the LAPI now"><i class="fas fa-sync-alt" aria-hidden="true"></i> Refresh</button></form>{% endif %}{% endif %}
+</div>
+{% if status.configured %}{% if let Some(e) = status.error %}<div class="alert alert-warning py-2 small" role="status">Last refresh failed: {{ e }}</div>{% endif %}
+{% else %}<section class="card"><div class="card-body">
+<h2 class="h5">Connect CrowdSec</h2>
+<p>clamv reads CrowdSec's Local API as a watcher, so it sees alerts and decisions and can add or remove bans. Nothing is stored here; a restart reads the LAPI again.</p>
+<ol class="mb-2">
+<li>Put a long random password in a file, e.g. <code>openssl rand -hex 24 &gt; crowdsec_pw</code>.</li>
+<li>Add the watcher on the CrowdSec host: <code>cscli machines add clamv-webui --password "$(cat crowdsec_pw)"</code> (in Docker, run it with <code>docker exec crowdsec</code>).</li>
+<li>Set <code>CROWDSEC_LAPI_URL</code> (e.g. <code>http://crowdsec:8080</code>) and <code>CROWDSEC_PASSWORD_FILE</code> on clamv, then restart it.</li>
+</ol>
+<p class="small muted mb-0">Set <code>CROWDSEC_READ_ONLY=true</code> to hide the ban buttons. Deleting alerts needs clamv in CrowdSec's <code>api.server.trusted_ips</code>, so clamv doesn't offer it.</p>
+</div></section>{% endif %}

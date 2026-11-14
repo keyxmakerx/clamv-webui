@@ -1,0 +1,53 @@
+{% extends "shell.html" %}
+{% block title %}Detections · ClamAV Web UI{% endblock %}
+{% block content %}
+<div class="page-head"><h1 class="h3">Detections</h1><span class="muted small">{{ total }} infected file(s)</span>
+<a class="btn btn-sm btn-outline-secondary ms-auto" href="/detections.csv?{{ query_string }}"><i class="fas fa-file-csv" aria-hidden="true"></i> Export CSV</a></div>
+<form method="get" action="/detections" class="filter-bar" data-remember="detections">
+<div class="filter-search"><i class="fas fa-search" aria-hidden="true"></i>
+<input class="form-control" type="search" name="q" value="{{ q }}" maxlength="512" placeholder="Search: trojan  folder:/data/downloads  sig=Eicar-Test-Signature  -path:.cache  since:7d" aria-label="Search detections">
+<button type="button" class="btn btn-link btn-sm search-help-toggle" data-toggle-help="det-help" aria-expanded="false" title="Search help"><i class="fas fa-info-circle" aria-hidden="true"></i></button></div>
+<div class="filter-chips">
+<select class="form-select form-select-sm" name="range" aria-label="Time range"><option value="">Any time</option>{% for (v, l) in [("1h", "Last hour"), ("24h", "Last 24 h"), ("7d", "Last 7 days"), ("30d", "Last 30 days")] %}<option value="{{ v }}"{% if range == *v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select>
+<button class="btn btn-sm btn-primary" type="submit">Apply</button>
+<a class="btn btn-sm btn-outline-secondary" href="/detections?reset=1" data-forget="detections">Clear</a>
+{% for (label, href) in active %}<a class="chip" href="{{ href }}" title="Remove this filter">{{ label }} <i class="fas fa-times" aria-hidden="true"></i></a>{% endfor %}
+</div>
+<div class="search-help d-none" id="det-help"><code>word</code> matches path or signature · <code>path:</code> path contains · <code>folder:</code> inside a folder · <code>sig:</code> contains, <code>sig=</code> exact · <code>type=WATCH</code> · <code>host=nas-2</code> · <code>after:</code>/<code>before:</code> dates · <code>since:24h</code> · <code>-</code> negates</div>
+</form>
+{% for w in warnings %}<div class="alert alert-warning py-1 small mt-2" role="status">{{ w }}</div>{% endfor %}
+<div class="det-layout mt-3">
+<aside class="facets" aria-label="Quick filters">
+<section class="card"><div class="card-body"><h2 class="h6">Signature</h2>
+{% for fa in sig_facets %}<a class="facet{% if fa.active %} active{% endif %}" href="{{ fa.href }}"><span class="text-break">{{ fa.label }}</span><span class="facet-n">{{ fa.count }}</span></a>{% else %}<p class="small muted mb-0">None</p>{% endfor %}
+</div></section>
+<section class="card mt-2"><div class="card-body"><h2 class="h6">Host</h2>
+{% for fa in host_facets %}<a class="facet{% if fa.active %} active{% endif %}" href="{{ fa.href }}"><span>{{ fa.label }}</span><span class="facet-n">{{ fa.count }}</span></a>{% else %}<p class="small muted mb-0">None</p>{% endfor %}
+</div></section>
+<section class="card mt-2"><div class="card-body"><h2 class="h6">Type</h2>
+{% for fa in kind_facets %}<a class="facet{% if fa.active %} active{% endif %}" href="{{ fa.href }}"><span>{{ fa.label }}</span><span class="facet-n">{{ fa.count }}</span></a>{% else %}<p class="small muted mb-0">None</p>{% endfor %}
+</div></section>
+<section class="card mt-2"><div class="card-body"><h2 class="h6">Folder</h2>
+{% for fa in folder_facets %}<a class="facet" href="{{ fa.href }}"><span class="text-break">{{ fa.label }}</span><span class="facet-n">{{ fa.count }}</span></a>{% else %}<p class="small muted mb-0">None</p>{% endfor %}
+</div></section>
+</aside>
+<section class="card"><div class="card-body table-responsive">
+<table class="table table-sm align-middle">
+<thead><tr><th>Found</th><th>File</th><th>Signature</th><th>Type</th><th>Host</th></tr></thead>
+<tbody>
+{% for r in rows %}<tr>
+<td class="small text-nowrap"><a href="/jobs/{{ r.job_id }}">{{ r.at }}</a></td>
+<td class="small text-break">{{ r.path }}</td>
+<td><span class="badge bg-danger text-wrap">{{ r.signature }}</span></td>
+<td class="small">{{ r.kind }}</td>
+<td class="small">{{ r.host }}</td>
+</tr>{% else %}<tr><td colspan="5" class="muted">No detections match. That's good news.</td></tr>{% endfor %}
+</tbody></table>
+{% if pages > 1 %}<nav aria-label="Pages" class="d-flex gap-2 align-items-center">
+{% if page > 0 %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page - 1) }}">Newer</a>{% endif %}
+<span class="small muted">Page {{ page + 1 }} of {{ pages }}</span>
+{% if page + 1 < pages %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page + 1) }}">Older</a>{% endif %}
+</nav>{% endif %}
+</div></section>
+</div>
+{% endblock %}

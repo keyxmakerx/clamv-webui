@@ -1,0 +1,59 @@
+{% extends "shell.html" %}
+{% block title %}Agents · ClamAV Web UI{% endblock %}
+{% block content %}
+<h1 class="h3">Agents</h1>
+<p class="muted">An agent runs on another host next to its own clamd and scans that host's folders. It connects out to this server, so it needs no open port. Pick it under <em>Run on</em> when scanning a path or adding a schedule.</p>
+{% if let Some(e) = enroll %}<div class="alert alert-warning" role="alert"><strong>Token for {{ e.name }}:</strong>
+<div class="mt-2"><code class="text-break user-select-all">{{ e.secret }}</code></div>
+<div class="small mt-2">Save it on the agent host as <code>./agent_token</code> (readable by UID 10001) now. Only its hash is kept.</div>
+<div class="small mt-3">Compose for the agent host:</div>
+<pre class="small mt-1 mb-0 user-select-all"><code>services:
+  clamv-agent:
+    image: ghcr.io/keyxmakerx/clamv-webui:latest
+    command: agent
+    restart: unless-stopped
+    environment:
+      AGENT_SERVER_URL: {{ e.server }}  # how the agent reaches this server
+      AGENT_TOKEN_FILE: /run/secrets/agent_token
+{% if let Some(fp) = e.fingerprint %}      AGENT_SERVER_FINGERPRINT: {{ fp }}  # pins this server's certificate
+{% endif %}      CLAMD_ENDPOINT: tcp://clamav:3310  # the agent host's clamd
+      SCAN_ROOTS: /data  # folders this agent may scan; clamd must see the same paths
+    secrets:
+      - agent_token
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - /data:/data:ro
+secrets:
+  agent_token:
+    file: ./agent_token</code></pre></div>{% endif %}
+<section class="card mt-3"><div class="card-body">
+<h2 class="h5">Add agent</h2>
+<form method="post" action="/admin/agents" class="row g-2 align-items-end">
+<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
+<div class="col-md-6"><label class="form-label" for="an">Name</label><input class="form-control" id="an" name="name" required maxlength="64" pattern="[A-Za-z0-9._-]+" placeholder="backup-nas" autocomplete="off"></div>
+<div class="col-md-3"><button class="btn btn-primary w-100" type="submit">Add agent</button></div>
+</form>
+</div></section>
+<section class="card mt-3"><div class="card-body table-responsive">
+<table class="table table-sm align-middle">
+<thead><tr><th>Agent</th><th>State</th><th>clamd</th><th>Roots</th><th>Jobs</th><th></th></tr></thead>
+<tbody>
+{% for r in rows %}<tr>
+<td><strong>{{ r.name }}</strong> <code class="small">{{ r.prefix }}…</code><div class="small muted">{% if !r.version.is_empty() %}v{{ r.version }} · {% endif %}{% if !r.ip.is_empty() %}{{ r.ip }} · {% endif %}seen {{ r.last_seen }}</div></td>
+<td>{% if r.state == "online" %}<span class="badge bg-success">online</span>{% else if r.state == "offline" %}<span class="badge bg-danger">offline</span>{% else %}<span class="badge bg-secondary">{{ r.state }}</span>{% endif %}</td>
+<td class="small text-break">{{ r.clamd }}</td>
+<td class="small text-break">{% for p in r.roots %}<div><code>{{ p }}</code></div>{% endfor %}</td>
+<td class="small text-nowrap">{{ r.running }}/{{ r.slots }} running{% if r.queued > 0 %}<div>{{ r.queued }} queued</div>{% endif %}</td>
+<td><div class="d-flex gap-2">
+<form method="post" action="/admin/agents/{{ r.id }}/enabled"><input type="hidden" name="_csrf" value="{{ nav.csrf }}">{% if !r.enabled %}<input type="hidden" name="enabled" value="1">{% endif %}<button class="btn btn-sm btn-outline-secondary" type="submit">{% if r.enabled %}Disable{% else %}Enable{% endif %}</button></form>
+<form method="post" action="/admin/agents/{{ r.id }}/rotate"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-warning" type="submit">New token</button></form>
+<form method="post" action="/admin/agents/{{ r.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form>
+</div></td>
+</tr>{% else %}<tr><td colspan="6" class="muted">No agents yet.</td></tr>{% endfor %}
+</tbody></table>
+</div></section>
+{% endblock %}

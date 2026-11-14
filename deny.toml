@@ -1,0 +1,40 @@
+# cargo-deny: advisories, licences, duplicate crates and sources.
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = [
+  # Bundled SQLite < 3.54 WAL page-size bug: needs an attacker who can already write
+  # our own db and -wal files in DATA_DIR. sqlx 0.9.0 pins libsqlite3-sys 0.37; drop
+  # this once sqlx ships with libsqlite3-sys >= 0.39.
+  { id = "RUSTSEC-2026-0459", reason = "local-only; needs write access to DATA_DIR" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# All must be compatible with LGPL-2.1-or-later.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "MPL-2.0",
+  "Unicode-3.0",
+  "CDLA-Permissive-2.0",
+  "LGPL-2.1-or-later",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

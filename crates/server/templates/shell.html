@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block body %}
+<div class="app-shell">
+<aside id="app-sidebar" class="app-sidebar">
+<div class="sidebar-header"><img class="sidebar-logo" alt="ClamAV" src="/images/logo.jpg">
+<div><div class="sidebar-appname">ClamAV Web UI</div><div class="sidebar-caption">Scan &amp; Monitor</div></div></div>
+<nav class="sidebar-section tabs" aria-label="Operations"><div class="sidebar-section__title">Operations</div>
+<a class="nav-btn tab-link{% if nav.page == "dashboard" %} active{% endif %}" href="/dashboard"{% if nav.page == "dashboard" %} aria-current="page"{% endif %}><i class="fas fa-tachometer-alt" aria-hidden="true"></i>Dashboard</a>
+<a class="nav-btn tab-link{% if nav.page == "clamd" %} active{% endif %}" href="/clamd"{% if nav.page == "clamd" %} aria-current="page"{% endif %}><i class="fas fa-server" aria-hidden="true"></i>clamd Status</a>
+{% if nav.is_operator %}<a class="nav-btn tab-link{% if nav.page == "scan" %} active{% endif %}" href="/scan"{% if nav.page == "scan" %} aria-current="page"{% endif %}><i class="fas fa-search" aria-hidden="true"></i>Scan</a>
+<a class="nav-btn tab-link{% if nav.page == "jobs" %} active{% endif %}" href="/jobs"{% if nav.page == "jobs" %} aria-current="page"{% endif %}><i class="fas fa-tasks" aria-hidden="true"></i>Jobs</a>
+<a class="nav-btn tab-link{% if nav.page == "timeline" %} active{% endif %}" href="/timeline"{% if nav.page == "timeline" %} aria-current="page"{% endif %}><i class="fas fa-stream" aria-hidden="true"></i>Timeline</a>
+<a class="nav-btn tab-link{% if nav.page == "integrity" %} active{% endif %}" href="/integrity"{% if nav.page == "integrity" %} aria-current="page"{% endif %}><i class="fas fa-fingerprint" aria-hidden="true"></i>Host Checks</a>
+<a class="nav-btn tab-link{% if nav.page == "crowdsec" %} active{% endif %}" href="/crowdsec"{% if nav.page == "crowdsec" %} aria-current="page"{% endif %}><i class="fas fa-user-shield" aria-hidden="true"></i>CrowdSec</a>
+<a class="nav-btn tab-link{% if nav.page == "detections" %} active{% endif %}" href="/detections"{% if nav.page == "detections" %} aria-current="page"{% endif %}><i class="fas fa-biohazard" aria-hidden="true"></i>Detections</a>{% endif %}
+<a class="nav-btn tab-link{% if nav.page == "coverage" %} active{% endif %}" href="/coverage"{% if nav.page == "coverage" %} aria-current="page"{% endif %}><i class="fas fa-shield-alt" aria-hidden="true"></i>Coverage</a>
+</nav>
+{% if nav.is_admin %}
+<div class="sidebar-divider"></div>
+<nav class="sidebar-section tabs" aria-label="Administration"><div class="sidebar-section__title">Administration</div>
+<a class="nav-btn tab-link{% if nav.page == "users" %} active{% endif %}" href="/admin/users"{% if nav.page == "users" %} aria-current="page"{% endif %}><i class="fas fa-users" aria-hidden="true"></i>Users</a>
+<a class="nav-btn tab-link{% if nav.page == "endpoints" %} active{% endif %}" href="/admin/endpoints"{% if nav.page == "endpoints" %} aria-current="page"{% endif %}><i class="fas fa-server" aria-hidden="true"></i>clamd Endpoints</a>
+<a class="nav-btn tab-link{% if nav.page == "schedules" %} active{% endif %}" href="/admin/schedules"{% if nav.page == "schedules" %} aria-current="page"{% endif %}><i class="fas fa-calendar-alt" aria-hidden="true"></i>Schedules</a>
+<a class="nav-btn tab-link{% if nav.page == "canaries" %} active{% endif %}" href="/admin/canaries"{% if nav.page == "canaries" %} aria-current="page"{% endif %}><i class="fas fa-crow" aria-hidden="true"></i>Canaries</a>
+<a class="nav-btn tab-link{% if nav.page == "watch" %} active{% endif %}" href="/admin/watch"{% if nav.page == "watch" %} aria-current="page"{% endif %}><i class="fas fa-eye" aria-hidden="true"></i>Watched Folders</a>
+<a class="nav-btn tab-link{% if nav.page == "clamdconf" %} active{% endif %}" href="/admin/clamd-config"{% if nav.page == "clamdconf" %} aria-current="page"{% endif %}><i class="fas fa-file-alt" aria-hidden="true"></i>clamd Config</a>
+<a class="nav-btn tab-link{% if nav.page == "integrations" %} active{% endif %}" href="/admin/integrations"{% if nav.page == "integrations" %} aria-current="page"{% endif %}><i class="fas fa-plug" aria-hidden="true"></i>Integrations</a>
+<a class="nav-btn tab-link{% if nav.page == "settings" %} active{% endif %}" href="/admin/settings"{% if nav.page == "settings" %} aria-current="page"{% endif %}><i class="fas fa-sliders-h" aria-hidden="true"></i>Settings</a>
+<a class="nav-btn tab-link{% if nav.page == "agents" %} active{% endif %}" href="/admin/agents"{% if nav.page == "agents" %} aria-current="page"{% endif %}><i class="fas fa-network-wired" aria-hidden="true"></i>Agents</a>
+<a class="nav-btn tab-link{% if nav.page == "tokens" %} active{% endif %}" href="/admin/api-tokens"{% if nav.page == "tokens" %} aria-current="page"{% endif %}><i class="fas fa-key" aria-hidden="true"></i>API Tokens</a>
+<a class="nav-btn tab-link{% if nav.page == "audit" %} active{% endif %}" href="/admin/audit"{% if nav.page == "audit" %} aria-current="page"{% endif %}><i class="fas fa-clipboard-list" aria-hidden="true"></i>Audit Log</a>
+</nav>
+{% endif %}
+</aside>
+<main class="app-main">
+<header class="app-topbar"><div><div class="app-title__name">ClamAV</div><div class="app-title__subtitle">Self-hosted malware scanning console</div></div>
+<div class="app-topbar__right">
+<button type="button" class="topbar-icon" id="theme-toggle" title="Switch light or dark theme" aria-label="Switch light or dark theme"><i class="fas fa-adjust" aria-hidden="true"></i></button>
+<div class="topbar-username"><span>User:</span> <a href="/account/security"><strong>{{ nav.username }}</strong></a> <span class="muted small">({{ nav.role }})</span></div>
+<form method="post" action="/logout" class="topbar-logout">
+<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
+<button type="submit" class="btn btn-outline-secondary topbar-logout__button">Logout</button>
+</form>
+</div></header>
+<div class="app-content">
+{% if let Some(msg) = nav.error %}<div class="alert alert-danger" role="alert">{{ msg }}</div>{% endif %}
+{% if let Some(msg) = nav.success %}<div class="alert alert-success" role="status">{{ msg }}</div>{% endif %}
+{% block content %}{% endblock %}
+</div>
+<footer class="app-footer muted">ClamAV Web UI {{ crate::VERSION }} · managed scan jobs and live clamd metrics</footer>
+</main>
+</div>
+{% endblock %}

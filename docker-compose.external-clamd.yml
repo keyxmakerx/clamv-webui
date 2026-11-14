@@ -1,0 +1,49 @@
+# UI only: joins an existing network and uses a clamd it does not own.
+services:
+  clamv-webui:
+    image: ghcr.io/keyxmakerx/clamv-webui:latest
+    container_name: clamv-webui
+    restart: unless-stopped
+    environment:
+      CLAMD_ENDPOINT: tcp://clamav:3310  # existing clamd container on the shared network
+      # CLAMD_CONF_FILE: /etc/clamav/clamd.conf  # mount it read-only to view it and apply its ExcludePath
+      # CANARY_FILES: /srv/secrets/passwords.kdbx  # decoy; any access alerts (mount it read-only)
+      # CLAMD_MAX_STREAM_MB: "1024"  # default; clamd StreamMaxLength must be at least this
+      CLAMD_HOST_ALLOWLIST: clamav  # admins can only add endpoints on these hosts
+      SCAN_ROOTS: /data,/documents,/games  # clamd must see these at the same paths
+      LOG_FORMAT: json  # one JSON object per line for fluent-bit
+      # TLS_SELF_SIGNED: "true"  # HTTPS for clamctl; certificate lands in ./data/tls
+      # TLS_SELF_SIGNED_NAMES: 100.82.x.y  # the mesh IP or name clients connect to
+      # WEBHOOK_URL_FILE: /run/secrets/webhook_url  # alert URLs, comma-separated; ntfy+, gotify+ or slack+ prefix for those
+      # WEBHOOK_ALLOWED_CIDRS: 100.82.0.0/16  # needed when the receiver is on the mesh
+      # METRICS_TOKEN_FILE: /run/secrets/metrics_token  # enables /metrics for Prometheus
+      # CROWDSEC_LAPI_URL: http://crowdsec:8080  # CrowdSec console; watcher from cscli machines add
+      # CROWDSEC_PASSWORD_FILE: /run/secrets/crowdsec_pw  # that watcher's password
+      # OIDC_ISSUER: https://auth.example.lan  # SSO; also set OIDC_CLIENT_ID, OIDC_CLIENT_SECRET_FILE, OIDC_REDIRECT_URI
+      # OIDC_ADMIN_GROUPS: clamav-admins  # nobody without a listed group can sign in via SSO
+      # LDAP_URL: ldaps://dc.example.lan  # directory sign-in; also LDAP_BIND_DN, LDAP_BIND_PASSWORD_FILE, LDAP_USER_BASE, LDAP_ADMIN_GROUPS
+    ports:
+      - "8080:8080"  # bind to the mesh IP in production, e.g. 100.82.x.y:8080:8080
+    networks:
+      - media
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./data:/app/data  # app state; owned by UID 10001
+      - /data:/data:ro
+      # - /var/log/aide:/var/log/aide:ro  # AIDE reports, read every 5 min
+      # - /var/log/rkhunter.log:/var/log/rkhunter.log:ro  # rkhunter report
+      # - /var/log/audit:/var/log/audit:ro  # lets canary alerts name who touched them
+      # - /var/log/falco:/var/log/falco:ro  # Falco JSON alerts (json_output + file_output)
+      # - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro  # managed AIDE/rkhunter (examples/host-checks)
+      - /documents:/documents:ro
+      - /games:/games:ro
+
+networks:
+  media:
+    external: true
