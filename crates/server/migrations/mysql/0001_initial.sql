@@ -229,3 +229,19 @@ CREATE TABLE webauthn_challenges (
     challenge VARCHAR(64) NOT NULL,
     expires_at BIGINT NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE detections (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    job_id VARCHAR(36) NOT NULL,
+    found_at BIGINT NOT NULL,
+    path TEXT NOT NULL,
+    signature VARCHAR(255) NOT NULL,
+    kind VARCHAR(16) NOT NULL,
+    endpoint_id BIGINT,
+    agent_id BIGINT,
+    CONSTRAINT fk_detections_job FOREIGN KEY (job_id) REFERENCES scan_jobs(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE INDEX idx_detections_found ON detections(found_at);
+CREATE INDEX idx_detections_sig ON detections(signature, found_at);
+CREATE INDEX idx_detections_job ON detections(job_id);
+CREATE INDEX idx_jobs_verdict ON scan_jobs(verdict, submitted_at);

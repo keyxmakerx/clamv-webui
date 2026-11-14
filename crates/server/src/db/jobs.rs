@@ -92,6 +92,68 @@ pub struct JobFilter {
     pub status: Option<String>,
     pub verdict: Option<String>,
     pub endpoint_id: Option<i64>,
+    pub kind: Option<String>,
+    pub agent_id: Option<i64>,
+    /// Substring of the target or submitter.
+    pub text: Option<String>,
+    pub not_text: Option<String>,
+    pub since: Option<i64>,
+    pub until: Option<i64>,
+}
+
+/// LIKE pattern for a substring; `!` escapes wildcards on every backend.
+pub fn like_pattern(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('%');
+    for c in s.chars() {
+        if matches!(c, '%' | '_' | '!') {
+            out.push('!');
+        }
+        out.push(c);
+    }
+    out.push('%');
+    out
+}
+
+macro_rules! job_where {
+    ($tail:literal) => {
+        concat!(
+            "WHERE (? IS NULL OR status = ?) AND (? IS NULL OR verdict = ?) AND (? IS NULL OR endpoint_id = ?) \
+             AND (? IS NULL OR kind = ?) AND (? IS NULL OR agent_id = ?) \
+             AND (? IS NULL OR target LIKE ? ESCAPE '!' OR submitted_by LIKE ? ESCAPE '!') \
+             AND (? IS NULL OR (target NOT LIKE ? ESCAPE '!' AND (submitted_by IS NULL OR submitted_by NOT LIKE ? ESCAPE '!'))) \
+             AND (? IS NULL OR submitted_at >= ?) AND (? IS NULL OR submitted_at < ?) ",
+            $tail
+        )
+    };
+}
+
+macro_rules! bind_jobs {
+    ($q:expr, $f:expr) => {{
+        let f = $f;
+        let t = f.text.as_deref().map(like_pattern);
+        let n = f.not_text.as_deref().map(like_pattern);
+        $q.bind(f.status.clone())
+            .bind(f.status.clone())
+            .bind(f.verdict.clone())
+            .bind(f.verdict.clone())
+            .bind(f.endpoint_id)
+            .bind(f.endpoint_id)
+            .bind(f.kind.clone())
+            .bind(f.kind.clone())
+            .bind(f.agent_id)
+            .bind(f.agent_id)
+            .bind(t.clone())
+            .bind(t.clone())
+            .bind(t)
+            .bind(n.clone())
+            .bind(n.clone())
+            .bind(n)
+            .bind(f.since)
+            .bind(f.since)
+            .bind(f.until)
+            .bind(f.until)
+    }};
 }
 
 fn from_row(r: &AnyRow) -> Result<Job, DbError> {
@@ -127,12 +189,12 @@ fn from_row(r: &AnyRow) -> Result<Job, DbError> {
 }
 
 macro_rules! select {
-    ($tail:literal) => {
+    ($($tail:tt)+) => {
         concat!(
             "SELECT id, kind, status, verdict, target, sha256, size_bytes, endpoint_id, schedule_id, agent_id, ",
             "submitted_by, transport, submitted_at, started_at, finished_at, files_scanned, detections_json, ",
             "errors_json, error_code, error_message FROM scan_jobs ",
-            $tail
+            $($tail)+
         )
     };
 }
@@ -214,6 +276,8 @@ impl Db {
             .then(|| serde_json::to_string(&o.errors))
             .transpose()
             .map_err(|e| DbError::Encode(e.to_string()))?;
+        let mut tx = self.pool().begin().await?;
+        let now = now_ms();
         let r = sqlx::query(self.sql(
             "UPDATE scan_jobs SET status = 'FINISHED', verdict = ?, finished_at = ?, files_scanned = ?, \
              detections_json = ?, errors_json = ?, error_code = ?, error_message = ?, \
@@ -221,7 +285,7 @@ impl Db {
              WHERE id = ? AND (? IS NULL OR status = ?)",
         ))
         .bind(o.verdict)
-        .bind(now_ms())
+        .bind(now)
         .bind(o.files_scanned)
         .bind(det)
         .bind(err)
@@ -232,8 +296,27 @@ impl Db {
         .bind(id)
         .bind(guard)
         .bind(guard)
-        .execute(self.pool())
+        .execute(&mut *tx)
         .await?;
+        // One row per hit, so the dashboard and Detections page need no JSON scans.
+        if r.rows_affected() == 1 {
+            for (path, sigs) in &o.detections {
+                for sig in sigs {
+                    let sig: String = sig.chars().take(255).collect();
+                    sqlx::query(self.sql(
+                        "INSERT INTO detections (job_id, found_at, path, signature, kind, endpoint_id, agent_id) \
+                         SELECT id, ?, ?, ?, kind, endpoint_id, agent_id FROM scan_jobs WHERE id = ?",
+                    ))
+                    .bind(now)
+                    .bind(path)
+                    .bind(sig)
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+            }
+        }
+        tx.commit().await?;
         Ok(r.rows_affected())
     }
 
@@ -300,28 +383,20 @@ impl Db {
         page: i64,
         size: i64,
     ) -> Result<(Vec<Job>, i64), DbError> {
-        let total: i64 = sqlx::query_scalar(self.sql(
-            "SELECT COUNT(*) FROM scan_jobs WHERE (? IS NULL OR status = ?) AND (? IS NULL OR verdict = ?) \
-             AND (? IS NULL OR endpoint_id = ?)",
-        ))
-        .bind(f.status.as_deref())
-        .bind(f.status.as_deref())
-        .bind(f.verdict.as_deref())
-        .bind(f.verdict.as_deref())
-        .bind(f.endpoint_id)
-        .bind(f.endpoint_id)
+        let total: i64 = bind_jobs!(
+            sqlx::query_scalar(
+                self.sql(concat!("SELECT COUNT(*) FROM scan_jobs ", job_where!("")))
+            ),
+            f
+        )
         .fetch_one(self.pool())
         .await?;
-        let rows = sqlx::query(self.sql(select!(
-            "WHERE (? IS NULL OR status = ?) AND (? IS NULL OR verdict = ?) AND (? IS NULL OR endpoint_id = ?) \
-             ORDER BY submitted_at DESC, id DESC LIMIT ? OFFSET ?"
-        )))
-        .bind(f.status.as_deref())
-        .bind(f.status.as_deref())
-        .bind(f.verdict.as_deref())
-        .bind(f.verdict.as_deref())
-        .bind(f.endpoint_id)
-        .bind(f.endpoint_id)
+        let rows = bind_jobs!(
+            sqlx::query(self.sql(select!(job_where!(
+                "ORDER BY submitted_at DESC, id DESC LIMIT ? OFFSET ?"
+            )))),
+            f
+        )
         .bind(size)
         .bind(page.saturating_mul(size))
         .fetch_all(self.pool())

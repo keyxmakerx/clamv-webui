@@ -1,0 +1,62 @@
+/* Dashboard, filters, facets, charts and preferences. Uses the theme tokens in style.css. */
+.page-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:.75rem}
+.page-head h1{margin:0}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:999px;padding:3px;background:var(--card2);margin-left:auto}
+.seg-btn{padding:.25rem .8rem;border-radius:999px;text-decoration:none;color:var(--muted);font-size:.9rem}
+.seg-btn.active,.seg-btn:hover{background:var(--accent);color:#fff}
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}
+.kpi{display:flex;flex-direction:column;gap:2px;border:1px solid var(--border);background:var(--card);border-radius:var(--radius-sm);padding:14px 16px;text-decoration:none;color:var(--text);box-shadow:var(--shadow);transition:transform .12s ease,border-color .12s ease}
+a.kpi:hover{transform:translateY(-2px);border-color:var(--accent)}
+.kpi-label{color:var(--muted);font-size:.85rem}
+.kpi-value{font-size:1.75rem;line-height:1.2;font-variant-numeric:tabular-nums}
+.kpi-delta{color:var(--muted);font-size:.78rem}
+.kpi-danger .kpi-value{color:var(--danger)}
+.kpi-warn .kpi-value{color:var(--warn)}
+.kpi-ok .kpi-value{color:var(--success)}
+.chart-wrap{overflow-x:auto}
+.chart{width:100%;min-width:520px;height:auto;display:block;margin-top:.5rem}
+.chart-grid{stroke:var(--border);stroke-width:1}
+.chart-axis{fill:var(--muted);font-size:11px}
+.chart-hit{fill:transparent}
+.chart a:hover .chart-hit{fill:var(--border)}
+.bar-ok{fill:var(--accent)}
+.bar-hit{fill:var(--danger)}
+.bar-err{fill:var(--warn)}
+.chart-legend{display:flex;align-items:center;gap:6px;color:var(--muted)}
+.lg{display:inline-block;width:10px;height:10px;border-radius:2px;margin-left:8px}
+.lg-ok{background:var(--accent)}.lg-hit{background:var(--danger)}.lg-err{background:var(--warn)}
+.grid-three{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+.toprow{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:6px 4px;border-radius:8px;text-decoration:none;color:var(--text)}
+.toprow:hover{background:var(--card2)}
+.toprow-label{font-size:.88rem}
+.toprow-n{font-variant-numeric:tabular-nums;color:var(--muted);font-size:.85rem}
+.toprow progress{grid-column:1/-1;width:100%;height:6px;appearance:none;-webkit-appearance:none;border:0;border-radius:4px;background:var(--card2);overflow:hidden}
+.toprow progress::-webkit-progress-bar{background:var(--card2)}
+.toprow progress::-webkit-progress-value{background:var(--danger);border-radius:4px}
+.toprow progress::-moz-progress-bar{background:var(--danger);border-radius:4px}
+.filter-bar{display:flex;flex-direction:column;gap:8px}
+.filter-search{position:relative;display:flex;align-items:center}
+.filter-search>.fa-search{position:absolute;left:12px;color:var(--muted)}
+.filter-search input{padding-left:34px;padding-right:40px}
+.search-help-toggle{position:absolute;right:4px;color:var(--muted)}
+.search-help{font-size:.82rem;color:var(--muted);border:1px dashed var(--border);border-radius:10px;padding:8px 10px}
+.filter-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.filter-chips .form-select{width:auto}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--accent);border-radius:999px;padding:.15rem .6rem;font-size:.82rem;text-decoration:none;color:var(--text)}
+.chip:hover{background:var(--accent);color:#fff}
+.det-layout{display:grid;grid-template-columns:260px 1fr;gap:16px;align-items:start}
+@media(max-width:900px){.det-layout{grid-template-columns:1fr}}
+.facet{display:flex;justify-content:space-between;gap:8px;padding:4px 6px;border-radius:8px;text-decoration:none;color:var(--text);font-size:.86rem}
+.facet:hover{background:var(--card2)}
+.facet.active{background:var(--accent);color:#fff}
+.facet-n{font-variant-numeric:tabular-nums;color:inherit;opacity:.75}
+.recovery-codes{columns:2;list-style:none;padding:0;font-size:1.05rem}
+.totp-qr{background:#fff;border-radius:12px;padding:8px}
+.totp-confirm{max-width:360px}
+.passkey-add{max-width:480px}
+.topbar-icon{background:transparent;border:1px solid var(--border);color:var(--text);border-radius:10px;width:38px;height:38px;display:inline-grid;place-items:center}
+.topbar-icon:hover{border-color:var(--accent)}
+.prefs-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;max-width:760px}
+time[data-local]{white-space:nowrap}
+html{background:var(--bg0)}
+body{min-height:100vh;background-attachment:fixed}

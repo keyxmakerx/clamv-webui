@@ -681,3 +681,136 @@ async fn second_factors_everywhere() {
         assert!(db.delete_user(&u.id).await.expect("delete"));
     }
 }
+
+#[tokio::test]
+async fn dashboard_and_detection_queries_everywhere() {
+    use clamv_webui::db::jobs::{JobFilter, NewJob, Outcome};
+    use clamv_webui::db::stats::DetectionFilter;
+    for db in databases().await {
+        let kind = db.kind();
+        let tag = new_id()[..8].to_owned();
+        let target = format!("/data/{tag}/x 100%_done");
+        let j = db
+            .create_job(NewJob {
+                kind: "WATCH",
+                target: &target,
+                endpoint_id: None,
+                schedule_id: None,
+                agent_id: None,
+                submitted_by: Some("watcher"),
+                transport: "WATCH",
+                running: true,
+            })
+            .await
+            .expect("create");
+        let mut det = std::collections::BTreeMap::new();
+        det.insert(
+            target.clone(),
+            vec![format!("Sig-{tag}"), format!("Other-{tag}")],
+        );
+        let o = Outcome {
+            verdict: "VIRUS_FOUND",
+            files_scanned: 7,
+            detections: det,
+            errors: Vec::new(),
+            error_code: None,
+            error_message: None,
+            sha256: None,
+            size_bytes: None,
+        };
+        assert!(
+            db.finish_job_if(&j.id, "RUNNING", &o)
+                .await
+                .expect("finish")
+        );
+        let since = now_ms() - 60_000;
+        let f = DetectionFilter {
+            text: Some(tag.clone()),
+            ..Default::default()
+        };
+        assert_eq!(db.count_detections(&f).await.expect("count"), 2, "{kind:?}");
+        let sigs = db.detection_signatures(&f, 10).await.expect("sigs");
+        assert_eq!(sigs.len(), 2, "{kind:?}");
+        assert_eq!(
+            db.detection_kinds(&f).await.expect("kinds"),
+            vec![("WATCH".to_owned(), 2)]
+        );
+        assert_eq!(
+            db.detection_sources(&f).await.expect("src"),
+            vec![(None, None, 2)]
+        );
+        assert_eq!(db.detection_paths(&f, 10).await.expect("paths").len(), 2);
+        let exact = DetectionFilter {
+            signature: Some(format!("Sig-{tag}")),
+            ..Default::default()
+        };
+        assert_eq!(
+            db.list_detections(&exact, 0, 10).await.expect("list").len(),
+            1,
+            "{kind:?}"
+        );
+        // LIKE wildcards are literal.
+        let pct = DetectionFilter {
+            path_text: Some("100%_done".into()),
+            text: Some(tag.clone()),
+            ..Default::default()
+        };
+        assert_eq!(
+            db.count_detections(&pct).await.expect("count"),
+            2,
+            "{kind:?} literal %"
+        );
+        let none = DetectionFilter {
+            path_text: Some("100%Xdone".into()),
+            text: Some(tag.clone()),
+            ..Default::default()
+        };
+        assert_eq!(
+            db.count_detections(&none).await.expect("count"),
+            0,
+            "{kind:?} % is not a wildcard"
+        );
+        let pre = DetectionFilter {
+            path_prefix: Some(format!("/data/{tag}/")),
+            ..Default::default()
+        };
+        assert_eq!(db.count_detections(&pre).await.expect("count"), 2);
+        let b = db
+            .activity(since, 3_600_000, -6 * 3_600_000)
+            .await
+            .expect("activity");
+        assert!(b.iter().map(|x| x.detections).sum::<i64>() >= 1, "{kind:?}");
+        assert!(
+            db.files_scanned_since(since).await.expect("sum") >= 7,
+            "{kind:?}"
+        );
+        assert!(
+            db.kinds_since(since)
+                .await
+                .expect("kinds")
+                .iter()
+                .any(|(k, _)| k == "WATCH")
+        );
+        let jf = JobFilter {
+            text: Some(tag.clone()),
+            kind: Some("WATCH".into()),
+            since: Some(since),
+            ..Default::default()
+        };
+        assert_eq!(
+            db.list_jobs(&jf, 0, 10).await.expect("jobs").1,
+            1,
+            "{kind:?}"
+        );
+        let nf = JobFilter {
+            text: Some(tag.clone()),
+            not_text: Some("watcher".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            db.list_jobs(&nf, 0, 10).await.expect("jobs").1,
+            0,
+            "{kind:?} negation"
+        );
+    }
+}

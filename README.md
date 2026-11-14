@@ -8,6 +8,10 @@ Forked from an earlier Java application, which has been replaced entirely. Licen
 ## Features
 
 - **Scans**: upload scans (in-memory stream to clamd), path scans limited to `SCAN_ROOTS`, job history with per-file results.
+- **Dashboard**: scans, detections and failures over 24 h, 7 or 30 days, compared with the period before, with a clickable activity chart and the top signatures, folders and hosts.
+- **Detections page**: every infected file across all hosts, filtered by signature, host, type and folder, with CSV export (up to 50,000 rows).
+- **Search**: the Jobs and Detections pages take free text plus `field:value` terms, for example `sig:Eicar host:nas -path:/games after:7d`. Quotes match exactly, `-` excludes, dates take `YYYY-MM-DD` or `7d`, `12h`, `30m`. Filters are remembered per browser.
+- **Display**: light and dark themes, times shown in your own time zone (or a fixed one) with a 12 or 24 hour clock, set under Account.
 - **Schedules**: cron schedules per path. Each run first scans an EICAR control, so a run against a broken clamd reports a failure, not a clean result.
 - **Watched folders**: files are scanned the moment they are written (Linux inotify), with periodic polling as a safety net.
 - **Canary files**: decoys that raise an alert (log, audit, webhook) the moment anything opens, changes or deletes them.

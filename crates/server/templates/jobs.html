@@ -2,18 +2,28 @@
 {% block head %}{% if refresh %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
 {% block title %}Jobs · ClamAV Web UI{% endblock %}
 {% block content %}
-<h1 class="h3">Jobs</h1>
-<form method="get" action="/jobs" class="row g-2 align-items-end mt-1">
-<div class="col-auto"><label class="form-label" for="fs">Status</label><select class="form-select w-auto" id="fs" name="status">
-<option value="">any</option>{% for v in ["QUEUED", "RUNNING", "FINISHED"] %}<option{% if status == *v %} selected{% endif %}>{{ v }}</option>{% endfor %}</select></div>
-<div class="col-auto"><label class="form-label" for="fv">Verdict</label><select class="form-select w-auto" id="fv" name="verdict">
-<option value="">any</option>{% for v in ["OK", "VIRUS_FOUND", "ERROR"] %}<option{% if verdict == *v %} selected{% endif %}>{{ v }}</option>{% endfor %}</select></div>
-<div class="col-auto"><button class="btn btn-outline-primary" type="submit">Filter</button></div>
-<div class="col-auto muted small">{{ total }} job(s){% if refresh %} · refreshing every 5 s{% endif %}</div>
+<div class="page-head"><h1 class="h3">Jobs</h1><span class="muted small">{{ total }} job(s){% if refresh %} · refreshing every 5 s{% endif %}</span></div>
+<form method="get" action="/jobs" class="filter-bar" data-remember="jobs">
+<div class="filter-search"><i class="fas fa-search" aria-hidden="true"></i>
+<input class="form-control" type="search" name="q" value="{{ q }}" maxlength="512" placeholder="Search: eicar  kind=WATCH  -path:/tmp  after:2026-11-01  agent=nas-2" aria-label="Search jobs">
+<button type="button" class="btn btn-link btn-sm search-help-toggle" data-toggle-help="jobs-help" aria-expanded="false" title="Search help"><i class="fas fa-info-circle" aria-hidden="true"></i></button></div>
+<div class="filter-chips">
+<select class="form-select form-select-sm" name="range" aria-label="Time range"><option value="">Any time</option>{% for (v, l) in [("1h", "Last hour"), ("24h", "Last 24 h"), ("7d", "Last 7 days"), ("30d", "Last 30 days")] %}<option value="{{ v }}"{% if range == *v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select>
+<select class="form-select form-select-sm" name="verdict" aria-label="Verdict"><option value="">Any verdict</option>{% for v in ["OK", "VIRUS_FOUND", "ERROR"] %}<option{% if verdict == *v %} selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+<select class="form-select form-select-sm" name="status" aria-label="Status"><option value="">Any status</option>{% for v in ["QUEUED", "RUNNING", "FINISHED"] %}<option{% if status == *v %} selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+<select class="form-select form-select-sm" name="kind" aria-label="Type"><option value="">Any type</option>{% for v in ["UPLOAD", "PATH", "WATCH", "CONTROL"] %}<option{% if kind == *v %} selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+<select class="form-select form-select-sm" name="source" aria-label="Endpoint or agent"><option value="">Any host</option>{% for (v, l) in sources %}<option value="{{ v }}"{% if source == *v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select>
+{% if let Some(v) = window.0 %}<input type="hidden" name="since" value="{{ v }}">{% endif %}{% if let Some(v) = window.1 %}<input type="hidden" name="until" value="{{ v }}">{% endif %}
+<button class="btn btn-sm btn-primary" type="submit">Apply</button>
+<a class="btn btn-sm btn-outline-secondary" href="/jobs?reset=1" data-forget="jobs">Clear</a>
+</div>
+<div class="search-help d-none" id="jobs-help"><code>word</code> or <code>"two words"</code> match target or submitter · <code>field:value</code> contains, <code>field=value</code> exact · <code>-</code> negates · fields: <code>target</code>, <code>by</code>, <code>kind</code>, <code>verdict</code>, <code>status</code>, <code>agent</code>/<code>endpoint</code>, <code>after</code>, <code>before</code>, <code>since:7d</code></div>
 </form>
+{% if window.0.is_some() || window.1.is_some() %}<div class="small muted mt-2">Showing a time window from the dashboard chart. <a href="{{ self.unwindowed() }}">Remove it</a></div>{% endif %}
+{% for w in warnings %}<div class="alert alert-warning py-1 small mt-2" role="status">{{ w }}</div>{% endfor %}
 <section class="card mt-3"><div class="card-body table-responsive">
 <table class="table table-sm align-middle">
-<thead><tr><th>Submitted</th><th>Type</th><th>Target</th><th>Endpoint</th><th>By</th><th>Result</th><th>Duration</th></tr></thead>
+<thead><tr><th>Submitted</th><th>Type</th><th>Target</th><th>Host</th><th>By</th><th>Result</th><th>Duration</th></tr></thead>
 <tbody>
 {% for r in rows %}<tr>
 <td class="small text-nowrap"><a href="/jobs/{{ r.id }}">{{ r.submitted }}</a></td>
@@ -25,7 +35,7 @@
 {% if !r.signatures.is_empty() %}<div class="small">{{ r.signatures }}</div>{% endif %}
 {% if r.problems > 0 %}<div class="small muted">{{ r.problems }} file(s) not fully scanned</div>{% endif %}</td>
 <td class="small text-nowrap">{{ r.duration }}</td>
-</tr>{% else %}<tr><td colspan="7" class="muted">No jobs yet.</td></tr>{% endfor %}
+</tr>{% else %}<tr><td colspan="7" class="muted">No jobs match.</td></tr>{% endfor %}
 </tbody></table>
 {% if pages > 1 %}<nav aria-label="Pages" class="d-flex gap-2 align-items-center">
 {% if page > 0 %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page - 1) }}">Newer</a>{% endif %}

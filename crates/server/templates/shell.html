@@ -8,7 +8,8 @@
 <a class="nav-btn tab-link{% if nav.page == "dashboard" %} active{% endif %}" href="/dashboard"{% if nav.page == "dashboard" %} aria-current="page"{% endif %}><i class="fas fa-tachometer-alt" aria-hidden="true"></i>Dashboard</a>
 <a class="nav-btn tab-link{% if nav.page == "clamd" %} active{% endif %}" href="/clamd"{% if nav.page == "clamd" %} aria-current="page"{% endif %}><i class="fas fa-server" aria-hidden="true"></i>clamd Status</a>
 {% if nav.is_operator %}<a class="nav-btn tab-link{% if nav.page == "scan" %} active{% endif %}" href="/scan"{% if nav.page == "scan" %} aria-current="page"{% endif %}><i class="fas fa-search" aria-hidden="true"></i>Scan</a>
-<a class="nav-btn tab-link{% if nav.page == "jobs" %} active{% endif %}" href="/jobs"{% if nav.page == "jobs" %} aria-current="page"{% endif %}><i class="fas fa-tasks" aria-hidden="true"></i>Jobs</a>{% endif %}
+<a class="nav-btn tab-link{% if nav.page == "jobs" %} active{% endif %}" href="/jobs"{% if nav.page == "jobs" %} aria-current="page"{% endif %}><i class="fas fa-tasks" aria-hidden="true"></i>Jobs</a>
+<a class="nav-btn tab-link{% if nav.page == "detections" %} active{% endif %}" href="/detections"{% if nav.page == "detections" %} aria-current="page"{% endif %}><i class="fas fa-biohazard" aria-hidden="true"></i>Detections</a>{% endif %}
 </nav>
 {% if nav.is_admin %}
 <div class="sidebar-divider"></div>
@@ -29,6 +30,7 @@
 <main class="app-main">
 <header class="app-topbar"><div><div class="app-title__name">ClamAV</div><div class="app-title__subtitle">Self-hosted malware scanning console</div></div>
 <div class="app-topbar__right">
+<button type="button" class="topbar-icon" id="theme-toggle" title="Switch light or dark theme" aria-label="Switch light or dark theme"><i class="fas fa-adjust" aria-hidden="true"></i></button>
 <div class="topbar-username"><span>User:</span> <a href="/account/security"><strong>{{ nav.username }}</strong></a> <span class="muted small">({{ nav.role }})</span></div>
 <form method="post" action="/logout" class="topbar-logout">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">

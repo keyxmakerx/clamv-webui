@@ -667,6 +667,7 @@ async fn list_jobs(
         status: q.status,
         verdict: q.verdict,
         endpoint_id,
+        ..JobFilter::default()
     };
     match st.db.list_jobs(&f, page, size).await {
         Ok((list, total)) => ok(

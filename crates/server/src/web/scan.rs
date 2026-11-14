@@ -510,12 +510,43 @@ fn fmt_size(b: Option<i64>) -> String {
 
 /// Display names for endpoints and agents.
 #[derive(Default)]
-pub(crate) struct Names {
+pub struct Names {
     endpoints: std::collections::HashMap<i64, String>,
     agents: std::collections::HashMap<i64, String>,
 }
 
 impl Names {
+    /// Endpoint or agent with this name (case-insensitive).
+    pub(crate) fn find(&self, name: &str) -> Option<(Option<i64>, Option<i64>)> {
+        if let Some((id, _)) = self
+            .endpoints
+            .iter()
+            .find(|(_, n)| n.eq_ignore_ascii_case(name))
+        {
+            return Some((Some(*id), None));
+        }
+        self.agents
+            .iter()
+            .find(|(_, n)| n.eq_ignore_ascii_case(name))
+            .map(|(id, _)| (None, Some(*id)))
+    }
+
+    /// (value, label) pairs for a source picker, sorted by label.
+    pub(crate) fn choices(&self) -> Vec<(String, String)> {
+        let mut v: Vec<(String, String)> = self
+            .endpoints
+            .iter()
+            .map(|(id, n)| (format!("e:{id}"), n.clone()))
+            .chain(
+                self.agents
+                    .iter()
+                    .map(|(id, n)| (format!("a:{id}"), format!("{n} (agent)"))),
+            )
+            .collect();
+        v.sort_by(|a, b| a.1.cmp(&b.1));
+        v
+    }
+
     pub(crate) fn label(&self, endpoint_id: Option<i64>, agent_id: Option<i64>) -> String {
         match agent_id {
             Some(a) => format!(
@@ -573,6 +604,13 @@ struct JobsPage {
     rows: Vec<JobRow>,
     status: String,
     verdict: String,
+    kind: String,
+    source: String,
+    range: String,
+    q: String,
+    sources: Vec<(String, String)>,
+    warnings: Vec<String>,
+    window: (Option<i64>, Option<i64>),
     page: i64,
     pages: i64,
     total: i64,
@@ -584,13 +622,34 @@ impl JobsPage {
         badge(v)
     }
 
-    fn link(&self, page: i64) -> String {
-        let mut q = format!("/jobs?page={page}");
-        if !self.status.is_empty() {
-            q.push_str(&format!("&status={}", self.status));
+    fn unwindowed(&self) -> String {
+        let mut q = self.link(0);
+        if let Some(i) = q.find("&since=").or_else(|| q.find("&until=")) {
+            q.truncate(i);
         }
-        if !self.verdict.is_empty() {
-            q.push_str(&format!("&verdict={}", self.verdict));
+        q
+    }
+
+    fn link(&self, page: i64) -> String {
+        let enc = |v: &str| url::form_urlencoded::byte_serialize(v.as_bytes()).collect::<String>();
+        let mut q = format!("/jobs?page={page}");
+        for (k, v) in [
+            ("status", &self.status),
+            ("verdict", &self.verdict),
+            ("kind", &self.kind),
+            ("source", &self.source),
+            ("range", &self.range),
+            ("q", &self.q),
+        ] {
+            if !v.is_empty() {
+                q.push_str(&format!("&{k}={}", enc(v)));
+            }
+        }
+        if let Some(v) = self.window.0 {
+            q.push_str(&format!("&since={v}"));
+        }
+        if let Some(v) = self.window.1 {
+            q.push_str(&format!("&until={v}"));
         }
         q
     }
@@ -601,6 +660,13 @@ struct JobsQuery {
     page: Option<i64>,
     status: Option<String>,
     verdict: Option<String>,
+    kind: Option<String>,
+    source: Option<String>,
+    range: Option<String>,
+    since: Option<i64>,
+    until: Option<i64>,
+    #[serde(default)]
+    q: String,
 }
 
 /// Only known values pass through to the query.
@@ -608,20 +674,95 @@ fn known(v: Option<String>, allowed: &[&str]) -> Option<String> {
     v.filter(|v| allowed.contains(&v.as_str()))
 }
 
+pub(crate) const KINDS: [&str; 4] = [
+    crate::scan::KIND_UPLOAD,
+    crate::scan::KIND_PATH,
+    crate::scan::KIND_WATCH,
+    crate::schedule::KIND_CONTROL,
+];
+const STATUSES: [&str; 3] = [jobs::QUEUED, jobs::RUNNING, jobs::FINISHED];
+const VERDICTS: [&str; 3] = [jobs::OK, jobs::VIRUS_FOUND, jobs::ERROR];
+
+/// `e:<id>` or `a:<id>` from the source picker.
+pub(crate) fn parse_source(v: &str) -> (Option<i64>, Option<i64>) {
+    match v.split_once(':') {
+        Some(("e", id)) => (id.parse().ok(), None),
+        Some(("a", id)) => (None, id.parse().ok()),
+        _ => (None, None),
+    }
+}
+
+/// Lower bound for a range preset.
+pub(crate) fn range_since(range: &str, now: i64) -> Option<i64> {
+    match range {
+        "1h" => Some(now - 3_600_000),
+        "24h" => Some(now - 86_400_000),
+        "7d" => Some(now - 7 * 86_400_000),
+        "30d" => Some(now - 30 * 86_400_000),
+        _ => None,
+    }
+}
+
 async fn jobs_page(
     State(st): State<Arc<AppState>>,
     auth: Auth,
+    headers: axum::http::HeaderMap,
     Query(q): Query<JobsQuery>,
 ) -> Response {
     let (s, u) = match auth.require(Role::Operator) {
         Ok(x) => x,
         Err(r) => return r,
     };
-    let filter = JobFilter {
-        status: known(q.status, &[jobs::QUEUED, jobs::RUNNING, jobs::FINISHED]),
-        verdict: known(q.verdict, &[jobs::OK, jobs::VIRUS_FOUND, jobs::ERROR]),
-        endpoint_id: None,
+    let names = endpoint_names(&st).await;
+    let now = crate::db::now_ms();
+    let offset = super::tz_offset_ms(&headers);
+    let range = known(q.range, &["1h", "24h", "7d", "30d"]).unwrap_or_default();
+    let source = q.source.unwrap_or_default();
+    let (endpoint_id, agent_id) = parse_source(&source);
+    let mut filter = JobFilter {
+        status: known(q.status, &STATUSES),
+        verdict: known(q.verdict, &VERDICTS),
+        kind: known(q.kind, &KINDS),
+        endpoint_id,
+        agent_id,
+        since: q.since.or_else(|| range_since(&range, now)),
+        until: q.until,
+        ..JobFilter::default()
     };
+    let window = (q.since, q.until);
+    let qtext: String = q.q.chars().take(512).collect();
+    let terms = super::search::parse(&qtext);
+    let (text, not_text) = super::search::free_text(&terms);
+    filter.text = text;
+    filter.not_text = not_text;
+    let mut warnings = Vec::new();
+    for t in terms.iter().filter(|t| t.field.is_some()) {
+        let v = t.value.as_str();
+        let up = v.to_ascii_uppercase();
+        match (t.field.as_deref().unwrap_or_default(), t.negate) {
+            ("target" | "path" | "by", false) => filter.text = Some(v.to_owned()),
+            ("target" | "path" | "by", true) => filter.not_text = Some(v.to_owned()),
+            ("kind" | "type", false) if KINDS.contains(&up.as_str()) => filter.kind = Some(up),
+            ("verdict", false) if VERDICTS.contains(&up.as_str()) => filter.verdict = Some(up),
+            ("status", false) if STATUSES.contains(&up.as_str()) => filter.status = Some(up),
+            ("after" | "since", false) => match super::search::date(v, now, offset) {
+                Some(d) => filter.since = Some(d),
+                None => warnings.push(format!("Not a date: {v}")),
+            },
+            ("before" | "until", false) => match super::search::date(v, now, offset) {
+                Some(d) => filter.until = Some(d),
+                None => warnings.push(format!("Not a date: {v}")),
+            },
+            ("endpoint" | "agent" | "host", false) => match names.find(v) {
+                Some((e, a)) => {
+                    filter.endpoint_id = e;
+                    filter.agent_id = a;
+                }
+                None => warnings.push(format!("No endpoint or agent named {v}")),
+            },
+            (f, _) => warnings.push(format!("Unknown or unsupported filter: {f}")),
+        }
+    }
     let page = q.page.unwrap_or(0).clamp(0, 100_000);
     let (list, total) = match st.db.list_jobs(&filter, page, PAGE_SIZE).await {
         Ok(x) => x,
@@ -630,15 +771,21 @@ async fn jobs_page(
             return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
         }
     };
-    let names = endpoint_names(&st).await;
     let refresh = list.iter().any(|j| j.status != jobs::FINISHED);
     render(
         StatusCode::OK,
         &JobsPage {
             nav: Nav::new("jobs", &s, &u),
             rows: list.iter().map(|j| row(j, &names)).collect(),
-            status: filter.status.unwrap_or_default(),
-            verdict: filter.verdict.unwrap_or_default(),
+            status: filter.status.clone().unwrap_or_default(),
+            verdict: filter.verdict.clone().unwrap_or_default(),
+            kind: filter.kind.clone().unwrap_or_default(),
+            source,
+            range,
+            q: qtext,
+            sources: names.choices(),
+            warnings,
+            window,
             page,
             pages: (total + PAGE_SIZE - 1) / PAGE_SIZE,
             total,

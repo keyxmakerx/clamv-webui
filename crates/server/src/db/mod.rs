@@ -14,6 +14,7 @@ pub mod passkeys;
 pub mod schedules;
 pub mod sessions;
 pub mod settings;
+pub mod stats;
 pub mod tokens;
 pub mod users;
 pub mod watch;

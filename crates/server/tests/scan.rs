@@ -772,3 +772,174 @@ async fn touching_a_canary_alerts() {
     assert!(audit.0.iter().any(|a| a.action == "CANARY_TRIPPED"));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+fn page_get(uri: &str, cookie: &str) -> Request<Body> {
+    Request::get(uri)
+        .header(header::COOKIE, cookie)
+        .body(Body::empty())
+        .expect("req")
+}
+
+#[tokio::test]
+async fn detections_dashboard_and_search() {
+    let base = std::env::temp_dir().join(format!("clamv-det-{}", clamv_webui::db::new_id()));
+    let root = base.join("media");
+    std::fs::create_dir_all(root.join("tv")).expect("mkdir");
+    let roots = root.to_str().expect("utf8").to_owned();
+    let (app, st, c, t) = app(&["--scan-roots", &roots]).await;
+    clamv_webui::scan::start(st.clone()).await;
+    let res = app
+        .clone()
+        .oneshot(form(
+            "/scan/path",
+            &format!("_csrf={t}&path={}/tv", root.display()),
+            &c,
+        ))
+        .await
+        .expect("res");
+    let id = res.headers()[header::LOCATION]
+        .to_str()
+        .expect("loc")
+        .trim_start_matches("/jobs/")
+        .to_owned();
+    wait_finished(&st, &id).await;
+
+    // One detection row per hit.
+    let rows = st
+        .db
+        .list_detections(&Default::default(), 0, 10)
+        .await
+        .expect("list");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].signature, "Eicar-Test-Signature");
+    assert_eq!(rows[0].job_id, id);
+
+    // Dashboard: chart, KPIs and top lists that link to filtered views.
+    for range in ["24h", "7d", "30d"] {
+        let page = body(
+            app.clone()
+                .oneshot(page_get(&format!("/dashboard?range={range}"), &c))
+                .await
+                .expect("res"),
+        )
+        .await;
+        assert!(page.contains("<svg class=\"chart\""), "{range}");
+        assert!(page.contains("Eicar-Test-Signature"));
+        assert!(
+            page.contains("/detections?range=") && page.contains("signature=Eicar-Test-Signature")
+        );
+        assert!(!page.contains("style="), "CSP: no inline styles");
+    }
+
+    // Detections page: facets, search and exact signature.
+    let page = body(
+        app.clone()
+            .oneshot(page_get("/detections", &c))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(page.contains("1 infected file(s)"));
+    assert!(page.contains("class=\"facet\"") && page.contains("/tv"));
+    let page = body(
+        app.clone()
+            .oneshot(page_get("/detections?q=sig%3DNope", &c))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(page.contains("0 infected file(s)"));
+    let page = body(
+        app.clone()
+            .oneshot(page_get("/detections?q=-eicar", &c))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(page.contains("0 infected file(s)"), "negation");
+    let page = body(
+        app.clone()
+            .oneshot(page_get(
+                &format!("/detections?q=folder%3A{}", root.join("tv").display()),
+                &c,
+            ))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(page.contains("1 infected file(s)"), "folder prefix");
+    let page = body(
+        app.clone()
+            .oneshot(page_get("/detections?q=bogus%3Ax", &c))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(page.contains("Unknown or unsupported filter: bogus"));
+    // Wildcards in search are literal.
+    let page = body(
+        app.clone()
+            .oneshot(page_get("/detections?q=%25", &c))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(page.contains("0 infected file(s)"));
+
+    // CSV export is spreadsheet-safe and filtered the same way.
+    let res = app
+        .clone()
+        .oneshot(page_get(
+            "/detections.csv?signature=Eicar-Test-Signature",
+            &c,
+        ))
+        .await
+        .expect("res");
+    assert_eq!(
+        res.headers()[header::CONTENT_TYPE],
+        "text/csv; charset=utf-8"
+    );
+    let csv = body(res).await;
+    assert_eq!(csv.lines().count(), 2);
+    assert!(csv.contains("\"Eicar-Test-Signature\""));
+
+    // Jobs search and filters.
+    let page = body(
+        app.clone()
+            .oneshot(page_get("/jobs?q=verdict%3DVIRUS_FOUND+kind%3DPATH", &c))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(page.contains("1 job(s)"));
+    let page = body(
+        app.clone()
+            .oneshot(page_get("/jobs?q=before%3A2000-01-01", &c))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(page.contains("0 job(s)"));
+    let page = body(
+        app.clone()
+            .oneshot(page_get("/jobs?q=after%3Asoon", &c))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(page.contains("Not a date: soon"));
+
+    // Deleting the job removes its detections.
+    assert_eq!(
+        st.db.prune_jobs(i64::MAX, i64::MAX).await.expect("prune"),
+        1
+    );
+    assert_eq!(
+        st.db
+            .count_detections(&Default::default())
+            .await
+            .expect("count"),
+        0
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
