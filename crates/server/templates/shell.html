@@ -3,7 +3,8 @@
 <div class="app-shell">
 <aside id="app-sidebar" class="app-sidebar">
 <div class="sidebar-header"><img class="sidebar-logo" alt="ClamAV" src="/images/logo.jpg">
-<div><div class="sidebar-appname">ClamAV Web UI</div><div class="sidebar-caption">Scan &amp; Monitor</div></div></div>
+<div><div class="sidebar-appname">ClamAV Web UI</div><div class="sidebar-caption">Scan &amp; Monitor</div></div>
+<button type="button" class="topbar-icon nav-toggle" id="nav-toggle" aria-controls="app-sidebar" aria-expanded="false" aria-label="Menu"><i class="fas fa-bars" aria-hidden="true"></i></button></div>
 <nav class="sidebar-section tabs" aria-label="Operations"><div class="sidebar-section__title">Operations</div>
 <a class="nav-btn tab-link{% if nav.page == "dashboard" %} active{% endif %}" href="/dashboard"{% if nav.page == "dashboard" %} aria-current="page"{% endif %}><i class="fas fa-tachometer-alt" aria-hidden="true"></i>Dashboard</a>
 <a class="nav-btn tab-link{% if nav.page == "clamd" %} active{% endif %}" href="/clamd"{% if nav.page == "clamd" %} aria-current="page"{% endif %}><i class="fas fa-server" aria-hidden="true"></i>clamd Status</a>

@@ -92,7 +92,7 @@ pub fn checks(c: &ConfFile, max_stream_mb: u64) -> Vec<(bool, String)> {
         Some(_) => out.push((true, "StreamMaxLength covers the upload limit.".into())),
         None => out.push((
             false,
-            "StreamMaxLength is not set; clamd's default (25 MiB in most builds) caps uploads.".into(),
+            "StreamMaxLength is not set; clamd's default (100 MiB, 25 MiB in older releases) caps uploads.".into(),
         )),
     }
     for key in ["MaxFileSize", "MaxScanSize"] {

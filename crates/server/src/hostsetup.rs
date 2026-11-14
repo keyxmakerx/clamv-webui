@@ -164,9 +164,41 @@ pub async fn run(h: &HostSetup) -> anyhow::Result<()> {
         );
     }
     println!(
-        "Done. Mount /run/dbus/system_bus_socket (read-only) and /{FIREWALL_DIR} (read-write) into clamv and its agents."
+        "Done. Mount /run/dbus/system_bus_socket (read-only) and /{FIREWALL_DIR} (read-write) into clamv and its agents (the commented volume lines in the compose files), then recreate the container."
     );
+    for n in notes(&h.root) {
+        println!("Note: {n}");
+    }
     Ok(())
+}
+
+/// What the host still lacks for the units to be of use. Paths are checked without
+/// following links, since the host's absolute symlinks point outside its mount here.
+fn notes(root: &Path) -> Vec<String> {
+    let has = |rel: &[&str]| rel.iter().any(|r| root.join(r).symlink_metadata().is_ok());
+    let mut v = Vec::new();
+    if !has(&["usr/share/polkit-1/rules.d"]) {
+        v.push(
+            "polkit with rules.d support (0.106 or newer, package polkitd) was not found; \
+             clamv cannot start the units until the host has it."
+                .to_owned(),
+        );
+    }
+    if !has(&["usr/bin/aide"]) {
+        v.push("/usr/bin/aide is missing; install AIDE and initialise its database to use the AIDE units.".to_owned());
+    }
+    if !has(&["usr/bin/rkhunter"]) {
+        v.push(
+            "/usr/bin/rkhunter is missing; install rkhunter to use the rkhunter units.".to_owned(),
+        );
+    }
+    if !has(&["usr/sbin/nft", "usr/bin/nft", "sbin/nft"]) {
+        v.push(
+            "nft is missing; install nftables for the Firewall page to read and apply rules."
+                .to_owned(),
+        );
+    }
+    v
 }
 
 async fn remove(h: &HostSetup, bus: &str) -> anyhow::Result<()> {
@@ -270,6 +302,20 @@ mod tests {
             f.iter()
                 .any(|(p, b, _)| p.ends_with("clamv.conf") && b.contains("u clamv 10001 "))
         );
+    }
+
+    #[test]
+    fn notes_name_what_the_host_lacks() {
+        let d = std::env::temp_dir().join(format!("clamv-notes-{}", std::process::id()));
+        std::fs::create_dir_all(d.join("usr/bin")).expect("usr/bin");
+        assert_eq!(notes(&d).len(), 4);
+        std::fs::create_dir_all(d.join("usr/share/polkit-1/rules.d")).expect("polkit");
+        std::fs::create_dir_all(d.join("usr/sbin")).expect("usr/sbin");
+        for f in ["usr/bin/aide", "usr/bin/rkhunter", "usr/sbin/nft"] {
+            std::fs::write(d.join(f), "").expect("tool");
+        }
+        assert!(notes(&d).is_empty());
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

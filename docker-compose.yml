@@ -1,4 +1,5 @@
 # UI plus its own clamd. For a clamd you already run, use docker-compose.external-clamd.yml.
+# Before the first start: mkdir -p data scan && sudo chown 10001:10001 data
 services:
   clamv-webui:
     image: ghcr.io/keyxmakerx/clamv-webui:latest
@@ -10,6 +11,7 @@ services:
       CLAMD_ENDPOINT: tcp://clamav:3310  # the bundled clamd below
       CLAMD_HOST_ALLOWLIST: clamav  # admins can only add endpoints on these hosts
       SCAN_ROOTS: /scan  # path scans and watched folders stay inside these
+      CLAMD_MAX_STREAM_MB: "100"  # the bundled clamd's StreamMaxLength; raise both for larger uploads
       LOG_FORMAT: json  # one JSON object per line
     ports:
       - "8080:8080"
@@ -25,7 +27,7 @@ services:
       - ./scan:/scan:ro  # files to scan; clamd sees the same path
 
   clamav:
-    image: clamav/clamav:latest  # raise StreamMaxLength to 1024M in clamd.conf for 1 GB uploads
+    image: clamav/clamav:latest  # first start downloads signatures; the UI shows it unreachable until then
     container_name: clamav
     restart: unless-stopped
     volumes:

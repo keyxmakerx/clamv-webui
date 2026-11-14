@@ -178,6 +178,7 @@ async fn spawn_health(a: Arc<Agent>) -> anyhow::Result<()> {
 async fn poll_loop(a: Arc<Agent>) {
     let mut backoff = Duration::from_secs(1);
     let mut connected = false;
+    let mut warned = false;
     loop {
         let free = u32::try_from(a.slots.available_permits()).unwrap_or(u32::MAX);
         let req = PollRequest {
@@ -210,6 +211,7 @@ async fn poll_loop(a: Arc<Agent>) {
                 if !connected {
                     tracing::info!(event = "agent.connected", server = %a.base, "connected to server");
                     connected = true;
+                    warned = false;
                 }
                 backoff = Duration::from_secs(1);
                 a.last_ok.store(now_ms(), Ordering::Relaxed);
@@ -234,6 +236,10 @@ async fn poll_loop(a: Arc<Agent>) {
                 if connected {
                     tracing::warn!(event = "agent.disconnected", error = %e, "lost the server; retrying");
                     connected = false;
+                } else if !warned {
+                    // Say it once: a wrong AGENT_SERVER_URL must not fail in silence.
+                    tracing::warn!(event = "agent.unreachable", server = %a.base, error = %e, "cannot reach the server; check AGENT_SERVER_URL from this host; retrying");
+                    warned = true;
                 } else {
                     tracing::debug!(error = %e, "server still unreachable");
                 }
