@@ -3,7 +3,7 @@
 {% block head %}{% if pending %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
 {% block content %}
 <h1 class="h3">Firewall</h1>
-<p class="muted">clamv writes only its own nftables table, <code>inet clamv</code>. Rules from Docker, CrowdSec, ufw, firewalld and anything else are shown here read-only and never touched. Each apply needs your passkey and rolls back on the host after 90 s unless clamv confirms it can still reach it.</p>
+<p class="muted">clamv writes only its own nftables table, <code>inet clamv</code>. Rules from Docker, CrowdSec, ufw, firewalld and anything else are shown here read-only and never touched. Applying or removing needs your passkey, and an apply rolls back on the host after 90 s unless clamv confirms it can still reach it.</p>
 <div class="filter-chips mb-3">{% for c in chips %}<a class="chip{% if c.active %} active{% endif %}" href="/admin/firewall{% if !c.value.is_empty() %}?host={{ c.value }}{% endif %}"{% if c.active %} aria-current="page"{% endif %}>{{ c.label }}</a>{% endfor %}</div>
 <div id="passkey-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
 <div id="stepup-ok" class="alert alert-success py-2 small d-none" role="status"></div>
@@ -77,7 +77,7 @@
 <details class="small mt-3"><summary class="muted">What gets loaded</summary><pre class="small mt-2 mb-0">{{ preview }}</pre></details>
 <div class="mt-3 d-flex flex-wrap gap-2">
 <button class="btn btn-sm btn-warning" type="button" data-stepup="firewall.apply" data-host="{{ host }}" data-csrf="{{ nav.csrf }}"{% if rules.is_empty() %} disabled{% endif %}><i class="fas fa-key" aria-hidden="true"></i> Apply with passkey</button>
-<form class="d-inline" method="post" action="/admin/firewall/remove"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ host }}"><button class="btn btn-sm btn-outline-danger" type="submit">Remove clamv's table</button></form>
+<button class="btn btn-sm btn-outline-danger" type="button" data-stepup="firewall.remove" data-host="{{ host }}" data-csrf="{{ nav.csrf }}"><i class="fas fa-key" aria-hidden="true"></i> Remove clamv's table</button>
 </div>
 </div></section>
 <script defer src="/js/passkey.js?v={{ crate::web::asset_v() }}"></script>

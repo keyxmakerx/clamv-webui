@@ -195,7 +195,9 @@ async fn poll_loop(a: Arc<Agent>) {
         match poll_once(&a, &req).await {
             Ok(resp) => {
                 let jobs = resp.jobs;
-                if let Some(list) = resp.canaries {
+                if let Some(mut list) = resp.canaries {
+                    // The server checks these too; a decoy is never written to a path this host would not accept.
+                    list.retain(|s| crate::canary::valid_path(&s.path).is_ok());
                     a.canaries.send_if_modified(|cur| {
                         let changed = *cur != list;
                         if changed {

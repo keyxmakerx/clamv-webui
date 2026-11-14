@@ -74,11 +74,15 @@ fn jok(v: serde_json::Value) -> Response {
 struct CsrfJson {
     #[serde(default)]
     csrf: String,
+    /// Current password or authenticator code; see `mfa::prove`.
+    #[serde(default)]
+    proof: String,
 }
 
 async fn register_options(
     State(st): State<Arc<AppState>>,
     auth: Auth,
+    info: RequestInfo,
     headers: HeaderMap,
     Json(b): Json<CsrfJson>,
 ) -> Response {
@@ -94,6 +98,10 @@ async fn register_options(
     let existing = st.db.list_passkeys(&u.id).await.unwrap_or_default();
     if i64::try_from(existing.len()).unwrap_or(i64::MAX) >= MAX_PASSKEYS {
         return jerr(StatusCode::BAD_REQUEST, "At most 10 passkeys per account.");
+    }
+    // The challenge is only handed out after this, so a stolen session cannot enrol its own key.
+    if let Err(m) = super::mfa::prove(&st, &u, &info, &b.proof).await {
+        return jerr(StatusCode::FORBIDDEN, m);
     }
     let Ok((handle, challenge)) = st.db.create_challenge("register", Some(&u.id)).await else {
         return jerr(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
@@ -207,6 +215,8 @@ async fn register(
 struct RemoveForm {
     #[serde(rename = "_csrf")]
     csrf: Option<String>,
+    #[serde(default)]
+    proof: String,
 }
 
 async fn remove(
@@ -225,6 +235,9 @@ async fn remove(
             StatusCode::FORBIDDEN,
             "Your session form expired. Reload and try again.",
         );
+    }
+    if let Err(m) = super::mfa::prove(&st, &u, &info, &f.proof).await {
+        return super::mfa::security(&st, &s, &u, Some(m.to_owned()), None, None, Vec::new()).await;
     }
     let removed = st.db.delete_passkey(&u.id, &id).await.unwrap_or(false);
     if removed {
@@ -267,9 +280,16 @@ struct LoginOptionsBody {
 
 async fn login_options(
     State(st): State<Arc<AppState>>,
+    info: RequestInfo,
     headers: HeaderMap,
     Json(b): Json<LoginOptionsBody>,
 ) -> Response {
+    if !st.passkey_challenges.allow(&info.ip.to_string()) {
+        return jerr(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many attempts. Try again in a minute.",
+        );
+    }
     let Some((_, rp_id)) = relying_party(&st, &headers) else {
         return jerr(StatusCode::BAD_REQUEST, "Set PUBLIC_URL to use passkeys.");
     };
@@ -626,6 +646,12 @@ async fn stepup(
                 );
                 r
             }
+            Err(m) => jerr(StatusCode::BAD_REQUEST, &m),
+        };
+    }
+    if act.name == "firewall.remove" {
+        return match super::firewall::remove_table(&st, &u, &info, p.host).await {
+            Ok(msg) => jok(json!({ "ok": true, "message": msg })),
             Err(m) => jerr(StatusCode::BAD_REQUEST, &m),
         };
     }

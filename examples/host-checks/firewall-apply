@@ -9,9 +9,20 @@ full=$run/full.nft
 status() {
   printf '%s %s %s\n' "$1" "$(date +%s)" "$2" >"$run/status" && mv -f "$run/status" "$dir/status"
 }
+# Read the plan through one open descriptor, and only if clamv itself owns that file:
+# a link to somebody else's file is never read, however it is swapped.
 [ -f "$dir/plan.nft" ] && [ ! -L "$dir/plan.nft" ] || { status refused "-"; exit 1; }
-head -c 65536 "$dir/plan.nft" >"$plan"
+exec 3<"$dir/plan.nft"
+owner=$(stat -c %u "$dir")
+[ "$owner" != 0 ] && [ "$(stat -L -c '%u %F' /proc/$$/fd/3 2>/dev/null)" = "$owner regular file" ] || { status refused "-"; exit 1; }
+head -c 65536 <&3 >"$plan"
+exec 3<&-
 hash=$(sha256sum "$plan" | cut -d' ' -f1)
+# Only the lines clamv's generator writes: one input chain that lets listed networks reach a port and drops the rest.
+allowed='^(  chain input \{|    type filter hook input priority -5; policy accept;|    ct state established,related accept|    iif "lo" accept|    (tcp|udp) dport [0-9]{1,5} ip saddr \{ [0-9./, ]+ \} accept|    (tcp|udp) dport [0-9]{1,5} ip6 saddr \{ [0-9a-f:./, ]+ \} accept|    (tcp|udp) dport [0-9]{1,5} drop|  \})$'
+if grep -Evq "$allowed" "$plan"; then
+  status refused "$hash"; exit 1
+fi
 # The plan is the inside of one table: no other tables, no ruleset or file commands, braces never close the table.
 if grep -Eqi '(^|[^a-z_-])(table|ruleset|include|define|flush|reset|destroy|delete|insert|replace|add|create|rename|export|import|monitor)([^a-z_-]|$)' "$plan"; then
   status refused "$hash"; exit 1

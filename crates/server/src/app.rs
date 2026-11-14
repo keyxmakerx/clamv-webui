@@ -26,6 +26,8 @@ pub struct AppState {
     pub scan_rate: crate::auth::ratelimit::RateLimit,
     /// Events per agent per minute (real-time scans and canary hits).
     pub agent_events: crate::auth::ratelimit::RateLimit,
+    /// Passkey sign-in challenges per address per minute; each one is a database row and needs no login.
+    pub passkey_challenges: crate::auth::ratelimit::RateLimit,
     pub watcher: crate::watch::Watcher,
     pub sealer: crate::auth::sealed::Sealer,
     pub trusted_proxies: Vec<crate::webhook::Cidr>,
@@ -64,6 +66,10 @@ impl AppState {
             ),
             agent_events: crate::auth::ratelimit::RateLimit::new(
                 1200,
+                std::time::Duration::from_secs(60),
+            ),
+            passkey_challenges: crate::auth::ratelimit::RateLimit::new(
+                30,
                 std::time::Duration::from_secs(60),
             ),
             notifier: crate::webhook::Notifier::new(&cfg),

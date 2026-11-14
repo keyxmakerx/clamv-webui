@@ -26,7 +26,6 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/admin/firewall/rules", post(add_rule))
         .route("/admin/firewall/rules/delete", post(delete_rule))
         .route("/admin/firewall/refresh", post(refresh))
-        .route("/admin/firewall/remove", post(remove))
 }
 
 /// How long the host waits for clamv to confirm (the apply script waits 90 s).
@@ -479,43 +478,25 @@ async fn refresh(State(st): State<Arc<AppState>>, auth: Auth, Form(f): Form<Host
     result(&st, &s, &me, host, r).await
 }
 
-async fn remove(
-    State(st): State<Arc<AppState>>,
-    auth: Auth,
-    info: RequestInfo,
-    Form(f): Form<HostForm>,
-) -> Response {
-    let (s, me) = match admin_post(auth, f.csrf.as_deref()) {
-        Ok(x) => x,
-        Err(r) => return r,
-    };
-    let host = match super::integrity::parse_host(&st, &f.host).await {
-        Ok(h) => h,
-        Err(m) => return result(&st, &s, &me, None, Err(m)).await,
-    };
-    let name = host_name(&st, host).await;
-    let r = match host {
+/// Remove clamv's table from a host; called after a passkey confirmation, since it reopens every port the plan narrowed.
+pub(super) async fn remove_table(
+    st: &Arc<AppState>,
+    me: &User,
+    info: &RequestInfo,
+    host: Option<i64>,
+) -> Result<String, String> {
+    let name = host_name(st, host).await;
+    match host {
         None => crate::firewall::remove()
             .await
-            .map_err(|e| crate::hostchecks::message(e.code).to_owned()),
-        Some(id) => queue(&st, id, &Op::Remove, &me.username).await,
-    };
-    if r.is_ok() {
-        tracing::warn!(event = "firewall.removed", user = %me.username, host = %name, "clamv's firewall table removed");
-        audit(&st, &me, &info, "FIREWALL_REMOVE", name.clone()).await;
+            .map_err(|e| crate::hostchecks::message(e.code).to_owned())?,
+        Some(id) => queue(st, id, &Op::Remove, &me.username).await?,
     }
-    result(
-        &st,
-        &s,
-        &me,
-        host,
-        r.map(|()| {
-            format!(
-                "Removing clamv's table on {name}. Rules owned by anything else stay as they are."
-            )
-        }),
-    )
-    .await
+    tracing::warn!(event = "firewall.removed", user = %me.username, host = %name, "clamv's firewall table removed with a passkey");
+    audit(st, me, info, "FIREWALL_REMOVE", name.clone()).await;
+    Ok(format!(
+        "Removing clamv's table on {name}. Rules owned by anything else stay as they are."
+    ))
 }
 
 /// Refuse plans that would plainly lock the admin out.
