@@ -1,0 +1,7 @@
+#!/bin/sh
+# Remove what clamv wrote to this host's firewall (its nft table, its ufw and firewalld rules), and nothing else.
+dir=/var/lib/clamv/firewall
+. /usr/local/libexec/clamv/firewall-lib
+clear_all
+printf 'removed %s - -\n' "$(date +%s)" >/run/clamv-firewall/status && mv -f /run/clamv-firewall/status "$dir/status"
+exit 0

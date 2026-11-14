@@ -1,0 +1,26 @@
+# clamv: load clamv's checked plan through nftables, ufw or firewalld; one fixed script, no traffic.
+[Unit]
+Description=clamv firewall: load clamv's plan
+ConditionPathExists=/usr/local/libexec/clamv/firewall-apply
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/clamv/firewall-apply
+TimeoutStartSec=180
+ProtectSystem=strict
+RuntimeDirectory=clamv-firewall
+RuntimeDirectoryMode=0700
+StateDirectory=clamv-firewall
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/clamv/firewall -/etc/ufw -/lib/ufw -/run
+PrivateTmp=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_ADMIN
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native

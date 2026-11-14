@@ -1,0 +1,41 @@
+{% extends "shell.html" %}
+{% block title %}API Tokens · ClamAV Web UI{% endblock %}
+{% block content %}
+<h1 class="h3">API tokens</h1>
+<p class="muted">For <code>clamctl</code>, its MCP server and scripts. Send as <code>Authorization: Bearer …</code>.</p>
+{% if let Some(sec) = secret %}<div class="alert alert-warning" role="alert"><strong>New token secret:</strong>
+<div class="mt-2"><code class="text-break user-select-all">{{ sec }}</code></div>
+<div class="small mt-2">Store it in a password manager or a secret file now. Only its hash is kept.</div></div>{% endif %}
+<section class="card mt-3"><div class="card-body">
+<h2 class="h5">Issue token</h2>
+<form method="post" action="/admin/api-tokens" class="row g-3">
+<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
+<div class="col-md-5"><label class="form-label" for="tl">Label</label><input class="form-control" id="tl" name="label" required maxlength="100" autocomplete="off" placeholder="nas-backup-check"></div>
+<div class="col-md-3"><label class="form-label" for="td">Expires after (days)</label><input class="form-control" id="td" name="days" type="number" min="1" max="3650" placeholder="never"></div>
+<fieldset class="col-12"><legend class="form-label fs-6">Scopes</legend>
+{% for sc in scopes %}<label class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="scope" value="{{ sc }}"{% if *sc == "jobs:read" || *sc == "health:read" || *sc == "endpoints:read" %} checked{% endif %}> <code>{{ sc }}</code></label>{% endfor %}
+</fieldset>
+<div class="col-md-6"><label class="form-label" for="te">Limit to endpoints (none selected: all)</label>
+<select class="form-select" id="te" name="endpoint" multiple size="3">{% for e in endpoints %}<option value="{{ e.id }}">{{ e.name }}</option>{% endfor %}</select></div>
+<div class="col-md-6"><label class="form-label" for="tr">Limit path scans to (comma-separated, empty: all roots)</label>
+<input class="form-control" id="tr" name="roots" maxlength="4096" placeholder="{{ roots }}" autocomplete="off"></div>
+<div class="col-12"><button class="btn btn-primary" type="submit">Issue token</button></div>
+</form>
+</div></section>
+<section class="card mt-3"><div class="card-body table-responsive">
+<table class="table table-sm align-middle">
+<thead><tr><th>Label</th><th>Scopes</th><th>Created</th><th>Expires</th><th>Last used</th><th></th></tr></thead>
+<tbody>
+{% for t in tokens %}<tr>
+<td><strong>{{ t.label }}</strong> <code class="small">{{ t.prefix }}…</code>
+{% if t.state == "active" %}<span class="badge bg-success">active</span>{% else %}<span class="badge bg-secondary">{{ t.state }}</span>{% endif %}
+{% if !t.limits.is_empty() %}<div class="small muted">{{ t.limits }}</div>{% endif %}</td>
+<td class="small"><code>{{ t.scopes }}</code></td>
+<td class="small">{{ t.created }}</td>
+<td class="small">{{ t.expires }}</td>
+<td class="small">{{ t.last_used }}</td>
+<td>{% if t.state == "active" %}<form method="post" action="/admin/api-tokens/{{ t.id }}/revoke"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Revoke</button></form>{% endif %}</td>
+</tr>{% else %}<tr><td colspan="6" class="muted">No tokens yet.</td></tr>{% endfor %}
+</tbody></table>
+</div></section>
+{% endblock %}

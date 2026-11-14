@@ -1,0 +1,45 @@
+{% extends "shell.html" %}
+{% block title %}CrowdSec decisions · ClamAV Web UI{% endblock %}
+{% block content %}
+{% let tab = "decisions" %}{% include "crowdsec_head.html" %}
+{% if status.configured %}
+{% if writable %}<section class="card"><div class="card-body">
+<h2 class="h5">Add a decision</h2>
+<form method="post" action="/crowdsec/decisions" class="row g-3 align-items-end">
+<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
+<div class="col-md-3"><label class="form-label" for="dv">IP or range</label><input class="form-control" id="dv" name="value" required maxlength="64" placeholder="203.0.113.7 or 203.0.113.0/24" autocomplete="off"></div>
+<div class="col-md-2"><label class="form-label" for="dk">Type</label><select class="form-select" id="dk" name="kind"><option value="ban">ban</option><option value="captcha">captcha</option></select></div>
+<div class="col-md-2"><label class="form-label" for="dd">For</label><select class="form-select" id="dd" name="duration">{% for (v, l) in durations %}<option value="{{ v }}"{% if *v == "4h" %} selected{% endif %}>{{ l }}</option>{% endfor %}</select></div>
+<div class="col-md-1"><label class="form-label" for="dc">or</label><input class="form-control" id="dc" name="custom" maxlength="8" placeholder="90m" autocomplete="off"></div>
+<div class="col-md-3"><label class="form-label" for="dr">Reason</label><input class="form-control" id="dr" name="reason" required maxlength="120" placeholder="probing /wp-login" autocomplete="off"></div>
+<div class="col-md-1"><button class="btn btn-danger w-100" type="submit">Add</button></div>
+</form>
+<p class="small muted mt-2 mb-0">Every bouncer on this LAPI applies it within its next pull. Your own address and anything wider than /8 (IPv4) or /32 (IPv6) is refused.</p>
+</div></section>{% endif %}
+<form method="get" action="/crowdsec/decisions" class="filter-bar mt-3">
+<div class="filter-search"><i class="fas fa-search" aria-hidden="true"></i>
+<input class="form-control" type="search" name="q" value="{{ q }}" maxlength="512" placeholder="Search: ip:203.0.113  origin=cscli  type=captcha  country=CN" aria-label="Search decisions"></div>
+<div class="filter-chips">
+<select class="form-select form-select-sm" name="expired" aria-label="Which decisions"><option value="">Active</option><option value="1"{% if expired %} selected{% endif %}>Ended</option></select>
+<label class="small"><input class="form-check-input" type="checkbox" name="all" value="1"{% if all %} checked{% endif %}> show duplicates</label>
+<button class="btn btn-sm btn-primary" type="submit">Apply</button>
+<span class="small muted">{{ total }} decision(s)</span>
+</div>
+</form>
+<section class="card mt-3"><div class="card-body table-responsive">
+<table class="table table-sm align-middle">
+<thead><tr><th>Value</th><th>Type</th><th>Origin</th><th>Reason</th><th>{% if expired %}Ended{% else %}Ends in{% endif %}</th><th></th></tr></thead>
+<tbody>
+{% for d in rows %}<tr>
+<td class="small"><code>{{ d.value }}</code> <span class="muted">{{ d.scope }}</span>{% if !d.country.is_empty() %} <span class="badge bg-secondary">{{ d.country }}</span>{% endif %}{% if d.dupes > 0 %} <span class="badge bg-secondary" title="Other decisions on the same value and type">+{{ d.dupes }}</span>{% endif %}</td>
+<td><span class="badge {% if d.active %}bg-danger{% else %}bg-secondary{% endif %}">{{ d.kind }}</span>{% if d.simulated %} <span class="badge bg-info text-dark">simulated</span>{% endif %}</td>
+<td class="small">{{ d.origin }}</td>
+<td class="small text-break">{{ d.scenario }}{% if !d.machine.is_empty() %}<div class="muted">seen by {{ d.machine }}</div>{% endif %}</td>
+<td class="small text-nowrap">{{ d.left }}</td>
+<td class="text-nowrap">{% if d.active && writable %}<form class="d-inline" method="post" action="/crowdsec/decisions/{{ d.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form>
+{% if d.dupes > 0 %}<form class="d-inline" method="post" action="/crowdsec/decisions/remove"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="value" value="{{ d.value }}"><button class="btn btn-sm btn-outline-danger" type="submit" title="Remove every decision on {{ d.value }}">Remove all</button></form>{% endif %}{% endif %}</td>
+</tr>{% else %}<tr><td colspan="6" class="muted">{% if expired %}No decisions ended in the look-back window.{% else %}No active decisions.{% endif %}</td></tr>{% endfor %}
+</tbody></table>
+</div></section>
+{% endif %}
+{% endblock %}

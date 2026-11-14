@@ -1,0 +1,17 @@
+#!/bin/sh
+# Rebuild AIDE's database and make it the baseline; handles plain and gzipped databases.
+set -eu
+log=/var/log/aide/aide-accept.log
+/usr/bin/aide --update >"$log" 2>&1 || rc=$?
+rc=${rc:-0}
+[ "$rc" -le 7 ] || { echo "aide --update failed ($rc)" >&2; exit "$rc"; }
+for ext in .gz ""; do
+  new=/var/lib/aide/aide.db.new$ext
+  if [ -f "$new" ]; then
+    mv -f "$new" "/var/lib/aide/aide.db$ext"
+    echo "baseline accepted: /var/lib/aide/aide.db$ext" >>"$log"
+    exit 0
+  fi
+done
+echo "aide --update wrote no new database under /var/lib/aide" >&2
+exit 1

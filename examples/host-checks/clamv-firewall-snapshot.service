@@ -1,0 +1,24 @@
+# clamv: read the host firewall; one fixed script, no traffic, writes only /var/lib/clamv/firewall.
+[Unit]
+Description=clamv firewall: read the host firewall
+ConditionPathExists=/usr/local/libexec/clamv/firewall-snapshot
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/clamv/firewall-snapshot
+ProtectSystem=strict
+RuntimeDirectory=clamv-firewall
+RuntimeDirectoryMode=0700
+ReadWritePaths=/var/lib/clamv/firewall
+PrivateTmp=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native

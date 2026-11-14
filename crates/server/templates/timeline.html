@@ -1,0 +1,25 @@
+{% extends "shell.html" %}
+{% block title %}Timeline · ClamAV Web UI{% endblock %}
+{% block content %}
+<div class="page-head"><h1 class="h3">Timeline</h1>
+<nav class="seg" aria-label="Time range">{% for (v, l) in [("24h", "24 h"), ("7d", "7 days"), ("30d", "30 days")] %}<a class="seg-btn{% if range == *v %} active{% endif %}" href="/timeline?range={{ v }}{% if !host.is_empty() %}&amp;host={{ host_q }}{% endif %}"{% if range == *v %} aria-current="page"{% endif %}>{{ l }}</a>{% endfor %}</nav></div>
+<p class="muted">Detections, canary hits, integrity findings, Falco and CrowdSec alerts from every host. Two different sensors on the same host within an hour make an incident (CrowdSec with only Falco does not).</p>
+{% if hosts.len() > 1 || !host.is_empty() %}<div class="d-flex flex-wrap gap-2 mb-2">{% if !host.is_empty() %}<a class="chip" href="/timeline?range={{ range }}">all hosts ×</a>{% endif %}{% for (h, hq) in hosts %}{% if *h != host %}<a class="chip" href="/timeline?range={{ range }}&amp;host={{ hq }}">{{ h }}</a>{% endif %}{% endfor %}</div>{% endif %}
+{% for x in incidents %}<section class="card mt-3 incident"><div class="card-body">
+<h2 class="h5 mb-1"><i class="fas fa-link text-danger" aria-hidden="true"></i> Incident on {{ x.host }}</h2>
+<p class="small muted mb-2">{{ x.sensors }} · {{ x.span }}</p>
+<ul class="small mb-0">{% for r in x.rows %}<li><span class="text-nowrap">{{ r.at }}</span> <span class="badge {{ self.sensor_class(r.sensor) }}">{{ r.sensor }}</span> <a href="{{ r.href }}">{{ r.title }}</a> <span class="muted text-break">{{ r.detail }}</span></li>{% endfor %}</ul>
+</div></section>{% endfor %}
+<section class="card mt-3"><div class="card-body table-responsive">
+<table class="table table-sm align-top mb-0">
+<thead><tr><th>When</th><th>Host</th><th>Sensor</th><th>What</th></tr></thead>
+<tbody>
+{% for r in rows %}<tr{% if r.linked %} class="tl-linked"{% endif %}>
+<td class="small text-nowrap">{{ r.at }}</td>
+<td class="small">{{ r.host }}</td>
+<td><span class="badge {{ self.sensor_class(r.sensor) }}">{{ r.sensor }}</span></td>
+<td><a class="small" href="{{ r.href }}">{{ r.title }}</a><div class="small muted text-break">{{ r.detail }}</div></td>
+</tr>{% else %}<tr><td colspan="4" class="muted">Nothing seen in this period.</td></tr>{% endfor %}
+</tbody></table>
+</div></section>
+{% endblock %}

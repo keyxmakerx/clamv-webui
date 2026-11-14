@@ -1,0 +1,33 @@
+{% extends "shell.html" %}
+{% block title %}Integrations · ClamAV Web UI{% endblock %}
+{% block content %}
+<h1 class="h3">Integrations</h1>
+<section class="card mt-3"><div class="card-body">
+<h2 class="h5">Alerts</h2>
+{% if !targets.is_empty() %}
+<div class="table-responsive"><table class="table table-sm align-middle">
+<thead><tr><th>Destination</th><th>Kind</th><th>Last delivery</th></tr></thead>
+<tbody>
+{% for t in targets %}<tr><td><code>{{ t.0 }}</code></td><td><span class="badge bg-secondary">{{ t.1 }}</span></td><td>{% if let Some(l) = t.2 %}{{ l.0 }} · {% if l.1 %}<span class="text-success">delivered</span>{% else %}<span class="text-danger">failed: {{ l.2 }}</span>{% endif %}{% else %}<span class="muted">none since start</span>{% endif %}</td></tr>
+{% endfor %}</tbody></table></div>
+<dl class="row mb-2">
+<dt class="col-sm-3">Sends</dt><dd class="col-sm-9">{% if all %}every finished scan{% else %}detections, failed scans, unscannable files, failed EICAR checks and canary hits{% endif %}</dd>
+<dt class="col-sm-3">Never notifies</dt><dd class="col-sm-9">{% if ignored.is_empty() %}<span class="muted">nothing muted</span>{% else %}<code>{{ ignored }}</code> <span class="muted small">(still logged and listed)</span>{% endif %}</dd>
+</dl>
+<p class="muted small">Full URLs are kept secret.</p>
+<form method="post" action="/admin/integrations/webhook/test"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-outline-primary" type="submit">Send test message</button></form>
+{% else %}
+<p class="muted mb-0">Not configured. Set <code>WEBHOOK_URL</code> (or <code>WEBHOOK_URL_FILE</code>) to up to five comma-separated URLs. Discord is detected; put <code>ntfy+</code>, <code>gotify+</code> or <code>slack+</code> in front for those. Private, loopback and CGNAT addresses need <code>WEBHOOK_ALLOWED_CIDRS</code>.</p>
+{% endif %}
+</div></section>
+<section class="card mt-3"><div class="card-body">
+<h2 class="h5">Prometheus and Grafana</h2>
+{% if metrics %}<p>Metrics are served at <code>/metrics</code> (also <code>/actuator/prometheus</code>) with <code>Authorization: Bearer</code> and the configured <code>METRICS_TOKEN</code>.</p>
+{% else %}<p class="muted">Off. Set <code>METRICS_TOKEN</code> (or <code>METRICS_TOKEN_FILE</code>) to serve <code>/metrics</code>. Use at least 16 random characters.</p>{% endif %}
+<ul class="mb-0">
+<li><a href="/admin/integrations/files/grafana-clamav-webui.json">Grafana dashboard</a></li>
+<li><a href="/admin/integrations/files/clamav-alerts.yml">Prometheus alert rules</a></li>
+<li><a href="/admin/integrations/files/prometheus.yml.example">Prometheus scrape config example</a></li>
+</ul>
+</div></section>
+{% endblock %}

@@ -1,0 +1,27 @@
+# clamv: rkhunter check; sees host network state, cannot send traffic.
+[Unit]
+Description=clamv host check: rkhunter
+ConditionPathExists=/usr/bin/rkhunter
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rkhunter --check --skip-keypress --nocolors --report-warnings-only
+# 1 means warnings were found, which is a result, not a failure.
+SuccessExitStatus=1
+Nice=19
+IOSchedulingClass=idle
+ProtectSystem=strict
+ReadWritePaths=/var/lib/rkhunter /var/log
+PrivateTmp=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native

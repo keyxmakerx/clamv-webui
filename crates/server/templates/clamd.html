@@ -1,0 +1,23 @@
+{% extends "shell.html" %}
+{% block head %}<meta http-equiv="refresh" content="10">{% endblock %}
+{% block title %}clamd Status · ClamAV Web UI{% endblock %}
+{% block content %}
+<h1 class="h3">clamd status</h1>
+<p class="muted">Sampled every 30 s from clamd STATS. This page refreshes every 10 s.</p>
+{% for e in rows %}
+<section class="card mt-3"><div class="card-body">
+<h2 class="h5">{{ e.name }} {% if e.available %}<span class="badge bg-success">reachable</span>{% else %}<span class="badge bg-danger">unreachable</span>{% endif %} <span class="small muted">sampled {{ e.sampled }}</span></h2>
+{% if e.available %}
+<dl class="row mb-0">
+<dt class="col-sm-3">Threads</dt><dd class="col-sm-9">{{ e.threads }}<div><meter min="0" max="100" low="70" high="90" optimum="0" value="{{ e.busy_pct }}" aria-label="Busy threads">{{ e.busy_pct }}%</meter> <span class="small muted">{{ e.busy_pct }}% busy</span></div></dd>
+<dt class="col-sm-3">Queue</dt><dd class="col-sm-9">{{ e.queue }} item(s)</dd>
+<dt class="col-sm-3">Pool memory</dt><dd class="col-sm-9">{{ e.memory }}</dd>
+<dt class="col-sm-3">ClamAV</dt><dd class="col-sm-9">{{ e.version }}</dd>
+<dt class="col-sm-3">Signatures</dt><dd class="col-sm-9">version {{ e.database }}, {{ e.database_age }} old{% if e.stale %} <span class="badge bg-danger">stale</span>{% endif %}</dd>
+</dl>
+{% endif %}
+</div></section>
+{% else %}
+<p class="muted mt-3">No samples yet. The first arrives within 30 s of start.</p>
+{% endfor %}
+{% endblock %}

@@ -1,0 +1,20 @@
+{% extends "shell.html" %}
+{% block title %}Review Settings · ClamAV Web UI{% endblock %}
+{% block content %}
+<h1 class="h3">Review changes</h1>
+<section class="card mt-3"><div class="card-body table-responsive">
+<table class="table table-sm align-middle">
+<thead><tr><th>Setting</th><th>Now saved</th><th>New</th></tr></thead>
+<tbody>
+{% for c in changes %}<tr><td><strong>{{ c.label }}</strong><div class="small muted"><code>{{ c.env }}</code></div></td><td class="text-break">{{ c.old }}</td><td class="text-break">{{ c.new }}</td></tr>{% endfor %}
+</tbody></table>
+<form method="post" action="/admin/settings/apply" class="d-flex gap-2">
+<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
+<input type="hidden" name="_revision" value="{{ revision }}">
+{% for c in changes %}<input type="hidden" name="{{ c.env }}" value="{{ c.value }}">{% endfor %}
+<button class="btn btn-primary" type="submit">Save</button>
+<a class="btn btn-outline-secondary" href="/admin/settings">Back</a>
+</form>
+<p class="small muted mt-2 mb-0">Changes apply after the container restarts.</p>
+</div></section>
+{% endblock %}

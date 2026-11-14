@@ -1,0 +1,34 @@
+{% extends "shell.html" %}
+{% block head %}{% if refresh %}<meta http-equiv="refresh" content="3">{% endif %}{% endblock %}
+{% block title %}Job · ClamAV Web UI{% endblock %}
+{% block content %}
+<p><a href="/jobs">&larr; All jobs</a></p>
+<h1 class="h3 text-break">{{ j.target }}</h1>
+<p>{% if j.verdict.is_empty() %}<span class="badge bg-secondary">{{ j.status }}</span>{% if refresh %} <span class="muted small">refreshing…</span>{% endif %}{% else %}<span class="badge {{ self.badge(j.verdict) }}">{{ j.verdict }}</span>{% endif %}
+{% if !error_message.is_empty() %} <span class="small">{{ error_message }}</span>{% endif %}</p>
+<section class="card mt-3"><div class="card-body">
+<dl class="row mb-0 small">
+<dt class="col-sm-3">Type</dt><dd class="col-sm-9">{{ j.kind }}</dd>
+<dt class="col-sm-3">Endpoint</dt><dd class="col-sm-9">{{ j.endpoint }}</dd>
+<dt class="col-sm-3">Submitted</dt><dd class="col-sm-9">{{ j.submitted }} by {{ j.submitted_by }}</dd>
+{% if !started.is_empty() %}<dt class="col-sm-3">Started</dt><dd class="col-sm-9">{{ started }}</dd>{% endif %}
+{% if !finished.is_empty() %}<dt class="col-sm-3">Finished</dt><dd class="col-sm-9">{{ finished }} ({{ j.duration }})</dd>{% endif %}
+{% if !size.is_empty() %}<dt class="col-sm-3">Size</dt><dd class="col-sm-9">{{ size }}</dd>{% endif %}
+{% if !sha256.is_empty() %}<dt class="col-sm-3">SHA-256</dt><dd class="col-sm-9"><code class="text-break">{{ sha256 }}</code></dd>{% endif %}
+{% if !error_code.is_empty() %}<dt class="col-sm-3">Error code</dt><dd class="col-sm-9"><code>{{ error_code }}</code></dd>{% endif %}
+<dt class="col-sm-3">Job id</dt><dd class="col-sm-9"><code>{{ j.id }}</code></dd>
+</dl>
+</div></section>
+{% if !detections.is_empty() %}<section class="card mt-3"><div class="card-body table-responsive">
+<h2 class="h5">Detections</h2>
+<table class="table table-sm"><thead><tr><th>File</th><th>Signature</th></tr></thead><tbody>
+{% for (p, s) in detections %}<tr><td class="small text-break">{{ p }}</td><td><code>{{ s }}</code></td></tr>{% endfor %}
+</tbody></table></div></section>{% endif %}
+{% if !errors.is_empty() %}<section class="card mt-3"><div class="card-body table-responsive">
+<h2 class="h5">Not fully scanned</h2>
+<table class="table table-sm"><thead><tr><th>File</th><th>Reason</th></tr></thead><tbody>
+{% for (p, m) in errors %}<tr><td class="small text-break">{{ p }}</td><td class="small">{{ m }}</td></tr>{% endfor %}
+</tbody></table>
+{% if more_errors > 0 %}<p class="muted small">{{ more_errors }} more not shown.</p>{% endif %}
+</div></section>{% endif %}
+{% endblock %}

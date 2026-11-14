@@ -1,0 +1,60 @@
+[package]
+name = "clamv-webui"
+description = "Web UI for ClamAV clamd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+clamd.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+anyhow = "1"
+regex = { version = "1", default-features = false, features = ["std", "perf", "unicode-perl", "unicode-case"] }
+axum = { version = "0.8", features = ["multipart"] }
+tower-http = { version = "0.6", features = ["set-header", "trace", "timeout", "limit", "compression-gzip"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "json", "std"] }
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "any", "sqlite-bundled", "postgres", "mysql", "migrate", "macros"] }
+argon2 = { version = "0.5", features = ["std"] }
+bcrypt = "0.17"
+rand = "0.9"
+sha2 = "0.10"
+subtle = "2"
+base64 = "0.22"
+uuid = { version = "1", features = ["v7"] }
+clap = { version = "4", features = ["derive", "env"] }
+askama = { version = "0.16", default-features = false, features = ["derive", "std"] }
+rust-embed = { version = "8", features = ["mime-guess"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
+axum-server = { version = "0.9", default-features = false, features = ["tls-rustls-no-provider"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json"] }
+webpki-roots = "1"
+url = "2"
+ring = "0.17"
+ldap3 = { version = "0.12", default-features = false, features = ["tls-rustls-ring"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+ciborium = { version = "0.2", default-features = false, features = ["std"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "6", default-features = false, features = ["tokio"] }
+inotify = "0.11"
+futures-core = "0.3"
+
+[features]
+# Software authenticator for integration tests; never enabled in builds.
+testkit = []
+
+[dev-dependencies]
+clamv-webui = { path = ".", features = ["testkit"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+
+[lints]
+workspace = true

@@ -1,9 +1,7 @@
 # ClamAV Web UI MCP server
 
-An HTTPS reverse proxy or Kubernetes Ingress that forwards HTTP to the Web UI
-works with the packaged `framework` default; no helper flag is required. Restrict
-backend access to that trusted proxy. See [proxy TLS setup](REVERSE_PROXY_TLS.md)
-if MCP requests return `403 tls_required`. Keep the public HTTPS URL in the
+The Web UI can sit behind an HTTPS reverse proxy; see
+[Behind a reverse proxy](REVERSE_PROXY.md). Keep the public HTTPS URL in the
 MCP/`clamctl` configuration.
 
 The official MCP server is included in `clamctl` v2.1.0. It bridges the Web UI's
@@ -212,7 +210,7 @@ go vet ./...
 go run ./tools/build.go
 ```
 
-From the source root, after packaging the Java JAR and CLI binaries:
+From the source root, after `cargo build --release` and building the CLI binaries:
 
 ```bash
 python3 scripts/test-clamctl-integration.py
@@ -220,8 +218,7 @@ python3 scripts/test-clamctl-integration.py
 
 The integration runner includes native MCP stdio discovery, all five tools and
 all three resources, with Basic/CSRF and real scoped Bearer authentication
-against the isolated Spring application. ClamD is a synthetic wire fixture.
-See `docs/MCP_VALIDATION.md` for recorded checks and deployment limits.
+against an isolated server. ClamD is a synthetic wire fixture.
 
 Reference documentation used for the protocol and examples:
 

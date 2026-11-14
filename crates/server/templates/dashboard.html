@@ -1,0 +1,73 @@
+{% extends "shell.html" %}
+{% block head %}<meta http-equiv="refresh" content="60">{% endblock %}
+{% block title %}Dashboard · ClamAV Web UI{% endblock %}
+{% block content %}
+<div class="page-head"><h1 class="h3">Dashboard</h1>
+<nav class="seg" aria-label="Time range">{% for (v, l) in [("24h", "24 h"), ("7d", "7 days"), ("30d", "30 days")] %}<a class="seg-btn{% if range == *v %} active{% endif %}" href="/dashboard?range={{ v }}"{% if range == *v %} aria-current="page"{% endif %}>{{ l }}</a>{% endfor %}</nav></div>
+{% if let Some(up) = update %}<div class="alert alert-info d-flex align-items-center gap-2"><i class="fa-solid fa-circle-up" aria-hidden="true"></i><span>Version {{ up.version }} is out (running {{ crate::VERSION }}).</span><a href="{{ up.url }}" rel="noopener noreferrer" target="_blank">Release notes</a></div>{% endif %}
+<div class="kpi-grid">
+{% for k in kpis %}{% if k.href.is_empty() %}<div class="kpi kpi-{{ k.tone }}">{% else %}<a class="kpi kpi-{{ k.tone }}" href="{{ k.href }}">{% endif %}
+<span class="kpi-label">{{ k.label }}</span><strong class="kpi-value">{{ k.value }}</strong>{% if !k.delta.is_empty() %}<span class="kpi-delta">{{ k.delta }}</span>{% endif %}
+{% if k.href.is_empty() %}</div>{% else %}</a>{% endif %}{% endfor %}
+</div>
+<section class="card mt-3"><div class="card-body">
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2"><h2 class="h5 mb-0">Activity</h2>
+<div class="chart-legend small"><span class="lg lg-ok"></span>clean <span class="lg lg-hit"></span>detections <span class="lg lg-err"></span>failed</div></div>
+<div class="chart-wrap">{{ chart|safe }}</div>
+{% if nav.is_operator %}<p class="small muted mb-0">Click a bar to see those jobs.</p>{% endif %}
+</div></section>
+{% if nav.is_operator %}
+<div class="grid-three mt-3">
+<section class="card"><div class="card-body"><h2 class="h6">Top signatures</h2>
+{% for t in top_sigs %}<a class="toprow" href="{{ t.href }}"><span class="toprow-label text-break">{{ t.label }}</span><span class="toprow-n">{{ t.count }}</span><progress value="{{ t.count }}" max="{{ t.max }}"></progress></a>{% else %}<p class="muted small mb-0">Nothing found in this period.</p>{% endfor %}
+</div></section>
+<section class="card"><div class="card-body"><h2 class="h6">Folders with detections</h2>
+{% for t in top_folders %}<a class="toprow" href="{{ t.href }}"><span class="toprow-label text-break">{{ t.label }}</span><span class="toprow-n">{{ t.count }}</span><progress value="{{ t.count }}" max="{{ t.max }}"></progress></a>{% else %}<p class="muted small mb-0">Nothing found in this period.</p>{% endfor %}
+</div></section>
+<section class="card"><div class="card-body"><h2 class="h6">Hosts with detections</h2>
+{% for t in top_hosts %}<a class="toprow" href="{{ t.href }}"><span class="toprow-label">{{ t.label }}</span><span class="toprow-n">{{ t.count }}</span><progress value="{{ t.count }}" max="{{ t.max }}"></progress></a>{% else %}<p class="muted small mb-0">Nothing found in this period.</p>{% endfor %}
+</div></section>
+</div>
+{% if !recent_hits.is_empty() %}<section class="card mt-3"><div class="card-body table-responsive">
+<h2 class="h5">Latest detections <a class="small" href="/detections">all detections</a></h2>
+<table class="table table-sm align-middle"><thead><tr><th>Found</th><th>File</th><th>Signature</th><th>Host</th></tr></thead><tbody>
+{% for d in recent_hits %}<tr><td class="small text-nowrap"><a href="/jobs/{{ d.job_id }}">{{ d.at }}</a></td><td class="small text-break">{{ d.path }}</td><td><span class="badge bg-danger">{{ d.signature }}</span></td><td class="small">{{ d.host }}</td></tr>{% endfor %}
+</tbody></table></div></section>{% endif %}
+{% endif %}
+<div class="grid-two mt-3">
+<section class="card"><div class="card-body table-responsive">
+<h2 class="h5">clamd endpoints</h2>
+{% if endpoints.is_empty() %}<p class="muted">No endpoints configured.</p>{% else %}
+<table class="table align-middle">
+<thead><tr><th>Name</th><th>Status</th></tr></thead>
+<tbody>
+{% for (e, age, stale) in endpoints %}
+<tr><td><strong>{{ e.name }}</strong>{% if e.is_default %} <span class="badge bg-primary">default</span>{% endif %}<div class="small muted"><code>{{ e.address }}</code></div></td>
+<td>{% match e.status %}
+{% when Status::Up with (v) %}<span class="badge bg-success">reachable</span> <span class="small">{{ v }}</span>{% if !age.is_empty() %}<div class="small{% if *stale %} text-danger{% else %} muted{% endif %}">{{ age }}{% if *stale %}: check freshclam{% endif %}</div>{% endif %}
+{% when Status::Down with (m) %}<span class="badge bg-danger">unreachable</span> <span class="small">{{ m }}</span>
+{% when Status::Disabled %}<span class="badge bg-secondary">disabled</span>
+{% endmatch %}</td></tr>
+{% endfor %}
+</tbody></table>{% endif %}
+</div></section>
+<section class="card"><div class="card-body">
+<h2 class="h5">EICAR checks</h2>
+{% if controls.is_empty() %}<p class="muted mb-0">No schedule runs the EICAR control yet.</p>{% else %}
+<ul class="mb-0">{% for (name, at, ok) in controls %}<li><strong>{{ name }}</strong>: {% if *ok %}<span class="text-success">detected</span>{% else %}<span class="text-danger">failed, scan results cannot be trusted</span>{% endif %} <span class="small muted">{{ at }}</span></li>{% endfor %}</ul>{% endif %}
+</div></section>
+</div>
+{% if nav.is_operator %}<section class="card mt-3"><div class="card-body table-responsive">
+<h2 class="h5">Recent jobs <a class="small" href="/jobs">all jobs</a></h2>
+<table class="table table-sm align-middle">
+<thead><tr><th>Submitted</th><th>Type</th><th>Target</th><th>Result</th></tr></thead>
+<tbody>
+{% for r in recent %}<tr>
+<td class="small text-nowrap"><a href="/jobs/{{ r.id }}">{{ r.submitted }}</a></td>
+<td>{{ r.kind }}</td>
+<td class="small text-break">{{ r.target }}</td>
+<td>{% if r.verdict.is_empty() %}<span class="badge bg-secondary">{{ r.status }}</span>{% else %}<span class="badge {{ self.badge(r.verdict) }}">{{ r.verdict }}</span>{% endif %}{% if !r.signatures.is_empty() %} <span class="small">{{ r.signatures }}</span>{% endif %}</td>
+</tr>{% else %}<tr><td colspan="4" class="muted">No jobs yet.</td></tr>{% endfor %}
+</tbody></table>
+</div></section>{% endif %}
+{% endblock %}

@@ -1,9 +1,9 @@
 name: clamctl / test and cross-platform binaries
 on:
   push:
-    paths: ['cli/**', 'src/main/java/**', 'src/main/resources/openapi/**', 'scripts/test-clamctl-integration.py', 'scripts/home-lab-mcp-test.py', 'pom.xml', '.github/workflows/clamctl.yml']
+    paths: ['cli/**', 'crates/**', 'Cargo.lock', 'scripts/test-clamctl-integration.py', '.github/workflows/clamctl.yml']
   pull_request:
-    paths: ['cli/**', 'src/main/java/**', 'src/main/resources/openapi/**', 'scripts/test-clamctl-integration.py', 'scripts/home-lab-mcp-test.py', 'pom.xml', '.github/workflows/clamctl.yml']
+    paths: ['cli/**', 'crates/**', 'Cargo.lock', 'scripts/test-clamctl-integration.py', '.github/workflows/clamctl.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -41,12 +41,11 @@ jobs:
           cache: false
       - run: go run ./tools/build.go
         working-directory: cli
-      - uses: actions/setup-java@v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
-          distribution: temurin
-          java-version: '21'
-          cache: maven
-      - run: mvn -B -ntp verify
+          toolchain: stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - run: cargo build --locked --release -p clamv-webui
       - run: python3 scripts/test-clamctl-integration.py
       - uses: actions/upload-artifact@v4
         with:

@@ -1,0 +1,49 @@
+{% extends "shell.html" %}
+{% block title %}CrowdSec alerts · ClamAV Web UI{% endblock %}
+{% block content %}
+{% let tab = "alerts" %}{% include "crowdsec_head.html" %}
+{% if status.configured %}
+<form method="get" action="/crowdsec/alerts" class="filter-bar">
+<div class="filter-search"><i class="fas fa-search" aria-hidden="true"></i>
+<input class="form-control" type="search" name="q" value="{{ q }}" maxlength="512" placeholder="Search: ssh  ip:203.0.113  country=CN  -machine:edge  sim:no" aria-label="Search alerts">
+<button type="button" class="btn btn-link btn-sm search-help-toggle" data-toggle-help="cs-help" aria-expanded="false" title="Search help"><i class="fas fa-info-circle" aria-hidden="true"></i></button></div>
+<div class="filter-chips">
+<select class="form-select form-select-sm" name="range" aria-label="Time range">{% for (v, l) in [("1h", "Last hour"), ("24h", "Last 24 h"), ("7d", "Last 7 days"), ("30d", "Last 30 days")] %}<option value="{{ v }}"{% if range == *v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select>
+<button class="btn btn-sm btn-primary" type="submit">Apply</button>
+<a class="btn btn-sm btn-outline-secondary" href="/crowdsec/alerts">Clear</a>
+<span class="small muted">{{ total }} alert(s)</span>
+</div>
+<div class="search-help d-none" id="cs-help"><code>word</code> matches scenario, source, message, AS, machine or country · <code>ip:</code> · <code>scenario:</code> · <code>country=</code> · <code>as:</code> · <code>machine:</code> · <code>origin:</code> · <code>type=ban</code> · <code>sim:yes</code> · <code>:</code> contains, <code>=</code> exact · <code>-</code> negates · quotes group words</div>
+</form>
+<div class="det-layout mt-3">
+<aside class="facets" aria-label="Quick filters">
+{% for (title, list) in self.facet_groups() %}
+<section class="card{% if !loop.first %} mt-2{% endif %}"><div class="card-body"><h2 class="h6">{{ title }}</h2>
+{% for fa in list %}<a class="facet" href="{{ fa.href }}"><span class="text-break">{{ fa.label }}</span><span class="facet-n">{{ fa.count }}</span></a>{% else %}<p class="small muted mb-0">None</p>{% endfor %}
+</div></section>{% endfor %}
+</aside>
+<section class="card"><div class="card-body table-responsive">
+<table class="table table-sm align-top">
+<thead><tr><th>When</th><th>Source</th><th>Scenario</th><th>Target</th><th>Decisions</th></tr></thead>
+<tbody>
+{% for a in rows %}<tr>
+<td class="small text-nowrap">{{ a.at }}<div class="muted">#{{ a.id }}</div></td>
+<td class="small"><code>{{ a.source }}</code>{% if !a.country.is_empty() %} <span class="badge bg-secondary">{{ a.country }}</span>{% endif %}<div class="muted">{{ a.as_name }}</div></td>
+<td class="small"><strong>{{ a.scenario }}</strong>{% if a.simulated %} <span class="badge bg-info text-dark">simulated</span>{% endif %}
+<details class="mt-1"><summary class="muted">{{ a.events }} event(s)</summary>
+{% if !a.message.is_empty() %}<p class="mb-1 text-break">{{ a.message }}</p>{% endif %}
+{% if !a.meta.is_empty() %}<dl class="cs-meta mb-1">{% for (k, v) in a.meta %}<dt>{{ k }}</dt><dd class="text-break">{{ v }}</dd>{% endfor %}</dl>{% endif %}
+<span class="muted">Scope {{ a.scope }}</span></details></td>
+<td class="small">{{ a.machine }}</td>
+<td class="small">{% for d in a.decisions %}<div><span class="badge {% if d.active %}bg-danger{% else %}bg-secondary{% endif %}">{{ d.kind }}</span> {{ d.left }}{% if d.active && writable %}<form class="d-inline" method="post" action="/crowdsec/decisions/{{ d.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-link btn-sm p-0 ms-1" type="submit">remove</button></form>{% endif %}</div>{% else %}<span class="muted">none</span>{% endfor %}</td>
+</tr>{% else %}<tr><td colspan="5" class="muted">No alerts match.</td></tr>{% endfor %}
+</tbody></table>
+{% if pages > 1 %}<nav aria-label="Pages" class="d-flex gap-2 align-items-center">
+{% if page > 0 %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page - 1) }}">Newer</a>{% endif %}
+<span class="small muted">Page {{ page + 1 }} of {{ pages }}</span>
+{% if page + 1 < pages %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page + 1) }}">Older</a>{% endif %}
+</nav>{% endif %}
+</div></section>
+</div>
+{% endif %}
+{% endblock %}

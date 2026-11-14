@@ -1,9 +1,7 @@
 # Official CLI — clamctl v2.1.0
 
-TLS termination at a reverse proxy/Ingress is supported by the Web UI's packaged
-`framework` default. No server helper flag is required. Keep its backend
-restricted to the trusted proxy and use the public HTTPS URL in `clamctl`.
-See [proxy TLS configuration](REVERSE_PROXY_TLS.md) for `403 tls_required`.
+The Web UI can sit behind a reverse proxy that terminates TLS. Use the public
+HTTPS URL in `clamctl`; see [Behind a reverse proxy](REVERSE_PROXY.md).
 
 The standalone Go CLI is in [`cli/`](../cli/README.md). Its distribution includes
 ready-built Linux, macOS and Windows executables for both amd64 and arm64 in

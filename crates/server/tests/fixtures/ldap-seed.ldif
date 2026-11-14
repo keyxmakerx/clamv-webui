@@ -1,0 +1,26 @@
+dn: ou=people,dc=lan,dc=test
+objectClass: organizationalUnit
+ou: people
+
+dn: ou=groups,dc=lan,dc=test
+objectClass: organizationalUnit
+ou: groups
+
+dn: uid=alice,ou=people,dc=lan,dc=test
+objectClass: inetOrgPerson
+uid: alice
+cn: Alice
+sn: A
+userPassword: alicepw-long
+
+dn: uid=bob,ou=people,dc=lan,dc=test
+objectClass: inetOrgPerson
+uid: bob
+cn: Bob
+sn: B
+userPassword: bobpw-long
+
+dn: cn=clamav-admins,ou=groups,dc=lan,dc=test
+objectClass: groupOfUniqueNames
+cn: clamav-admins
+uniqueMember: uid=alice,ou=people,dc=lan,dc=test
