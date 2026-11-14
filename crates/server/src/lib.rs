@@ -3,6 +3,9 @@
 // Handlers return axum Responses as errors by design.
 #![allow(clippy::result_large_err)]
 
+/// This build's version.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub mod agent;
 pub mod api;
 pub mod app;
@@ -21,6 +24,7 @@ pub mod schedule;
 pub mod settings;
 pub mod timefmt;
 pub mod tls;
+pub mod update;
 pub mod watch;
 pub mod web;
 pub mod webhook;

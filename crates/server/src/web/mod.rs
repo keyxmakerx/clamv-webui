@@ -501,6 +501,7 @@ struct DashboardPage {
     endpoints: Vec<(endpoints::EndpointView, String, bool)>,
     recent: Vec<scan::JobRow>,
     controls: Vec<(String, String, bool)>,
+    update: Option<crate::update::Release>,
 }
 
 impl DashboardPage {
@@ -859,6 +860,11 @@ async fn dashboard(
             endpoints,
             recent,
             controls,
+            update: u
+                .role
+                .allows(Role::Admin)
+                .then(|| st.updates.available())
+                .flatten(),
         },
     )
 }

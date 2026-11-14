@@ -4,6 +4,7 @@
 {% block content %}
 <div class="page-head"><h1 class="h3">Dashboard</h1>
 <nav class="seg" aria-label="Time range">{% for (v, l) in [("24h", "24 h"), ("7d", "7 days"), ("30d", "30 days")] %}<a class="seg-btn{% if range == *v %} active{% endif %}" href="/dashboard?range={{ v }}"{% if range == *v %} aria-current="page"{% endif %}>{{ l }}</a>{% endfor %}</nav></div>
+{% if let Some(up) = update %}<div class="alert alert-info d-flex align-items-center gap-2"><i class="fa-solid fa-circle-up" aria-hidden="true"></i><span>Version {{ up.version }} is out (running {{ crate::VERSION }}).</span><a href="{{ up.url }}" rel="noopener noreferrer" target="_blank">Release notes</a></div>{% endif %}
 <div class="kpi-grid">
 {% for k in kpis %}{% if k.href.is_empty() %}<div class="kpi kpi-{{ k.tone }}">{% else %}<a class="kpi kpi-{{ k.tone }}" href="{{ k.href }}">{% endif %}
 <span class="kpi-label">{{ k.label }}</span><strong class="kpi-value">{{ k.value }}</strong>{% if !k.delta.is_empty() %}<span class="kpi-delta">{{ k.delta }}</span>{% endif %}

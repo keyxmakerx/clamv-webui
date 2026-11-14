@@ -32,6 +32,7 @@ pub struct AppState {
     pub agents: crate::agent::Hub,
     pub clamd_conf: crate::clamdconf::Cache,
     pub freshclam_conf: crate::clamdconf::Cache,
+    pub updates: crate::update::Updates,
 }
 
 impl AppState {
@@ -69,6 +70,7 @@ impl AppState {
             agents: crate::agent::Hub::default(),
             clamd_conf: crate::clamdconf::Cache::default(),
             freshclam_conf: crate::clamdconf::Cache::default(),
+            updates: crate::update::Updates::default(),
         }
     }
 
@@ -234,6 +236,7 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     crate::webhook::spawn(state.clone());
     crate::metrics::spawn(state.clone());
     crate::agent::spawn_monitor(state.clone());
+    crate::update::spawn(state.clone());
     let app = router(state, &cfg).into_make_service_with_connect_info::<std::net::SocketAddr>();
     let scheme = if cfg.tls_enabled() { "https" } else { "http" };
     tracing::info!(listen = %cfg.listen, scheme, clamd = %cfg.clamd_endpoint, data_dir = %cfg.data_dir.display(), version = env!("CARGO_PKG_VERSION"), "started");

@@ -163,6 +163,10 @@ pub struct Config {
     #[arg(long, env = "WEBHOOK_EVENTS", value_enum, default_value_t = WebhookEvents::Alerts, global = true)]
     pub webhook_events: WebhookEvents,
 
+    /// Check GitHub once a day for a newer release and show it to admins.
+    #[arg(long, env = "UPDATE_CHECK", default_value_t = true, action = clap::ArgAction::Set, global = true)]
+    pub update_check: bool,
+
     /// Comma-separated signature prefixes that never notify on their own, e.g. PUA.
     #[arg(
         long,

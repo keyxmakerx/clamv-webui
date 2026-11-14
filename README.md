@@ -73,6 +73,7 @@ Every option is an environment variable (or a `--flag`; run `clamv-webui --help`
 | `DATABASE_URL(_FILE)` | SQLite in `DATA_DIR` | `sqlite://`, `postgres://`, `mysql://` or `mariadb://` |
 | `LOG_FORMAT` / `LOG_LEVEL` | `plain` / `info` | `json` for one object per line |
 | `BOOTSTRAP_ADMIN_PASSWORD` | generated | First admin password; a supplied one is not forced to change |
+| `UPDATE_CHECK` | `true` | Look up the latest GitHub release once a day and tell admins on the dashboard; sends only the version |
 
 ### clamd and scanning
 
