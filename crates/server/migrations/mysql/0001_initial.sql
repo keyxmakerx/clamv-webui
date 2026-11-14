@@ -247,3 +247,17 @@ CREATE INDEX idx_detections_job ON detections(job_id);
 CREATE INDEX idx_jobs_verdict ON scan_jobs(verdict, submitted_at);
 CREATE INDEX idx_jobs_kind ON scan_jobs(kind, status);
 CREATE INDEX idx_processed_at ON processed_files(processed_at);
+
+CREATE TABLE canaries (
+    id VARCHAR(36) PRIMARY KEY,
+    agent_id BIGINT,
+    path TEXT NOT NULL,
+    create_file BIGINT NOT NULL,
+    armed BIGINT,
+    checked_at BIGINT,
+    last_tripped_at BIGINT,
+    created_at BIGINT NOT NULL,
+    created_by VARCHAR(255),
+    CONSTRAINT fk_canaries_agent FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+CREATE INDEX idx_canaries_agent ON canaries(agent_id);

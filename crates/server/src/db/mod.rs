@@ -6,6 +6,7 @@
 
 pub mod agents;
 pub mod audit;
+pub mod canaries;
 pub mod endpoints;
 pub mod identities;
 pub mod jobs;

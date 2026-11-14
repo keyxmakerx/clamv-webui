@@ -14,7 +14,7 @@ Forked from an earlier Java application, which has been replaced entirely. Licen
 - **Display**: light and dark themes, times shown in your own time zone (or a fixed one) with a 12 or 24 hour clock, set under Account.
 - **Schedules**: cron schedules per path. Each run first scans an EICAR control, so a run against a broken clamd reports a failure, not a clean result.
 - **Watched folders**: files are scanned the moment they are written (Linux inotify), with periodic polling as a safety net.
-- **Canary files**: decoys that raise an alert (log, audit, webhook) the moment anything opens, changes or deletes them.
+- **Canary files**: decoys that raise an alert (log, audit, webhook) the moment anything opens, changes or deletes them, managed per host from the UI, with auditd naming the program and user where the host logs it.
 - **Agents**: run the same image with `agent` on other hosts. Each agent scans its own folders with its own clamd and reports back, so one UI covers every machine. Agents connect out to the server, so they need no open port.
 - **Multiple clamd endpoints**, with a status page (signature age, threads, queue) and alerts when clamd goes down or signatures go stale.
 - **Two-factor sign-in**: an authenticator app (TOTP) with recovery codes, and passkeys (fingerprint, face or security key), which also sign in without a password.
@@ -101,7 +101,9 @@ clamd refuses streams over its `StreamMaxLength` (25 MB by default in many build
 
 Real-time watching sees writes made on the same machine (bind mounts included, NFS or SMB mounts written from elsewhere are not); polling covers the rest. It needs one inotify watch per folder; for very large trees raise `fs.inotify.max_user_watches` on the host. Folders past the limit still get polled.
 
-Canary files: put a tempting decoy (say `/srv/secrets/passwords.kdbx`) somewhere nothing legitimate reads, and mount it read-only into the container. Keep it outside scanned folders, or add an `ExcludePath` for it, since a scan opening it would trip it; a warning is logged at start when that can happen. Alerts repeat at most once a minute per file, and a deleted canary is watched again once it is back.
+Canary files: add them per host on the **Canaries** page (this server and each agent, up to 50 each), or list them in `CANARY_FILES`. Put a tempting decoy (say `/srv/share/finance/passwords.csv`) somewhere nothing legitimate reads; the page can write the decoy for you if the folder is writable from the container, and it never overwrites or deletes a file. Keep canaries outside scanned folders (the page refuses those), since a scan opening one would trip it. Each row shows whether the host could arm it and when it was last touched. Alerts repeat at most once a minute per file, and a deleted canary is watched again once it is back.
+
+To have alerts name who touched a canary, add the auditd rule the page shows (`-w <file> -p rwxa -k clamv_canary`) on the host and mount `/var/log/audit` read-only into the container; the alert then reads, for example, "opened by /usr/bin/cat (uid 1000, login uid 1000, pid 4242)".
 
 ### Web, sessions and TLS
 

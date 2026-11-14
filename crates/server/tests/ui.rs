@@ -303,6 +303,7 @@ async fn route_table_by_role() {
         ("/admin/api-tokens", Role::Admin),
         ("/admin/schedules", Role::Admin),
         ("/admin/watch", Role::Admin),
+        ("/admin/canaries", Role::Admin),
         ("/admin/integrations", Role::Admin),
         ("/admin/settings", Role::Admin),
         ("/admin/agents", Role::Admin),
@@ -327,6 +328,8 @@ async fn route_table_by_role() {
         ("/admin/schedules/x/enabled", Role::Admin),
         ("/admin/schedules/x/delete", Role::Admin),
         ("/admin/watch", Role::Admin),
+        ("/admin/canaries", Role::Admin),
+        ("/admin/canaries/x/delete", Role::Admin),
         ("/admin/watch/x/enabled", Role::Admin),
         ("/admin/watch/x/delete", Role::Admin),
         ("/admin/integrations/webhook/test", Role::Admin),
@@ -838,4 +841,72 @@ async fn static_assets_are_versioned_compressed_and_revalidated() {
     )
     .expect("utf8");
     assert!(html.contains(&format!("/css/ui.css?v={v}")));
+}
+
+#[tokio::test]
+async fn admin_manages_canaries_per_host() {
+    let base = std::env::temp_dir().join(format!("clamv-ui-can-{}", clamv_webui::db::new_id()));
+    std::fs::create_dir_all(base.join("media")).expect("mkdir");
+    std::fs::create_dir_all(base.join("share")).expect("mkdir");
+    let roots = base.join("media").to_str().expect("utf8").to_owned();
+    let (app, st) = app_with(&["--scan-roots", &roots]).await;
+    let (c, t) = admin_cookie(&st).await;
+    let (agent, _) = st.db.create_agent("edge-1", "admin").await.expect("agent");
+    let post = |body: String| {
+        let app = app.clone();
+        let c = c.clone();
+        async move {
+            app.oneshot(form("/admin/canaries", &body, Some(&c)))
+                .await
+                .expect("res")
+        }
+    };
+    // Inside a scanned folder: refused, since scans would trip it.
+    let res = post(format!(
+        "_csrf={t}&host=&path={}/bait.txt&create=1",
+        urlencode(&roots)
+    ))
+    .await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert!(body(res).await.contains("inside the scanned folder"));
+    let res = post(format!("_csrf={t}&host=&path=relative.txt")).await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let decoy = base.join("share").join("passwords.csv");
+    let decoy_s = decoy.to_str().expect("utf8").to_owned();
+    let res = post(format!(
+        "_csrf={t}&host=&path={}&create=1",
+        urlencode(&decoy_s)
+    ))
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let res = post(format!(
+        "_csrf={t}&host={}&path=/home/ops/vpn.conf",
+        agent.id
+    ))
+    .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let html = body(res).await;
+    assert!(html.contains("edge-1") && html.contains("/home/ops/vpn.conf"));
+    assert!(html.contains("-k clamv_canary"), "auditd rule offered");
+    let dup = post(format!(
+        "_csrf={t}&host={}&path=/home/ops/vpn.conf",
+        agent.id
+    ))
+    .await;
+    assert_eq!(dup.status(), StatusCode::BAD_REQUEST);
+    let list = st.db.list_canaries().await.expect("q");
+    assert_eq!(list.len(), 2);
+    let central = list.iter().find(|c| c.agent_id.is_none()).expect("central");
+    let res = app
+        .clone()
+        .oneshot(form(
+            &format!("/admin/canaries/{}/delete", central.id),
+            &format!("_csrf={t}"),
+            Some(&c),
+        ))
+        .await
+        .expect("res");
+    assert!(body(res).await.contains("left in place"));
+    assert_eq!(st.db.list_canaries().await.expect("q").len(), 1);
+    let _ = std::fs::remove_dir_all(&base);
 }

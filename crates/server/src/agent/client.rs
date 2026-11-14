@@ -34,6 +34,8 @@ struct Agent {
     last_ok: AtomicI64,
     clamd_version: Mutex<(i64, Option<String>)>,
     conf: crate::clamdconf::Cache,
+    canaries: tokio::sync::watch::Sender<Vec<crate::canary::Spec>>,
+    canary_states: std::sync::Mutex<Option<crate::canary::States>>,
 }
 
 /// Check the agent settings and build the HTTP client, without connecting.
@@ -98,6 +100,8 @@ fn build(cfg: Config) -> anyhow::Result<Agent> {
         last_ok: AtomicI64::new(0),
         clamd_version: Mutex::new((0, None)),
         conf: crate::clamdconf::Cache::default(),
+        canaries: tokio::sync::watch::channel(Vec::new()).0,
+        canary_states: std::sync::Mutex::new(None),
         cfg,
     })
 }
@@ -164,9 +168,23 @@ async fn poll_loop(a: Arc<Agent>) {
             free,
             running: a.running.lock().await.iter().cloned().collect(),
             wait: free > 0,
+            canaries: canary_states(&a),
         };
         match poll_once(&a, &req).await {
-            Ok(jobs) => {
+            Ok(resp) => {
+                let jobs = resp.jobs;
+                if let Some(list) = resp.canaries {
+                    a.canaries.send_if_modified(|cur| {
+                        let changed = *cur != list;
+                        if changed {
+                            *cur = list
+                                .into_iter()
+                                .take(crate::db::canaries::MAX_PER_HOST)
+                                .collect();
+                        }
+                        changed
+                    });
+                }
                 if !connected {
                     tracing::info!(event = "agent.connected", server = %a.base, "connected to server");
                     connected = true;
@@ -209,7 +227,7 @@ enum PollError {
     Other(String),
 }
 
-async fn poll_once(a: &Agent, req: &PollRequest) -> Result<Vec<Assignment>, PollError> {
+async fn poll_once(a: &Agent, req: &PollRequest) -> Result<PollResponse, PollError> {
     let url = a
         .base
         .join("agent/v1/poll")
@@ -231,7 +249,6 @@ async fn poll_once(a: &Agent, req: &PollRequest) -> Result<Vec<Assignment>, Poll
     }
     r.json::<PollResponse>()
         .await
-        .map(|p| p.jobs)
         .map_err(|e| PollError::Other(without_url(&e)))
 }
 
@@ -488,29 +505,33 @@ async fn realtime_scan(a: &Agent, p: &std::path::Path) -> AgentEvent {
     }
 }
 
-/// Watch CANARY_FILES on this host and report any access to the server.
+/// What the agent reports about its managed canaries on each poll.
+fn canary_states(a: &Agent) -> Vec<crate::agent::proto::CanaryState> {
+    let Ok(g) = a.canary_states.lock() else {
+        return Vec::new();
+    };
+    let Some(s) = g.as_ref().and_then(|s| s.lock().ok().map(|m| m.clone())) else {
+        return Vec::new();
+    };
+    s.into_iter()
+        .map(|(path, armed)| crate::agent::proto::CanaryState { path, armed })
+        .collect()
+}
+
+/// Watch CANARY_FILES and the canaries the server sends, and report any access.
 fn spawn_canaries(a: Arc<Agent>) {
     let files = a.cfg.canary_files.clone();
-    if files.is_empty() {
-        return;
-    }
     let conf = a.conf.load(a.cfg.clamd_conf_file.as_deref()).ok().flatten();
     crate::canary::check_placement(&files, &a.cfg.scan_roots, conf.as_deref());
-    let mut rx = match crate::fsevents::canaries(files) {
-        Ok(rx) => rx,
-        Err(e) => {
-            tracing::error!(event = "canary.unavailable", error = %e, "canary files cannot be watched");
-            return;
-        }
-    };
+    let mut r = crate::canary::run(files, a.canaries.subscribe());
+    if let Ok(mut g) = a.canary_states.lock() {
+        *g = Some(r.states.clone());
+    }
     tokio::spawn(async move {
-        while let Some((p, what)) = rx.recv().await {
+        while let Some((p, what)) = r.hits.recv().await {
             // Logged here too, so the alert survives a server outage.
-            tracing::error!(event = "canary.tripped", path = %p.display(), what, "canary file touched");
-            let ev = AgentEvent::Canary {
-                path: p.to_string_lossy().into_owned(),
-                what: what.to_owned(),
-            };
+            tracing::error!(event = "canary.tripped", path = %p, what = %what, "canary file touched");
+            let ev = AgentEvent::Canary { path: p, what };
             send_event(&a, &ev).await;
         }
     });

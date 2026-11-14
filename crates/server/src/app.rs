@@ -37,6 +37,7 @@ pub struct AppState {
     pub clamd_conf: crate::clamdconf::Cache,
     pub freshclam_conf: crate::clamdconf::Cache,
     pub updates: crate::update::Updates,
+    pub canaries: crate::canary::Central,
 }
 
 impl AppState {
@@ -84,6 +85,7 @@ impl AppState {
             clamd_conf: crate::clamdconf::Cache::default(),
             freshclam_conf: crate::clamdconf::Cache::default(),
             updates: crate::update::Updates::default(),
+            canaries: crate::canary::Central::default(),
         }
     }
 

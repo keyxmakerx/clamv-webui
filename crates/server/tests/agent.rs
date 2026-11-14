@@ -454,3 +454,59 @@ async fn agent_scans_in_real_time_and_reports_canaries() {
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_file(&decoy);
 }
+
+#[tokio::test]
+async fn canaries_set_in_the_ui_reach_the_agent() {
+    let srv = server().await;
+    let clamd = fake_clamd().await;
+    let base = std::env::temp_dir().join(format!("clamv-agent-can-{}", clamv_webui::db::new_id()));
+    std::fs::create_dir_all(base.join("media")).expect("mkdir");
+    std::fs::create_dir_all(base.join("share")).expect("mkdir");
+    let root_s = base.join("media").to_str().expect("utf8").to_owned();
+    let decoy = base.join("share").join("passwords.csv");
+    let decoy_s = decoy.to_str().expect("utf8").to_owned();
+    let (agent, token) = srv
+        .st
+        .db
+        .create_agent("nas-3", "admin")
+        .await
+        .expect("agent");
+    srv.st
+        .db
+        .add_canary(Some(agent.id), &decoy_s, true, "admin")
+        .await
+        .expect("add");
+    let cli = agent_cli(&srv.url, &token, clamd, &root_s);
+    let handle = tokio::spawn(clamv_webui::agent::client::run(cli.config));
+
+    // The agent writes the decoy, arms it and says so on a later poll.
+    let mut armed = false;
+    for _ in 0..100 {
+        let list = srv.st.db.host_canaries(Some(agent.id)).await.expect("q");
+        if list[0].armed == Some(true) {
+            armed = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    // A busy agent heartbeats every 20 s at most; an idle one long-polls,
+    // so the state may only arrive on the next round. The decoy is the proof.
+    assert!(decoy.is_file(), "decoy written");
+    assert!(armed, "the agent reported it armed");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let _ = std::fs::read(&decoy).expect("read");
+    let mut tripped = false;
+    for _ in 0..50 {
+        let list = srv.st.db.host_canaries(Some(agent.id)).await.expect("q");
+        if list[0].last_tripped_at.is_some() {
+            tripped = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(tripped, "the server recorded the hit");
+    let audit = srv.st.db.audit_page(0, 10).await.expect("audit");
+    assert!(audit.0.iter().any(|a| a.action == "CANARY_TRIPPED"));
+    handle.abort();
+    let _ = std::fs::remove_dir_all(&base);
+}

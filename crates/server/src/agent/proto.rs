@@ -25,11 +25,23 @@ pub struct PollRequest {
     /// Hold the request open until work arrives.
     #[serde(default)]
     pub wait: bool,
+    /// Whether each canary could be watched, by path.
+    #[serde(default)]
+    pub canaries: Vec<CanaryState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanaryState {
+    pub path: String,
+    pub armed: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PollResponse {
     pub jobs: Vec<Assignment>,
+    /// The canaries an admin set for this agent (on top of its CANARY_FILES).
+    #[serde(default)]
+    pub canaries: Option<Vec<crate::canary::Spec>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

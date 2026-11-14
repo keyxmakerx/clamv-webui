@@ -814,3 +814,42 @@ async fn dashboard_and_detection_queries_everywhere() {
         );
     }
 }
+
+#[tokio::test]
+async fn canaries_everywhere() {
+    for db in databases().await {
+        let kind = db.kind();
+        let (agent, _) = db
+            .create_agent(&format!("can-{}", &new_id()[..8]), "admin")
+            .await
+            .expect("agent");
+        let p = format!("/srv/{}/keys.txt", &new_id()[..8]);
+        let central = db.add_canary(None, &p, true, "admin").await.expect("add");
+        db.add_canary(Some(agent.id), &p, false, "admin")
+            .await
+            .expect("add");
+        db.set_canary_armed(Some(agent.id), &p, true)
+            .await
+            .expect("arm");
+        db.canary_tripped(None, &p).await.expect("trip");
+        let mine = db.host_canaries(None).await.expect("q");
+        let c = mine.iter().find(|c| c.path == p).expect("central");
+        assert!(
+            c.create_file && c.armed.is_none() && c.last_tripped_at.is_some(),
+            "{kind:?}"
+        );
+        let theirs = db.host_canaries(Some(agent.id)).await.expect("q");
+        assert_eq!(theirs.len(), 1, "{kind:?}");
+        assert_eq!(theirs[0].armed, Some(true));
+        assert!(theirs[0].last_tripped_at.is_none());
+        assert!(db.delete_canary(&central).await.expect("del"));
+        assert!(db.delete_agent(agent.id).await.expect("del agent"));
+        assert!(
+            db.host_canaries(Some(agent.id))
+                .await
+                .expect("q")
+                .is_empty(),
+            "{kind:?} cascade"
+        );
+    }
+}

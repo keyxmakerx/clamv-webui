@@ -222,6 +222,8 @@ mod imp {
                             }
                         }
                     }
+                    // The list changed and the caller dropped us.
+                    () = tx.closed() => return,
                     // A deleted or replaced canary is armed again once it is back.
                     _ = rearm.tick() => {
                         for f in &files {

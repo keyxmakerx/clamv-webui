@@ -181,18 +181,44 @@ async fn poll(
         tracing::info!(event = "agent.online", agent = %c.agent.name, ip = %ip, version = %version, clamd = clamd_version.as_deref().unwrap_or("-"), "agent connected");
     }
     reconcile(&st, &c.agent, &req.running).await;
+    for cs in req
+        .canaries
+        .iter()
+        .take(crate::db::canaries::MAX_PER_HOST * 2)
+    {
+        let _ = st
+            .db
+            .set_canary_armed(Some(c.agent.id), &clip(&cs.path, 1024), cs.armed)
+            .await;
+    }
+    let specs = |l: Vec<crate::db::canaries::Canary>| {
+        l.into_iter()
+            .map(|c| crate::canary::Spec {
+                path: c.path,
+                create: c.create_file,
+            })
+            .collect::<Vec<_>>()
+    };
+    let mut canaries = st.db.host_canaries(Some(c.agent.id)).await.ok().map(specs);
+    // An agent that has not reported every canary yet gets the list at once.
+    let current = canaries.as_ref().is_none_or(|l| {
+        l.iter()
+            .all(|s| req.canaries.iter().any(|r| r.path == s.path))
+    });
     let free = req.free.min(MAX_BATCH);
     let mut jobs = Vec::new();
     if free > 0 {
         jobs = claim(&st, &c.agent, free).await;
-        if jobs.is_empty() && req.wait {
+        if jobs.is_empty() && req.wait && current {
             let _ = tokio::time::timeout(POLL_HOLD, rx.changed()).await;
             jobs = claim(&st, &c.agent, free).await;
+            // Canaries may have changed while we waited.
+            canaries = st.db.host_canaries(Some(c.agent.id)).await.ok().map(specs);
         }
     }
     (
         [(header::CACHE_CONTROL, "no-store")],
-        Json(PollResponse { jobs }),
+        Json(PollResponse { jobs, canaries }),
     )
         .into_response()
 }
@@ -275,7 +301,8 @@ async fn events(
     match ev {
         AgentEvent::Canary { path, what } => {
             let path = proto::clean(&path, 4096);
-            let what = proto::clean(&what, 64);
+            let what = proto::clean(&what, 200);
+            let _ = st.db.canary_tripped(Some(c.agent.id), &path).await;
             crate::canary::tripped(&st, &c.agent.name, &path, &what).await;
         }
         AgentEvent::Scan {
