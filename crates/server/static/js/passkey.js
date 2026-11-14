@@ -40,7 +40,8 @@
   async function register(btn) {
     var csrf = btn.getAttribute("data-csrf");
     var nameEl = document.getElementById("passkey-name");
-    var opt = await post("/account/passkeys/options", { csrf: csrf });
+    var proofEl = document.getElementById("passkey-proof");
+    var opt = await post("/account/passkeys/options", { csrf: csrf, proof: proofEl ? proofEl.value : "" });
     var pk = opt.publicKey;
     pk.challenge = toBytes(pk.challenge);
     pk.user.id = toBytes(pk.user.id);

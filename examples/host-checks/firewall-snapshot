@@ -1,5 +1,6 @@
 #!/bin/sh
 # Write what this host's firewall looks like, for clamv to read; changes nothing.
+# Reads nothing from $dir: clamv owns that folder and could point any name in it at another file.
 dir=/var/lib/clamv/firewall
 out=$dir/snapshot.txt
 tmp=/run/clamv-firewall/snapshot.txt
@@ -20,8 +21,6 @@ tmp=/run/clamv-firewall/snapshot.txt
   command -v getenforce >/dev/null 2>&1 && getenforce 2>&1 | head -n 1
   echo "### listening"
   command -v ss >/dev/null 2>&1 && ss -H -tulpn 2>/dev/null | head -n 500
-  echo "### status"
-  cat "$dir/status" 2>/dev/null
 } >"$tmp"
 chmod 0644 "$tmp"
 mv -f "$tmp" "$out"

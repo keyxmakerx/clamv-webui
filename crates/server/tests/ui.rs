@@ -336,7 +336,6 @@ async fn route_table_by_role() {
         ("/admin/firewall/rules", Role::Admin),
         ("/admin/firewall/rules/delete", Role::Admin),
         ("/admin/firewall/refresh", Role::Admin),
-        ("/admin/firewall/remove", Role::Admin),
         ("/admin/api-tokens", Role::Admin),
         ("/admin/api-tokens/x/revoke", Role::Admin),
         ("/admin/schedules", Role::Admin),

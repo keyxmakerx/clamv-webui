@@ -311,12 +311,25 @@ async fn passkeys_register_sign_in_and_second_step() {
         .await
         .expect("res");
     assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    // A session alone cannot enrol a passkey: the password is asked again.
+    for proof in ["", "not-the-password"] {
+        let res = app
+            .clone()
+            .oneshot(json(
+                "/account/passkeys/options",
+                &serde_json::json!({"csrf": csrf, "proof": proof}),
+                &session,
+            ))
+            .await
+            .expect("res");
+        assert_eq!(res.status(), StatusCode::FORBIDDEN, "proof {proof:?}");
+    }
     let opt: serde_json::Value = serde_json::from_str(
         &text(
             app.clone()
                 .oneshot(json(
                     "/account/passkeys/options",
-                    &serde_json::json!({"csrf": csrf}),
+                    &serde_json::json!({"csrf": csrf, "proof": pw()}),
                     &session,
                 ))
                 .await
@@ -603,7 +616,7 @@ async fn host_check_baselines_need_a_fresh_passkey() {
     let (_, opt) = json_of(
         &app,
         "/account/passkeys/options",
-        serde_json::json!({"csrf": csrf}),
+        serde_json::json!({"csrf": csrf, "proof": pw()}),
         &session,
     )
     .await;

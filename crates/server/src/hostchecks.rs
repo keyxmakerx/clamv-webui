@@ -104,7 +104,7 @@ pub const ACTIONS: [Action; 11] = [
         name: "firewall.remove",
         unit: "clamv-firewall-remove.service",
         stop: false,
-        passkey: false,
+        passkey: true,
         label: "Remove clamv's firewall table",
     },
 ];

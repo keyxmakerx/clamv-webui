@@ -145,6 +145,66 @@ async fn check_code(st: &AppState, user_id: &str, input: &str) -> Option<&'stati
     None
 }
 
+/// What a signed-in user must show again before sign-in methods change, so a
+/// stolen session alone cannot add its own passkey or drop a factor.
+pub(crate) async fn proof_kind(st: &AppState, u: &User) -> &'static str {
+    if st.db.totp(&u.id).await.ok().flatten().is_some() {
+        "totp"
+    } else if !u.is_external() {
+        "password"
+    } else {
+        ""
+    }
+}
+
+/// Check that proof: a current code (or recovery code), else the local password.
+/// Wrong answers count toward the same lockouts as sign-in.
+pub(crate) async fn prove(
+    st: &AppState,
+    u: &User,
+    info: &RequestInfo,
+    input: &str,
+) -> Result<(), &'static str> {
+    match proof_kind(st, u).await {
+        "totp" => checked_code(st, u, info, input)
+            .await
+            .map(|_| ())
+            .ok_or("Enter a current code from your authenticator app, or a recovery code."),
+        "password" => crate::auth::login::authenticate(
+            st,
+            &u.username,
+            input,
+            info.ip,
+            info.user_agent.as_deref(),
+            "UI",
+        )
+        .await
+        .map(|_| ())
+        .map_err(|_| "Enter your current password to confirm."),
+        _ => Ok(()),
+    }
+}
+
+/// `check_code` for a signed-in user, throttled like the second sign-in step.
+async fn checked_code(
+    st: &AppState,
+    u: &User,
+    info: &RequestInfo,
+    input: &str,
+) -> Option<&'static str> {
+    let key = format!("2fa:{}", u.id);
+    if st.mfa_lockout.check(&key, info.ip).is_err() {
+        tracing::warn!(event = "auth.locked", user = %u.username, ip = %info.ip, transport = "2FA", "code refused while locked");
+        return None;
+    }
+    let how = check_code(st, &u.id, input).await;
+    if how.is_none() && !input.trim().is_empty() {
+        tracing::warn!(event = "auth.second_factor_failed", user = %u.username, ip = %info.ip, reason = "wrong code on the account page", "second factor rejected");
+        let _ = st.mfa_lockout.fail(&key, info.ip);
+    }
+    how
+}
+
 #[derive(Deserialize)]
 struct CodeForm {
     #[serde(default)]
@@ -297,6 +357,8 @@ struct SecurityPage {
     enrol: Option<Enrolment>,
     codes: Vec<String>,
     sso: bool,
+    /// "totp", "password" or "": what changing passkeys asks for again.
+    proof: &'static str,
 }
 
 pub(crate) async fn security(
@@ -343,6 +405,7 @@ pub(crate) async fn security(
             enrol,
             codes,
             sso: u.is_external() && st.ldap.is_none(),
+            proof: proof_kind(st, u).await,
         },
     )
 }
@@ -444,6 +507,19 @@ async fn enable(
         Ok(x) => x,
         Err(r) => return r,
     };
+    // A second seed would replace the first without proving it; turn the old one off first.
+    if st.db.totp(&u.id).await.ok().flatten().is_some() {
+        return security(
+            &st,
+            &s,
+            &u,
+            Some("An authenticator app is already set up. Turn it off first.".into()),
+            None,
+            None,
+            Vec::new(),
+        )
+        .await;
+    }
     let Ok(secret) = st.sealer.open(&f.sealed, &format!("enrol:{}", u.id)) else {
         return security(
             &st,
@@ -514,7 +590,7 @@ async fn disable(
         Ok(x) => x,
         Err(r) => return r,
     };
-    if check_code(&st, &u.id, &f.code).await.is_none() {
+    if checked_code(&st, &u, &info, &f.code).await.is_none() {
         return security(
             &st,
             &s,
@@ -556,7 +632,7 @@ async fn new_recovery(
         Err(r) => return r,
     };
     if st.db.totp(&u.id).await.ok().flatten().is_none()
-        || check_code(&st, &u.id, &f.code).await != Some("totp")
+        || checked_code(&st, &u, &info, &f.code).await != Some("totp")
     {
         return security(
             &st,

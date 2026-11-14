@@ -343,7 +343,17 @@ pub fn read_snapshot(dir: &Path) -> Option<String> {
     let f = std::fs::File::open(dir.join("snapshot.txt")).ok()?;
     let mut s = Vec::new();
     f.take(MAX_SNAPSHOT as u64).read_to_end(&mut s).ok()?;
-    Some(String::from_utf8_lossy(&s).into_owned())
+    let mut out = String::from_utf8_lossy(&s).into_owned();
+    // The apply status is read here, unprivileged: the root snapshot unit reads nothing from this folder.
+    if let Ok(f) = std::fs::File::open(dir.join("status")) {
+        let mut st = String::new();
+        if f.take(200).read_to_string(&mut st).is_ok() {
+            out.push_str("\n### status\n");
+            out.push_str(st.lines().next().unwrap_or_default());
+            out.push('\n');
+        }
+    }
+    Some(out)
 }
 
 /// Write the plan for the apply unit and start it. Returns the hash to confirm.
@@ -552,6 +562,33 @@ rolled_back 1763100000 abc123
             assert!(!b.contains(w), "{w}");
         }
         assert_eq!(hash(&b).len(), 64);
+        // The apply script accepts only these line shapes; the generator must stay inside them.
+        let script = include_str!("../../../examples/host-checks/firewall-apply");
+        let allowed = script
+            .lines()
+            .find_map(|l| l.strip_prefix("allowed='"))
+            .and_then(|l| l.strip_suffix('\''))
+            .expect("allowed pattern");
+        let re = regex::Regex::new(allowed).expect("regex");
+        let wide = check(vec![Rule {
+            port: 65535,
+            proto: Proto::Udp,
+            allow: vec![
+                "::ffff:10.1.2.3".into(),
+                "2001:db8::/32".into(),
+                "10.0.0.1".into(),
+            ],
+        }])
+        .expect("ok");
+        for l in b
+            .lines()
+            .chain(body(&wide).lines())
+            .chain(body(&[]).lines())
+        {
+            assert!(re.is_match(l), "the apply script would refuse {l:?}");
+        }
+        assert!(!re.is_match("    tcp dport 22 redirect to :2222"));
+        assert!(!re.is_match("    type nat hook prerouting priority -100; policy accept;"));
         assert!(
             check(vec![Rule {
                 port: 0,

@@ -51,10 +51,12 @@
 {% if !passkeys.is_empty() %}<table class="table table-sm align-middle">
 <thead><tr><th>Name</th><th>Added</th><th>Last used</th><th></th></tr></thead>
 <tbody>{% for k in passkeys %}<tr><td>{{ k.name }}</td><td class="small">{{ k.created }}</td><td class="small">{{ k.last_used }}</td>
-<td><form method="post" action="/account/passkeys/{{ k.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form></td></tr>{% endfor %}</tbody>
+<td><form method="post" action="/account/passkeys/{{ k.id }}/delete" class="d-flex gap-2 justify-content-end"><input type="hidden" name="_csrf" value="{{ nav.csrf }}">{% if proof == "totp" %}<input class="form-control form-control-sm w-auto" name="proof" required autocomplete="one-time-code" maxlength="64" placeholder="Authenticator code" aria-label="Authenticator code">{% else if proof == "password" %}<input class="form-control form-control-sm w-auto" type="password" name="proof" required autocomplete="current-password" maxlength="256" placeholder="Current password" aria-label="Current password">{% endif %}<button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form></td></tr>{% endfor %}</tbody>
 </table>{% endif %}
+{% if !proof.is_empty() %}<p class="muted small">Adding or removing a passkey asks for your {% if proof == "totp" %}authenticator code{% else %}current password{% endif %} again.</p>{% endif %}
 <div class="d-flex gap-2 passkey-add">
 <input class="form-control" id="passkey-name" maxlength="64" placeholder="Name, e.g. Laptop" aria-label="Passkey name">
+{% if proof == "totp" %}<input class="form-control" id="passkey-proof" autocomplete="one-time-code" maxlength="64" placeholder="Authenticator code" aria-label="Authenticator code">{% else if proof == "password" %}<input class="form-control" type="password" id="passkey-proof" autocomplete="current-password" maxlength="256" placeholder="Current password" aria-label="Current password">{% endif %}
 <button type="button" class="btn btn-primary text-nowrap" id="passkey-add" data-passkey="register" data-csrf="{{ nav.csrf }}">Add passkey</button>
 </div>
 <div class="alert alert-danger d-none mt-2" role="alert" id="passkey-error"></div>
