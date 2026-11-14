@@ -117,6 +117,11 @@
     if (btn) btn.addEventListener("click", function () {
       applyTheme(document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light");
     });
+    var menu = document.getElementById("nav-toggle");
+    var side = document.getElementById("app-sidebar");
+    if (menu && side) menu.addEventListener("click", function () {
+      menu.setAttribute("aria-expanded", side.classList.toggle("nav-open") ? "true" : "false");
+    });
     document.addEventListener("click", function (ev) {
       var t = ev.target.closest("[data-toggle-help]");
       if (t) {

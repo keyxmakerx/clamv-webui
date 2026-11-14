@@ -15,7 +15,8 @@
   }
   function showError(msg) {
     var el = document.getElementById("passkey-error");
-    if (el) { el.textContent = msg; el.classList.remove("d-none"); }
+    // The button can be far below the message, so bring the message into view.
+    if (el) { el.textContent = msg; el.classList.remove("d-none"); el.scrollIntoView({ block: "nearest" }); }
   }
   async function post(url, body) {
     var r = await fetch(url, {
@@ -88,7 +89,7 @@
       signature: toB64u(cred.response.signature)
     });
     var ok = document.getElementById("stepup-ok");
-    if (ok) { ok.textContent = res.message || "Done."; ok.classList.remove("d-none"); }
+    if (ok) { ok.textContent = res.message || "Done."; ok.classList.remove("d-none"); ok.scrollIntoView({ block: "nearest" }); }
     if (res.reload) { setTimeout(function () { window.location.reload(); }, 4000); }
   }
   document.addEventListener("click", function (ev) {

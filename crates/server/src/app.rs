@@ -334,6 +334,16 @@ async fn shutdown() {
 fn prepare_data_dir(dir: &std::path::Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(dir)
         .map_err(|e| anyhow::anyhow!("cannot create DATA_DIR {}: {e}", dir.display()))?;
+    // A bind mount Docker created is owned by root; say so instead of failing on the database.
+    let probe = dir.join(".write-test");
+    if let Err(e) = std::fs::write(&probe, b"") {
+        anyhow::bail!(
+            "DATA_DIR {} is not writable ({e}); on the host run: chown {} <data folder>",
+            dir.display(),
+            owner_hint()
+        );
+    }
+    let _ = std::fs::remove_file(&probe);
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -342,6 +352,18 @@ fn prepare_data_dir(dir: &std::path::Path) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// `uid:gid` this process runs as, for the chown hint.
+fn owner_hint() -> String {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(m) = std::fs::metadata("/proc/self") {
+            return format!("{}:{}", m.uid(), m.gid());
+        }
+    }
+    "10001:10001".to_owned()
 }
 
 /// Periodic cleanup of expired sessions and old jobs (N5).

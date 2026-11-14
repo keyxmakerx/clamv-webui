@@ -90,3 +90,11 @@ body{min-height:100vh;background-attachment:fixed}
 .cs-meta{display:grid;grid-template-columns:max-content 1fr;gap:2px 10px;margin:0}
 .cs-meta dt{color:var(--muted);font-weight:normal}
 .cs-meta dd{margin:0}
+/* Narrow screens: the menu folds behind a button so pages start with their content. */
+.nav-toggle{display:none;margin-left:auto}
+@media(max-width:1100px){
+.app-sidebar{position:static}
+.js .nav-toggle{display:inline-grid}
+.js .sidebar-header{padding-bottom:6px}
+.js .app-sidebar:not(.nav-open)>.sidebar-section,.js .app-sidebar:not(.nav-open)>.sidebar-divider{display:none}
+}

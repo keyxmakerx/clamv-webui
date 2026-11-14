@@ -38,10 +38,15 @@ Forked from an earlier Java application, which has been replaced entirely. Licen
 `docker-compose.yml` runs the UI with its own `clamav/clamav` container. Put files to scan in `./scan`.
 
 ```sh
+mkdir -p data scan && sudo chown 10001:10001 data   # the app runs as UID 10001 and must own ./data
 docker compose up -d
 ```
 
-Open http://localhost:8080. On first start an `admin` account is created with a generated password, written to `data/bootstrap-admin-password`. Open that file on the host, sign in, then delete the file.
+Open http://localhost:8080. On first start an `admin` account is created with a generated password, written to `data/bootstrap-admin-password` (owned by UID 10001, so open it as root). Sign in, choose a new password, then delete the file.
+
+The bundled clamd downloads its signatures on first start, which takes a few minutes; until then the dashboard shows the endpoint as unreachable. If the container restarts in a loop, `docker compose logs clamv-webui` names the cause, most often a `./data` folder the app cannot write to.
+
+Passkeys, and so the passkey confirmation that a firewall apply or a new AIDE baseline asks for, need HTTPS: set `TLS_SELF_SIGNED=true`, or put a reverse proxy in front (see [docs/REVERSE_PROXY.md](docs/REVERSE_PROXY.md)) and set `PUBLIC_URL`.
 
 To use a clamd you already run, use `docker-compose.external-clamd.yml`. It joins an existing Docker network, mounts scan roots read-only, and lists optional webhook, metrics, OIDC and LDAP settings as comments. For agents on other hosts, see [Agents](#agents).
 
@@ -50,7 +55,7 @@ Lost the admin password? Run `docker compose exec clamv-webui /app/clamv-webui r
 ## Agents
 
 1. In **Admin > Agents**, add an agent. The page shows its token once, plus a compose file for the agent host.
-2. On that host, save the token as `./agent_token` and start `docker-compose.agent.yml` next to a clamd.
+2. On that host, save the token as `./agent_token` (`chown 10001`, `chmod 600`) and start `docker-compose.agent.yml` next to a clamd. The agent logs `agent.connected` once it reaches the server, or `agent.unreachable` with the reason.
 3. Pick the agent under **Run on** when you scan a path or add a schedule. Schedules with the EICAR control run that check on the agent too.
 
 The agent enforces its own `SCAN_ROOTS`. Jobs queued for an offline agent wait (and expire after a day). A job the agent loses is marked failed. Online and offline changes are logged as `agent.online` and `agent.offline`.
@@ -61,7 +66,6 @@ The agent enforces its own `SCAN_ROOTS`. Jobs queued for an offline agent wait (
 | `AGENT_TOKEN(_FILE)` | The agent's token |
 | `AGENT_SERVER_FINGERPRINT` | SHA-256 of the server certificate (logged at server start); trust exactly that certificate |
 | `AGENT_CA_FILE` | Or: a PEM CA bundle for the server certificate |
-
 | `REALTIME_PATHS` | Folders inside `SCAN_ROOTS` scanned as soon as files are written; results show up as watch jobs on the server |
 
 `CLAMD_ENDPOINT`, `SCAN_ROOTS`, `SCAN_CONCURRENCY`, `CLAMD_MAX_STREAM_MB`, `CLAMD_CONF_FILE` (its `ExcludePath` rules), `CANARY_FILES`, `WATCH_REALTIME` and `LOG_*` apply to the agent as they do to the server. Plain `http://` works but sends the token unencrypted, so use it only over a VPN or mesh.
@@ -88,8 +92,8 @@ Every option is an environment variable (or a `--flag`; run `clamv-webui --help`
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `CLAMD_ENDPOINT` | `tcp://clamav:3310` | Default endpoint (`tcp://host:port` or `unix:///path`) |
-| `CLAMD_HOST_ALLOWLIST` | empty | Hosts admins may add endpoints for; empty allows only the default |
+| `CLAMD_ENDPOINT` | `tcp://clamav:3310` | Default endpoint (`tcp://host:port` or `unix:///path`), created on first start only; change it later under **Admin > clamd Endpoints** |
+| `CLAMD_HOST_ALLOWLIST` | empty | Hosts admins may add endpoints for; empty allows any host, so set it |
 | `CLAMD_MAX_STREAM_MB` | `1024` | Upload size limit; raise clamd's `StreamMaxLength` to match (see below) |
 | `SCAN_ROOTS` | empty | Comma-separated paths that path scans, schedules and watches may use; clamd must see them at the same paths |
 | `SCAN_CONCURRENCY` | `2` | Path scans running at once |
@@ -101,7 +105,7 @@ Every option is an environment variable (or a `--flag`; run `clamv-webui --help`
 | `AUDIT_RETENTION_DAYS` | `365` | `0` keeps audit events forever |
 | `DETECTION_RETENTION_DAYS` | `365` | Jobs that found malware are kept at least this long; `0` keeps them forever |
 
-clamd refuses streams over its `StreamMaxLength` (25 MB by default in many builds), so set it to at least `CLAMD_MAX_STREAM_MB` in clamd.conf, e.g. `StreamMaxLength 1024M`, and keep `MaxFileSize` and `MaxScanSize` at or above it. Files with names that are not UTF-8 in watched folders are streamed to clamd, so they are scanned too.
+clamd refuses streams over its `StreamMaxLength` (100 MB in the official image, 25 MB in older releases), so set it to at least `CLAMD_MAX_STREAM_MB` in clamd.conf, e.g. `StreamMaxLength 1024M`, and keep `MaxFileSize` and `MaxScanSize` at or above it. Files with names that are not UTF-8 in watched folders are streamed to clamd, so they are scanned too.
 
 | Variable | Purpose |
 |---|---|
@@ -162,7 +166,7 @@ Docker alone covers scans, canaries, CrowdSec and reading reports. Managed AIDE 
 docker run --rm --user 0 -v /:/host ghcr.io/keyxmakerx/clamv-webui:latest host-setup
 ```
 
-It adds a `clamv` user with the containers' uid (10001, or `--uid`), the units `clamv-aide-check`, `clamv-aide-accept`, `clamv-rkhunter-check`, `clamv-rkhunter-propupd`, `clamv-firewall-snapshot`, `clamv-firewall-apply` and `clamv-firewall-remove` (each one fixed script, read-only system, no network, few capabilities), daily timers, `/var/lib/clamv/firewall`, and a polkit rule that lets `clamv` start those units and switch the two timers, and nothing else. `host-setup --remove` takes it away again. Without Docker, `sudo examples/host-checks/install.sh` does the same. AIDE and rkhunter themselves are host packages.
+It adds a `clamv` user with the containers' uid (10001, or `--uid`), the units `clamv-aide-check`, `clamv-aide-accept`, `clamv-rkhunter-check`, `clamv-rkhunter-propupd`, `clamv-firewall-snapshot`, `clamv-firewall-apply` and `clamv-firewall-remove` (each one fixed script, read-only system, no network, few capabilities), daily timers, `/var/lib/clamv/firewall`, and a polkit rule that lets `clamv` start those units and switch the two timers, and nothing else. It ends with a note for anything the host still lacks (polkit 0.106 or newer, AIDE, rkhunter, nftables). `host-setup --remove` takes it away again. Without Docker, `sudo examples/host-checks/install.sh` does the same. AIDE and rkhunter themselves are host packages.
 
 Then mount `/run/dbus/system_bus_socket` read-only and `/var/lib/clamv/firewall` read-write into the clamv or agent container. Reports still reach clamv through `AIDE_LOG` and `RKHUNTER_LOG`.
 
