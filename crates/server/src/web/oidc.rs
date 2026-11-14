@@ -43,7 +43,7 @@ fn login_error(st: &AppState, status: StatusCode, msg: &'static str) -> Response
             sso: st.oidc.as_ref().map(|o| o.label().to_owned()),
             ldap: st.ldap.is_some(),
             source: String::new(),
-            first_start: super::bootstrap_file_present(st),
+            first_start: false,
         },
     );
     if let Ok(v) = state_cookie("", 0, st.cfg.cookie_secure).parse() {

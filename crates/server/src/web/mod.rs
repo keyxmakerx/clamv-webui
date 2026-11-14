@@ -213,13 +213,17 @@ pub(crate) struct LoginPage {
     pub sso: Option<String>,
     pub ldap: bool,
     pub source: String,
-    /// The one-time admin password file is still in DATA_DIR.
+    /// `admin` still has its one-time password, so point to the file that holds it.
     pub first_start: bool,
 }
 
-/// True while `bootstrap-admin-password` exists, so the sign-in page can point to it.
-pub(crate) fn bootstrap_file_present(st: &AppState) -> bool {
-    st.cfg.data_dir.join("bootstrap-admin-password").exists()
+/// True until the generated `admin` password has been replaced. Read from the
+/// database, so no request touches the data folder.
+pub(crate) async fn admin_password_pending(st: &AppState) -> bool {
+    matches!(
+        st.db.user_by_username("admin").await,
+        Ok(Some(u)) if u.must_change_password && !u.is_external()
+    )
 }
 
 #[derive(Deserialize)]
@@ -252,7 +256,7 @@ async fn login_page(
             sso: st.oidc.as_ref().map(|o| o.label().to_owned()),
             ldap: st.ldap.is_some(),
             source: String::new(),
-            first_start: bootstrap_file_present(&st),
+            first_start: admin_password_pending(&st).await,
         },
     )
 }
@@ -281,6 +285,7 @@ async fn login(
         ""
     }
     .to_owned();
+    let first_start = admin_password_pending(&st).await;
     let page = |status, error| {
         render(
             status,
@@ -291,7 +296,7 @@ async fn login(
                 sso: st.oidc.as_ref().map(|o| o.label().to_owned()),
                 ldap: st.ldap.is_some(),
                 source: source.clone(),
-                first_start: bootstrap_file_present(&st),
+                first_start,
             },
         )
     };
