@@ -851,5 +851,7 @@ async fn canaries_everywhere() {
                 .is_empty(),
             "{kind:?} cascade"
         );
+        db.host_activity(0).await.expect("activity query");
+        db.recent_controls(0).await.expect("controls query");
     }
 }
