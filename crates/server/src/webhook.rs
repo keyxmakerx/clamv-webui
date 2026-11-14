@@ -333,7 +333,12 @@ impl Target {
             ),
             Format::Slack => (
                 self.url.clone(),
-                serde_json::json!({ "text": discord_text(e).replace("**", "*") }),
+                // Slack reads <…> as links and mentions, so escape as its docs require.
+                serde_json::json!({ "text": discord_text(e)
+                    .replace("**", "*")
+                    .replace('&', "&amp;")
+                    .replace('<', "&lt;")
+                    .replace('>', "&gt;") }),
             ),
             Format::Gotify => {
                 let mut u = self.url.clone();
@@ -508,7 +513,12 @@ fn title(e: &Event) -> String {
         (_, jobs::ERROR) => format!("Scan failed on {}", e.endpoint),
         _ => format!("Scan finished on {}", e.endpoint),
     };
-    clip(&t, 120)
+    clip(
+        &t.chars()
+            .map(|c| if is_bidi_control(c) { '\u{FFFD}' } else { c })
+            .collect::<String>(),
+        120,
+    )
 }
 
 /// The chat text without its first line, which the title already says.
@@ -520,8 +530,18 @@ fn body_text(e: &Event) -> String {
     }
 }
 
+/// Bidirectional overrides can make `evil\u{202E}fdp.exe` read as `evil.exe.pdf`.
+pub fn is_bidi_control(c: char) -> bool {
+    matches!(c, '\u{200E}' | '\u{200F}' | '\u{061C}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
 fn discord_text(e: &Event) -> String {
-    let clean = |s: &str| s.replace('`', "'");
+    let clean = |s: &str| {
+        s.chars()
+            .map(|c| if is_bidi_control(c) { '\u{FFFD}' } else { c })
+            .collect::<String>()
+            .replace('`', "'")
+    };
     let head = match (e.event, e.verdict.as_str()) {
         ("test", _) => "Test message from clamv-webui.".to_owned(),
         ("canary.tripped", _) => format!(
@@ -932,6 +952,14 @@ mod tests {
             .request(&e);
         assert_eq!(u.as_str(), "https://g.example/message?token=t");
         assert_eq!(b["priority"], 8);
+        let (_, b) = target("slack+https://chat.example/h")
+            .expect("t")
+            .request(&hit(&["<!channel>"]));
+        assert!(
+            b["text"]
+                .as_str()
+                .is_some_and(|t| !t.contains("<!channel>"))
+        );
         let (_, b) = target("slack+https://chat.example/h")
             .expect("t")
             .request(&e);

@@ -523,3 +523,34 @@ async fn trusted_proxy_sets_client_ip_and_secure_cookies() {
     let res = app.clone().oneshot(r).await.expect("res");
     assert!(!cookies(&res)[0].contains("Secure"));
 }
+
+#[tokio::test]
+async fn basic_auth_cannot_skip_the_second_factor() {
+    use base64::Engine;
+    let (app, st) = app(&[]).await;
+    let basic = format!(
+        "Basic {}",
+        base64::engine::general_purpose::STANDARD.encode(format!("admin:{}", pw()))
+    );
+    let call = || {
+        Request::get("/api/v1/auth")
+            .header(header::AUTHORIZATION, basic.clone())
+            .body(Body::empty())
+            .expect("req")
+    };
+    let res = app.clone().oneshot(call()).await.expect("res");
+    assert_eq!(res.status(), StatusCode::OK, "no 2FA yet: Basic works");
+    let admin = st
+        .db
+        .user_by_username("admin")
+        .await
+        .expect("q")
+        .expect("admin");
+    st.db
+        .enable_totp(&admin.id, "v1:sealed", 0, &[])
+        .await
+        .expect("enable");
+    let res = app.oneshot(call()).await.expect("res");
+    assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    assert!(text(res).await.contains("second_factor_required"));
+}

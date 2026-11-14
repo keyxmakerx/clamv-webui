@@ -186,6 +186,9 @@ async fn scan_path(
             "Your session form expired. Reload and try again.",
         );
     }
+    if let Some(r) = rate_limited(&st, &u, &info) {
+        return r;
+    }
     let input = f.path.trim().to_owned();
     let (target, endpoint_id, agent_id) = match chosen_target(&st, f.endpoint.as_deref()).await {
         Err(m) => return scan_error(&st, &s, &u, m, input).await,
@@ -255,6 +258,18 @@ async fn scan_path(
     Redirect::to(&format!("/jobs/{}", job.id)).into_response()
 }
 
+/// The same per-user scan budget the API uses, so a stolen session cannot flood clamd.
+fn rate_limited(st: &AppState, u: &User, info: &RequestInfo) -> Option<Response> {
+    if st.scan_rate.allow(&format!("u:{}", u.id)) {
+        return None;
+    }
+    tracing::warn!(event = "api.rate_limited", principal = %u.username, ip = %info.ip, "scan rate limit exceeded");
+    Some(error_page(
+        StatusCode::TOO_MANY_REQUESTS,
+        "Too many scans in the last minute. Wait a moment and try again.",
+    ))
+}
+
 async fn audit_scan(st: &AppState, u: &User, info: &RequestInfo, job: &Job, action: &'static str) {
     st.db
         .audit(AuditEntry {
@@ -276,7 +291,11 @@ async fn audit_scan(st: &AppState, u: &User, info: &RequestInfo, job: &Job, acti
 /// A display name only: never used as a path.
 pub(crate) fn display_name(raw: Option<&str>) -> String {
     let base = raw.unwrap_or("").rsplit(['/', '\\']).next().unwrap_or("");
-    let clean: String = base.chars().filter(|c| !c.is_control()).take(255).collect();
+    let clean: String = base
+        .chars()
+        .filter(|c| !c.is_control() && !crate::webhook::is_bidi_control(*c))
+        .take(255)
+        .collect();
     let clean = clean.trim();
     if clean.is_empty() {
         "upload".to_owned()
@@ -383,6 +402,9 @@ async fn scan_upload(
             StatusCode::FORBIDDEN,
             "Your session form expired. Reload and try again.",
         );
+    }
+    if let Some(r) = rate_limited(&st, &u, &info) {
+        return r;
     }
     let mut endpoint_id = None;
     let mut ids: Vec<String> = Vec::new();
@@ -872,6 +894,7 @@ mod tests {
         assert_eq!(display_name(Some("../../etc/passwd")), "passwd");
         assert_eq!(display_name(Some("C:\\Users\\a\\b.exe")), "b.exe");
         assert_eq!(display_name(Some("a\u{0}b\nc")), "abc");
+        assert_eq!(display_name(Some("cv\u{202E}fdp.exe")), "cvfdp.exe");
         assert_eq!(display_name(Some("")), "upload");
         assert_eq!(display_name(None), "upload");
     }

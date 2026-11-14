@@ -266,6 +266,12 @@ async fn events(
     c: Caller,
     Json(ev): Json<AgentEvent>,
 ) -> Response {
+    // Real-time scans arrive one file at a time; cap them so a broken or
+    // hostile agent cannot fill the job table.
+    if !st.agent_events.allow(&c.agent.id.to_string()) {
+        tracing::warn!(event = "agent.rate_limited", agent = %c.agent.name, ip = %c.ip, "agent sent too many events");
+        return reply(StatusCode::TOO_MANY_REQUESTS, "too many events");
+    }
     match ev {
         AgentEvent::Canary { path, what } => {
             let path = proto::clean(&path, 4096);

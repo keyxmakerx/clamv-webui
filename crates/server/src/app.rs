@@ -19,9 +19,13 @@ pub struct AppState {
     pub cfg: Config,
     pub db: Db,
     pub lockout: Lockout,
+    /// Wrong second-factor codes per account, across sign-in attempts.
+    pub mfa_lockout: Lockout,
     pub runner: crate::scan::Runner,
     /// Scan submissions per credential (Java `api.v1.scan-rate-limit-per-minute`).
     pub scan_rate: crate::auth::ratelimit::RateLimit,
+    /// Events per agent per minute (real-time scans and canary hits).
+    pub agent_events: crate::auth::ratelimit::RateLimit,
     pub watcher: crate::watch::Watcher,
     pub sealer: crate::auth::sealed::Sealer,
     pub trusted_proxies: Vec<crate::webhook::Cidr>,
@@ -41,6 +45,10 @@ impl AppState {
             runner: crate::scan::Runner::new(cfg.scan_concurrency),
             scan_rate: crate::auth::ratelimit::RateLimit::new(
                 30,
+                std::time::Duration::from_secs(60),
+            ),
+            agent_events: crate::auth::ratelimit::RateLimit::new(
+                1200,
                 std::time::Duration::from_secs(60),
             ),
             notifier: crate::webhook::Notifier::new(&cfg),
@@ -66,6 +74,11 @@ impl AppState {
             cfg,
             db,
             lockout: Lockout::new(LockoutPolicy::default()),
+            mfa_lockout: Lockout::new(LockoutPolicy {
+                per_pair: 10,
+                per_account: 10,
+                ..LockoutPolicy::default()
+            }),
             watcher: crate::watch::Watcher::default(),
             agents: crate::agent::Hub::default(),
             clamd_conf: crate::clamdconf::Cache::default(),

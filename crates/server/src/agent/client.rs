@@ -532,7 +532,7 @@ async fn send_event(a: &Agent, ev: &AgentEvent) {
             .await
         {
             Ok(r) if r.status().is_success() => return,
-            Ok(r) if r.status().is_client_error() => {
+            Ok(r) if r.status().is_client_error() && r.status().as_u16() != 429 => {
                 tracing::warn!(
                     event = "agent.event_refused",
                     status = r.status().as_u16(),

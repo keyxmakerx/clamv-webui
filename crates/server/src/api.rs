@@ -265,7 +265,20 @@ impl FromRequestParts<Arc<AppState>> for Principal {
                 };
                 let name: String = name.trim().chars().take(64).collect();
                 match authenticate(st, &name, pw, ip, user_agent.as_deref(), "API_BASIC").await {
-                    Ok(u) => (Who::User(u), Via::Basic),
+                    Ok(u) => {
+                        // A password alone must not get around the second factor.
+                        let (totp, keys) =
+                            st.db.mfa_methods(&u.id).await.map_err(|_| unavailable())?;
+                        if totp || keys > 0 {
+                            tracing::warn!(event = "auth.basic_refused", user = %u.username, ip = %ip, "HTTP Basic refused for an account with two-factor sign-in");
+                            return Err(err(
+                                StatusCode::UNAUTHORIZED,
+                                "second_factor_required",
+                                "This account uses two-factor sign-in. Use an API token instead of a password.",
+                            ));
+                        }
+                        (Who::User(u), Via::Basic)
+                    }
                     Err(Failure::Locked) => {
                         return Err(err(
                             StatusCode::TOO_MANY_REQUESTS,

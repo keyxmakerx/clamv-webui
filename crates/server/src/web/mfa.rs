@@ -162,6 +162,25 @@ async fn second_submit(
         return Redirect::to("/login").into_response();
     };
     let (has_totp, keys) = st.db.mfa_methods(&u.id).await.unwrap_or_default();
+    // Signing in again starts a fresh pending step, so wrong codes are also
+    // counted per account; a correct password does not reset this counter.
+    let lock_key = format!("2fa:{}", u.id);
+    if st.mfa_lockout.check(&lock_key, info.ip).is_err() {
+        let _ = st.db.delete_mfa_pending(&p.id_hash).await;
+        tracing::warn!(event = "auth.locked", user = %u.username, ip = %info.ip, transport = "2FA", "second factor refused while locked");
+        return (
+            [(header::SET_COOKIE, mfa_cookie("", 0, st.cfg.cookie_secure))],
+            render(
+                StatusCode::TOO_MANY_REQUESTS,
+                &SecondPage {
+                    error: Some("Too many wrong codes. Try again later.".into()),
+                    totp: false,
+                    passkeys: false,
+                },
+            ),
+        )
+            .into_response();
+    }
     if !st.db.count_mfa_attempt(&p.id_hash).await.unwrap_or(false) {
         let _ = st.db.delete_mfa_pending(&p.id_hash).await;
         fail_audit(&st, &u, &info, "too many codes").await;
@@ -181,6 +200,9 @@ async fn second_submit(
     match check_code(&st, &u.id, &f.code).await {
         Some(how) => finish(&st, auth, &u, &info, &p, how).await,
         None => {
+            if let Some(scope) = st.mfa_lockout.fail(&lock_key, info.ip) {
+                tracing::warn!(event = "auth.locked", user = %u.username, ip = %info.ip, scope = ?scope, transport = "2FA", "second factor locked");
+            }
             fail_audit(&st, &u, &info, "wrong code").await;
             let left = crate::db::mfa::PENDING_MAX_ATTEMPTS - p.attempts - 1;
             render(

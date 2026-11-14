@@ -162,12 +162,13 @@ The Settings page (Admin) can change the scan, retention, watch, webhook-policy 
 
 - Runs as UID 10001 in a read-only container with all capabilities dropped. Scan roots should be mounted read-only; the app never writes to them.
 - Path scans resolve symlinks and must stay inside `SCAN_ROOTS`. clamd endpoints are limited to `CLAMD_HOST_ALLOWLIST`.
-- Passwords use Argon2id. Second factors: TOTP seeds are encrypted with `SECRET_KEY_FILE`, codes cannot be replayed, recovery codes are hashed and single-use, five wrong codes end the attempt. Passkeys require user verification and are checked for origin, relying party, signature and counter. Admins can reset a user's second factors; `reset-admin` clears the admin's. Sessions are server-side with `SameSite=Strict` cookies, CSRF tokens on every form, and login rate limiting.
+- Passwords use Argon2id. Second factors: TOTP seeds are encrypted with `SECRET_KEY_FILE`, codes cannot be replayed, recovery codes are hashed and single-use, five wrong codes end the attempt and ten in 15 minutes lock the account's second step, however many times the password is entered. HTTP Basic on the API is refused for accounts with a second factor (use a token). Passkeys require user verification and are checked for origin, relying party, signature and counter. Admins can reset a user's second factors; `reset-admin` clears the admin's. Sessions are server-side with `SameSite=Strict` cookies, CSRF tokens on every form, login rate limiting, and a per-user limit of 30 scans a minute in the UI and API.
 - A strict Content-Security-Policy (no inline script or style) and the usual security headers on every response.
 - API tokens are stored hashed and shown once. Metrics need a bearer token.
+- File names in notifications have bidirectional-override characters replaced, so `cv\u202Efdp.exe` cannot pose as a PDF; Slack text is escaped so names cannot carry mentions or links.
 - Webhook delivery pins the resolved address, refuses private and metadata ranges unless allowed, follows no redirects, and never logs the URL.
 - OIDC uses PKCE, state and nonce, and only asymmetric signatures. LDAP requires TLS.
-- Agent tokens are stored hashed, can be rotated or disabled, and only reach the agent endpoints. Results from an agent are size-limited and cleaned before they are stored.
+- Agent tokens are stored hashed, can be rotated or disabled, and only reach the agent endpoints. Results from an agent are size-limited and cleaned before they are stored, and each agent may send at most 1200 events a minute.
 
 Report vulnerabilities privately through GitHub security advisories.
 
