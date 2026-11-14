@@ -935,7 +935,8 @@ async fn this_servers_aide_report_is_read_and_shown() {
     )
     .expect("write");
     let log_s = log.to_str().expect("utf8").to_owned();
-    let (app, st) = app_with(&["--aide-log", &log_s, "--rkhunter-log", ""]).await;
+    let none_s = dir.join("rkhunter.log").to_str().expect("utf8").to_owned();
+    let (app, st) = app_with(&["--aide-log", &log_s, "--rkhunter-log", &none_s]).await;
     let (c, _) = admin_cookie(&st).await;
     clamv_webui::integrity::spawn(st.clone());
     let mut found = false;
