@@ -118,7 +118,7 @@ pub struct Config {
     )]
     pub clamd_endpoint: clamd::Endpoint,
 
-    /// Optional comma-separated hosts (or unix socket paths) admins may add as endpoints (S10). Empty allows any.
+    /// Comma-separated hosts (or unix socket paths) admins may add as endpoints (S10). Empty allows only CLAMD_ENDPOINT's host.
     #[arg(
         long,
         env = "CLAMD_HOST_ALLOWLIST",
@@ -204,6 +204,14 @@ pub struct Config {
         global = true
     )]
     pub falco_events: std::path::PathBuf,
+
+    /// Folder infected files are moved into; quarantine is off while it is unset. Needs writable scan roots.
+    #[arg(long, env = "QUARANTINE_DIR", global = true)]
+    pub quarantine_dir: Option<std::path::PathBuf>,
+
+    /// Quarantine every new detection on its own, on this server and on agents that allow it.
+    #[arg(long, env = "QUARANTINE_AUTO", default_value_t = false, global = true)]
+    pub quarantine_auto: bool,
 
     /// Lowest Falco priority kept: debug, informational, notice, warning, error, critical.
     #[arg(
@@ -561,6 +569,20 @@ pub struct Config {
     /// File holding the agent token (Docker secret). Wins over AGENT_TOKEN.
     #[arg(long, env = "AGENT_TOKEN_FILE", global = true)]
     pub agent_token_file: Option<std::path::PathBuf>,
+
+    /// Agent mode: what the server may have this host do (scan, canaries, checks, timers, baseline, firewall, quarantine or all).
+    #[arg(
+        long,
+        env = "AGENT_ALLOW",
+        value_delimiter = ',',
+        default_value = "scan,canaries,checks",
+        global = true
+    )]
+    pub agent_allow: Vec<String>,
+
+    /// Agent mode: a file with the same list as AGENT_ALLOW; wins over it.
+    #[arg(long, env = "AGENT_ALLOW_FILE", global = true)]
+    pub agent_allow_file: Option<std::path::PathBuf>,
 
     /// Agent mode: extra PEM CA bundle for the server's certificate.
     #[arg(long, env = "AGENT_CA_FILE", global = true)]

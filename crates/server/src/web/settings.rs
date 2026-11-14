@@ -128,7 +128,7 @@ fn deployment(st: &AppState) -> Vec<(&'static str, String)> {
         (
             "clamd host allowlist",
             if c.clamd_host_allowlist.iter().all(|h| h.trim().is_empty()) {
-                "any".into()
+                format!("only CLAMD_ENDPOINT ({})", c.clamd_endpoint)
             } else {
                 c.clamd_host_allowlist.join(", ")
             },

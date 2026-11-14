@@ -15,6 +15,7 @@ pub mod integrity;
 pub mod jobs;
 pub mod mfa;
 pub mod passkeys;
+pub mod quarantine;
 pub mod schedules;
 pub mod sessions;
 pub mod settings;

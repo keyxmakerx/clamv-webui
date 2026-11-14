@@ -55,6 +55,8 @@ pub struct Stepup {
     pub user_id: String,
     pub host: Option<i64>,
     pub action: &'static str,
+    /// The thing acted on when it is not a host, e.g. a quarantine entry id.
+    pub item: String,
     pub expires: i64,
 }
 
@@ -137,17 +139,18 @@ impl AppState {
         clamd::Client::new(ep, limits)
     }
 
-    /// Admin-supplied endpoints must be on the allowlist when one is set (S10).
+    /// Admin-supplied endpoints must be on the allowlist (S10). With none set, only
+    /// the host of CLAMD_ENDPOINT, the endpoint configured at install, is allowed.
     pub fn endpoint_allowed(&self, ep: &clamd::Endpoint) -> bool {
-        let list = &self.cfg.clamd_host_allowlist;
-        if list.iter().all(|h| h.trim().is_empty()) {
-            return true;
-        }
-        let key = match ep {
+        let key = |ep: &clamd::Endpoint| match ep {
             clamd::Endpoint::Tcp { host, .. } => host.to_ascii_lowercase(),
             clamd::Endpoint::Unix(p) => p.display().to_string(),
         };
-        list.iter().any(|h| h.trim().eq_ignore_ascii_case(&key))
+        let list = &self.cfg.clamd_host_allowlist;
+        if list.iter().all(|h| h.trim().is_empty()) {
+            return key(ep) == key(&self.cfg.clamd_endpoint);
+        }
+        list.iter().any(|h| h.trim().eq_ignore_ascii_case(&key(ep)))
     }
 }
 

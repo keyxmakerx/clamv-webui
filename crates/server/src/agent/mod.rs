@@ -7,6 +7,7 @@
 //! against the roots the agent reported, for a quick answer in the UI.
 
 pub mod client;
+pub mod policy;
 pub mod proto;
 
 use std::path::{Component, Path};
@@ -280,6 +281,16 @@ async fn result(
         crate::schedule::control_done(&st, &job, &c.agent.name, report).await;
         return StatusCode::NO_CONTENT.into_response();
     }
+    if job.kind == crate::quarantine::KIND {
+        crate::quarantine::agent_result(
+            &st,
+            c.agent.id,
+            &job.target,
+            req.quarantine.clone(),
+            req.failure.as_ref().map(|f| f.code.as_str()),
+        )
+        .await;
+    }
     let o = match (req.report, req.failure) {
         (Some(r), _) => scan::outcome(r.into_report()),
         (None, Some(f)) => failure_outcome(&f),
@@ -376,6 +387,28 @@ fn failure_outcome(f: &Failure) -> jobs::Outcome {
         hc::NOT_INSTALLED => scan::failure(hc::NOT_INSTALLED, hc::message(hc::NOT_INSTALLED)),
         hc::FAILED => scan::failure(hc::FAILED, hc::message(hc::FAILED)),
         scan::POLICY_REJECTED => scan::failure(scan::POLICY_REJECTED, scan::PATH_REJECTED),
+        c if c.starts_with("QUARANTINE_") => {
+            use crate::quarantine as q;
+            let code = [
+                q::OFF,
+                q::NOT_INFECTED,
+                q::READ_ONLY,
+                q::EXISTS,
+                q::REJECTED,
+            ]
+            .into_iter()
+            .find(|k| *k == c)
+            .unwrap_or(q::FAILED);
+            scan::failure(code, q::message(code))
+        }
+        super::agent::policy::REFUSED => scan::failure(
+            super::agent::policy::REFUSED,
+            "This agent's host does not allow that action; add it to AGENT_ALLOW on the agent.",
+        ),
+        super::agent::policy::RATE_LIMITED => scan::failure(
+            super::agent::policy::RATE_LIMITED,
+            "This agent refused: too many actions of that kind in the last hour.",
+        ),
         scan::CONFIGURATION_UNAVAILABLE => scan::failure(
             scan::CONFIGURATION_UNAVAILABLE,
             "The agent's clamd is not configured correctly.",

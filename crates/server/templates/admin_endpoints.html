@@ -11,7 +11,7 @@
 <div class="col-md-2"><label class="form-check-label small"><input class="form-check-input" type="checkbox" name="make_default" value="1"> make default</label></div>
 <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Add</button></div>
 </form>
-{% if allowlist.is_empty() %}<p class="muted small mt-2">Any host is allowed. Set CLAMD_HOST_ALLOWLIST to restrict.</p>
+{% if allowlist.is_empty() %}<p class="muted small mt-2">Only the host of CLAMD_ENDPOINT is allowed. Set CLAMD_HOST_ALLOWLIST to add others.</p>
 {% else %}<p class="muted small mt-2">Allowed hosts: <code>{{ allowlist }}</code></p>{% endif %}
 </div></section>
 <section class="card mt-3"><div class="card-body table-responsive">

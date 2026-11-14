@@ -252,7 +252,7 @@ async fn create(
             &st,
             &s,
             &me,
-            Some("That host is not on CLAMD_HOST_ALLOWLIST.".into()),
+            Some("That host is not on CLAMD_HOST_ALLOWLIST (when it is empty, only CLAMD_ENDPOINT's host is allowed).".into()),
             None,
         )
         .await;

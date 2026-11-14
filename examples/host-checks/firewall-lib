@@ -1,0 +1,87 @@
+# Shared by clamv's firewall units: write a checked plan through nftables, ufw or firewalld.
+# Sourced, never run. Only ever touches rules clamv made: its own nft table, ufw rules
+# commented "clamv", and the firewalld rich rules it recorded in $state.
+state=/var/lib/clamv-firewall
+
+# Which tool owns this host's firewall: an active ufw, a running firewalld, else plain nftables.
+backend() {
+  if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
+    echo ufw
+  elif command -v firewall-cmd >/dev/null 2>&1 && [ "$(firewall-cmd --state 2>/dev/null)" = running ]; then
+    echo firewalld
+  else
+    echo nft
+  fi
+}
+
+# The checked plan as "allow proto port family cidr" and "deny proto port" lines.
+plan_rules() {
+  awk '
+    $2 == "dport" && $NF == "accept" {
+      fam = ($4 == "ip6") ? 6 : 4
+      line = $0; sub(/^.*\{ /, "", line); sub(/ \}.*$/, "", line)
+      n = split(line, a, ", ")
+      for (i = 1; i <= n; i++) print "allow", $1, $3, fam, a[i]
+    }
+    $2 == "dport" && $NF == "drop" { print "deny", $1, $3 }
+  ' "$1"
+}
+
+ufw_clear() {
+  while :; do
+    n=$(ufw status numbered 2>/dev/null | awk -F'[][]' '/# clamv$/ { n = $2 + 0 } END { if (n) print n }')
+    [ -n "$n" ] || return 0
+    ufw --force delete "$n" >/dev/null || return 1
+  done
+}
+
+# Denies go in first and allows after, both at the top, so allows sit above denies and above the host's own rules.
+ufw_load() {
+  plan_rules "$1" | awk '$1 == "deny"' | while read -r _ proto port; do
+    ufw prepend deny proto "$proto" to any port "$port" comment clamv >/dev/null || exit 1
+  done || return 1
+  # With IPv6 off in ufw, it does not filter IPv6 at all, so IPv6 sources are left out.
+  v6=4
+  grep -q '^IPV6=yes' /etc/default/ufw 2>/dev/null && v6=6
+  plan_rules "$1" | awk -v v6="$v6" '$1 == "allow" && ($4 == 4 || v6 == 6)' | while read -r _ proto port _ cidr; do
+    ufw prepend allow proto "$proto" from "$cidr" to any port "$port" comment clamv >/dev/null || exit 1
+  done
+}
+
+fwd_rich() {
+  plan_rules "$1" | while read -r kind proto port fam cidr; do
+    if [ "$kind" = allow ]; then
+      printf 'rule priority="-100" family="ipv%s" source address="%s" port port="%s" protocol="%s" accept\n' "$fam" "$cidr" "$port" "$proto"
+    else
+      printf 'rule priority="-99" port port="%s" protocol="%s" drop\n' "$port" "$proto"
+    fi
+  done
+}
+
+# $1 add or remove, $2 a file of rich rules, $3 empty for the running set or --permanent.
+fwd_each() {
+  zone=$(firewall-cmd --get-default-zone) || return 1
+  [ -s "$2" ] || return 0
+  while IFS= read -r r; do
+    firewall-cmd $3 --zone="$zone" --"$1"-rich-rule="$r" >/dev/null || [ "$1" = remove ] || return 1
+  done <"$2"
+}
+
+nft_load() {
+  { echo "table inet clamv {}"; echo "delete table inet clamv"; echo "table inet clamv {"; cat "$1"; echo "}"; } | nft -f -
+}
+
+nft_clear() {
+  nft delete table inet clamv 2>/dev/null || :
+}
+
+# Take away everything clamv wrote, through every tool it may have used.
+clear_all() {
+  nft_clear
+  if command -v ufw >/dev/null 2>&1; then ufw_clear; fi
+  if [ -s "$state/fwd.rules" ] && command -v firewall-cmd >/dev/null 2>&1; then
+    fwd_each remove "$state/fwd.rules" ""
+    fwd_each remove "$state/fwd.rules" --permanent
+  fi
+  rm -f "$state/fwd.rules" "$state/applied.nft"
+}

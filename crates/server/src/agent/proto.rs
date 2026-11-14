@@ -81,6 +81,9 @@ pub struct ResultRequest {
     pub report: Option<Report>,
     #[serde(default)]
     pub failure: Option<Failure>,
+    /// A file this job moved into quarantine.
+    #[serde(default)]
+    pub quarantine: Option<crate::quarantine::Held>,
 }
 
 /// Something the agent saw on its own: a real-time scan or a touched canary.

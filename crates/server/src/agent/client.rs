@@ -27,6 +27,8 @@ struct Agent {
     http: reqwest::Client,
     /// Never reuses a connection, so a firewall confirmation proves a new one gets through.
     fresh: reqwest::Client,
+    /// What this host lets the server have it do; set here, never by the server.
+    policy: super::policy::Policy,
     base: Url,
     token: String,
     clamd: clamd::Client,
@@ -74,6 +76,16 @@ fn build(cfg: Config) -> anyhow::Result<Agent> {
             );
         }
     }
+    let allow =
+        match &cfg.agent_allow_file {
+            Some(f) => vec![std::fs::read_to_string(f).map_err(|e| {
+                anyhow::anyhow!("cannot read AGENT_ALLOW_FILE {}: {e}", f.display())
+            })?],
+            None => cfg.agent_allow.clone(),
+        };
+    let policy =
+        super::policy::Policy::new(super::policy::parse(&allow).map_err(|e| anyhow::anyhow!(e))?);
+    tracing::info!(event = "agent.allow", allow = %policy.names(), "actions this host allows; set AGENT_ALLOW to change");
     if base.scheme() == "http" {
         tracing::warn!(
             event = "agent.plaintext",
@@ -106,6 +118,7 @@ fn build(cfg: Config) -> anyhow::Result<Agent> {
     Ok(Agent {
         http,
         fresh,
+        policy,
         base,
         token,
         clamd: clamd::Client::new(cfg.clamd_endpoint.clone(), limits),
@@ -196,7 +209,10 @@ async fn poll_loop(a: Arc<Agent>) {
         match poll_once(&a, &req).await {
             Ok(resp) => {
                 let jobs = resp.jobs;
-                if let Some(mut list) = resp.canaries {
+                if let Some(mut list) = resp
+                    .canaries
+                    .filter(|_| a.policy.allows(super::policy::Perm::Canaries))
+                {
                     // The server checks these too; a decoy is never written to a path this host would not accept.
                     list.retain(|s| crate::canary::valid_path(&s.path).is_ok());
                     a.canaries.send_if_modified(|cur| {
@@ -315,8 +331,32 @@ async fn start_job(a: &Arc<Agent>, j: Assignment) {
 }
 
 async fn execute(a: Arc<Agent>, j: Assignment, _permit: OwnedSemaphorePermit) {
-    let body = match j.kind.as_str() {
-        scan::KIND_PATH => scan_path(&a, &j).await,
+    let action = crate::agent::proto::clean(&j.target, 200);
+    let perm = super::policy::classify(&j.kind, &j.target);
+    let admitted = match perm {
+        Some(p) => a.policy.admit(p),
+        None => Ok(()),
+    };
+    let body = match admitted {
+        Err(code) => {
+            // Logged here, on this host, so it reaches the log shipper even if the server is not to be trusted.
+            tracing::warn!(event = "agent.action_refused", job_id = %j.id, kind = %j.kind, action = %action, perm = perm.map_or("-", |p| p.name()), code, "action refused by this host's AGENT_ALLOW or rate limit");
+            fail(code)
+        }
+        Ok(()) => run_job(&a, &j).await,
+    };
+    if admitted.is_ok() {
+        let code = body.failure.as_ref().map_or("", |f| f.code.as_str());
+        tracing::info!(event = "agent.action", job_id = %j.id, kind = %j.kind, action = %action, perm = perm.map_or("-", |p| p.name()), ok = body.failure.is_none(), code, "action run for the server");
+    }
+    deliver(&a, &j.id, &body).await;
+    a.running.lock().await.remove(&j.id);
+    a.freed.notify_one();
+}
+
+async fn run_job(a: &Arc<Agent>, j: &Assignment) -> ResultRequest {
+    match j.kind.as_str() {
+        scan::KIND_PATH => scan_path(a, j).await,
         crate::schedule::KIND_CONTROL => {
             let r = tokio::time::timeout(
                 Duration::from_secs(30),
@@ -328,20 +368,35 @@ async fn execute(a: Arc<Agent>, j: Assignment, _permit: OwnedSemaphorePermit) {
                 _ => fail(scan::SCAN_FAILED),
             }
         }
-        crate::hostchecks::KIND => host_check(&a, &j).await,
-        crate::firewall::KIND => firewall_job(&a, &j).await,
+        crate::hostchecks::KIND => host_check(a, j).await,
+        crate::firewall::KIND => firewall_job(a, j).await,
+        crate::quarantine::KIND => quarantine_job(a, j).await,
         other => {
             tracing::error!(job_id = %j.id, kind = other, "job type not supported by this agent");
             fail(scan::SCAN_FAILED)
         }
-    };
-    deliver(&a, &j.id, &body).await;
-    a.running.lock().await.remove(&j.id);
-    a.freed.notify_one();
+    }
 }
 
 /// Start one allow-listed unit; anything else the server sends is refused here too.
 async fn host_check(a: &Agent, j: &Assignment) -> ResultRequest {
+    if let Some((tool, time)) = crate::hostchecks::parse_timer_target(&j.target) {
+        let r = crate::hostchecks::set_time(tool, &time).await;
+        let states = crate::hostchecks::probe().await;
+        if let Ok(mut g) = a.host_units.lock() {
+            *g = Some(states);
+        }
+        return match r {
+            Ok(()) => {
+                tracing::info!(event = "hostcheck.timer_set", tool, time = %time, "daily timer time set");
+                ok(Report::default())
+            }
+            Err(e) => {
+                tracing::warn!(event = "hostcheck.failed", action = "timers.set", code = e.code, error = %e.message, "timer time could not be set");
+                fail(e.code)
+            }
+        };
+    }
     let Some(act) = crate::hostchecks::check_action(&j.target) else {
         tracing::error!(event = "hostcheck.refused", job_id = %j.id, action = %crate::agent::proto::clean(&j.target, 64), "unknown host check");
         return fail(crate::hostchecks::FAILED);
@@ -489,6 +544,7 @@ fn ok(r: Report) -> ResultRequest {
     ResultRequest {
         report: Some(r),
         failure: None,
+        quarantine: None,
     }
 }
 
@@ -498,6 +554,55 @@ fn fail(code: &str) -> ResultRequest {
         failure: Some(Failure {
             code: code.to_owned(),
         }),
+        quarantine: None,
+    }
+}
+
+/// Move, restore or delete one file in this host's quarantine folder.
+async fn quarantine_job(a: &Agent, j: &Assignment) -> ResultRequest {
+    use crate::quarantine as q;
+    let Ok(op) = serde_json::from_str::<q::Op>(&j.target) else {
+        return fail(q::REJECTED);
+    };
+    let dir = a.cfg.quarantine_dir.as_deref();
+    let r = match op {
+        q::Op::Move { id, path } => {
+            match q::move_in(&a.clamd, &a.cfg.scan_roots, dir, &id, &path).await {
+                Ok(held) => {
+                    tracing::warn!(event = "quarantine.moved", path = %path, sha256 = %held.sha256, size = held.size, "infected file moved into quarantine");
+                    return ResultRequest {
+                        quarantine: Some(held),
+                        ..ok(Report::default())
+                    };
+                }
+                Err(c) => Err(c),
+            }
+        }
+        q::Op::Restore { id, path } => {
+            let r = q::restore(&a.cfg.scan_roots, dir, &id, &path).await;
+            if r.is_ok() {
+                tracing::warn!(event = "quarantine.restored", path = %path, "quarantined file restored");
+            }
+            r
+        }
+        q::Op::Delete { id } => {
+            let r = q::delete(dir, &id).await;
+            if r.is_ok() {
+                tracing::warn!(event = "quarantine.deleted", id = %id, "quarantined copy deleted");
+            }
+            r
+        }
+    };
+    match r {
+        Ok(()) => ok(Report::default()),
+        Err(c) => {
+            tracing::warn!(
+                event = "quarantine.failed",
+                code = c,
+                "quarantine step failed"
+            );
+            fail(c)
+        }
     }
 }
 

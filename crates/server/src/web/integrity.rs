@@ -21,6 +21,7 @@ pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/integrity", get(page))
         .route("/integrity/run", post(run))
+        .route("/integrity/timer", post(timer))
 }
 
 /// "" is this server, otherwise an enabled agent's id.
@@ -137,6 +138,94 @@ async fn run(
     show(&st, nav).await
 }
 
+#[derive(Deserialize)]
+struct TimerForm {
+    #[serde(rename = "_csrf")]
+    csrf: Option<String>,
+    #[serde(default)]
+    host: String,
+    #[serde(default)]
+    tool: String,
+    #[serde(default)]
+    time: String,
+}
+
+/// Set when a host's daily AIDE or rkhunter timer fires; empty means systemd's random daily time.
+async fn timer(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    info: RequestInfo,
+    Form(f): Form<TimerForm>,
+) -> Response {
+    let (s, me) = match admin_post(auth, f.csrf.as_deref()) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let mut nav = Nav::new("integrity", &s, &me);
+    let time = match f.time.trim() {
+        "" => "random".to_owned(),
+        t => t.to_owned(),
+    };
+    let tool = match f.tool.as_str() {
+        "aide" => "aide",
+        "rkhunter" => "rkhunter",
+        _ => "",
+    };
+    let r = match parse_host(&st, &f.host).await {
+        _ if tool.is_empty() => Err("Unknown tool.".to_owned()),
+        _ if !crate::hostchecks::valid_time(&time) => Err("Give the time as HH:MM.".to_owned()),
+        Err(m) => Err(m),
+        Ok(None) => crate::hostchecks::set_time(tool, &time)
+            .await
+            .map_err(|e| crate::hostchecks::message(e.code).to_owned()),
+        Ok(Some(id)) => st
+            .db
+            .create_job(crate::db::jobs::NewJob {
+                kind: crate::hostchecks::KIND,
+                target: &crate::hostchecks::timer_target(tool, &time),
+                endpoint_id: None,
+                schedule_id: None,
+                agent_id: Some(id),
+                submitted_by: Some(&me.username),
+                transport: "UI",
+                running: false,
+            })
+            .await
+            .map(|_| st.agents.poke())
+            .map_err(|_| "Service unavailable.".to_owned()),
+    };
+    if r.is_ok() {
+        if f.host.is_empty() {
+            st.host_units.set(None, crate::hostchecks::probe().await);
+        }
+        let shown = if time == "random" {
+            "a random time".to_owned()
+        } else {
+            time.clone()
+        };
+        audit(
+            &st,
+            &me,
+            &info,
+            "HOSTCHECK_TIMER",
+            format!(
+                "{tool} daily at {shown} on host {}",
+                if f.host.is_empty() {
+                    "server"
+                } else {
+                    f.host.as_str()
+                }
+            ),
+        )
+        .await;
+        nav.success = Some(format!("The daily {tool} run is set to {shown}."));
+    }
+    if let Err(m) = r {
+        nav.error = Some(m);
+    }
+    show(&st, nav).await
+}
+
 pub struct Managed {
     host: String,
     value: String,
@@ -146,6 +235,9 @@ pub struct Managed {
     rkhunter: bool,
     aide_timer: Option<bool>,
     rkhunter_timer: Option<bool>,
+    /// The daily time, or "" for systemd's randomised daily run.
+    aide_at: String,
+    rkhunter_at: String,
     error: String,
 }
 
@@ -166,6 +258,8 @@ fn managed(st: &AppState, host: Option<i64>, name: String) -> Managed {
         rkhunter: u.rkhunter,
         aide_timer: u.aide_timer,
         rkhunter_timer: u.rkhunter_timer,
+        aide_at: u.aide_at.filter(|t| t != "random").unwrap_or_default(),
+        rkhunter_at: u.rkhunter_at.filter(|t| t != "random").unwrap_or_default(),
         error: u.error.unwrap_or_default(),
     }
 }

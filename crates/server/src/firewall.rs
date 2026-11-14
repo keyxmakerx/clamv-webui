@@ -158,6 +158,8 @@ pub struct ApplyStatus {
     pub state: String,
     pub at: i64,
     pub hash: String,
+    /// nft, ufw or firewalld: the tool the host wrote through; empty when not said.
+    pub via: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -291,10 +293,28 @@ pub fn parse(raw: &str) -> Snapshot {
                 state: crate::agent::proto::clean(f[0], 16),
                 at: f[1].parse::<i64>().unwrap_or(0) * 1000,
                 hash: crate::agent::proto::clean(f[2], 64),
+                via: f
+                    .get(3)
+                    .filter(|v| matches!(**v, "nft" | "ufw" | "firewalld"))
+                    .map(|v| (*v).to_owned())
+                    .unwrap_or_default(),
             });
         }
     }
     snap
+}
+
+impl Snapshot {
+    /// The tool the host's apply unit will write through: an active ufw, a running firewalld, else nftables.
+    pub fn backend(&self) -> &'static str {
+        if self.ufw == "active" {
+            "ufw"
+        } else if self.firewalld == "running" {
+            "firewalld"
+        } else {
+            "nftables"
+        }
+    }
 }
 
 /// Is this listener reachable from outside (not loopback)?

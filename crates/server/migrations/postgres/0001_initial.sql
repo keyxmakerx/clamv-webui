@@ -296,3 +296,20 @@ CREATE TABLE firewall_plans (
     updated_by VARCHAR(255),
     updated_at BIGINT NOT NULL
 );
+
+CREATE TABLE quarantine (
+    id VARCHAR(36) PRIMARY KEY,
+    agent_id BIGINT,
+    original_path TEXT NOT NULL,
+    signature VARCHAR(255) NOT NULL,
+    sha256 VARCHAR(64),
+    size_bytes BIGINT,
+    job_id VARCHAR(36),
+    state VARCHAR(16) NOT NULL,
+    error_code VARCHAR(64),
+    created_by VARCHAR(255),
+    created_at BIGINT NOT NULL,
+    updated_by VARCHAR(255),
+    updated_at BIGINT NOT NULL
+);
+CREATE INDEX quarantine_created ON quarantine (created_at);

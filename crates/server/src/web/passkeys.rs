@@ -483,6 +483,8 @@ struct StepupOptionsBody {
     host: String,
     #[serde(default)]
     action: String,
+    #[serde(default)]
+    item: String,
 }
 
 async fn stepup_options(
@@ -497,9 +499,19 @@ async fn stepup_options(
     if !csrf::token_ok(&s.csrf_token, Some(&b.csrf)) {
         return jerr(StatusCode::FORBIDDEN, "Reload the page and try again.");
     }
-    let Some(act) = crate::hostchecks::action(&b.action).filter(|a| a.passkey) else {
+    let quarantine = [crate::quarantine::RESTORE, crate::quarantine::DELETE]
+        .into_iter()
+        .find(|a| *a == b.action);
+    let Some(act_name) = crate::hostchecks::action(&b.action)
+        .filter(|a| a.passkey)
+        .map(|a| a.name)
+        .or(quarantine)
+    else {
         return jerr(StatusCode::BAD_REQUEST, "Unknown action.");
     };
+    if quarantine.is_some() && (b.item.is_empty() || b.item.len() > 64) {
+        return jerr(StatusCode::BAD_REQUEST, "Unknown item.");
+    }
     let host = match super::integrity::parse_host(&st, &b.host).await {
         Ok(h) => h,
         Err(m) => return jerr(StatusCode::BAD_REQUEST, &m),
@@ -528,7 +540,8 @@ async fn stepup_options(
             crate::app::Stepup {
                 user_id: u.id.clone(),
                 host,
-                action: act.name,
+                action: act_name,
+                item: b.item.clone(),
                 expires: now + 120_000,
             },
         );
@@ -632,6 +645,21 @@ async fn stepup(
         return reject("counter went backwards".into());
     }
     st.mfa_lockout.success(&key, info.ip);
+    if p.action == crate::quarantine::RESTORE || p.action == crate::quarantine::DELETE {
+        let r = crate::quarantine::confirm(&st, p.action, &p.item, &u.username).await;
+        if r.is_ok() {
+            let what = if p.action == crate::quarantine::RESTORE {
+                "QUARANTINE_RESTORE"
+            } else {
+                "QUARANTINE_DELETE"
+            };
+            super::admin::audit(&st, &u, &info, what, p.item.clone()).await;
+        }
+        return match r {
+            Ok(msg) => jok(json!({ "ok": true, "message": msg, "reload": true })),
+            Err(m) => jerr(StatusCode::BAD_REQUEST, &m),
+        };
+    }
     let Some(act) = crate::hostchecks::action(p.action) else {
         return jerr(StatusCode::BAD_REQUEST, "Unknown action.");
     };

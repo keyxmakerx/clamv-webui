@@ -1,0 +1,25 @@
+{% extends "shell.html" %}
+{% block title %}Quarantine · ClamAV Web UI{% endblock %}
+{% block content %}
+<h1 class="h3">Quarantine</h1>
+<p class="muted">Quarantine moves an infected file out of its scan root into a locked folder, after clamd confirms it is still infected. Start it from <a href="/detections">Detections</a>{% if auto %}; every new detection is also quarantined on its own (<code>QUARANTINE_AUTO</code>){% endif %}. Putting a file back or deleting it for good needs your passkey.</p>
+{% if !enabled %}<div class="alert alert-secondary py-2 small">Quarantine is off on this server: set <code>QUARANTINE_DIR</code> to a folder clamv can write, and mount the scan roots you want to quarantine from read-write. Agents have their own <code>QUARANTINE_DIR</code> and need <code>quarantine</code> in <code>AGENT_ALLOW</code>.</div>{% else %}<p class="small muted">This server keeps quarantined files in <code>{{ dir }}</code>.</p>{% endif %}
+<div id="passkey-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
+<div id="stepup-ok" class="alert alert-success py-2 small d-none" role="status"></div>
+<section class="card mt-2"><div class="card-body table-responsive">
+<table class="table table-sm align-middle">
+<thead><tr><th>File</th><th>Host</th><th>Signature</th><th>State</th><th>Changed</th><th></th></tr></thead>
+<tbody>
+{% for e in entries %}<tr>
+<td class="small text-break">{{ e.path }}{% if !e.sha256.is_empty() %}<div class="muted text-break">sha256 {{ e.sha256 }} · {{ e.size }}</div>{% endif %}</td>
+<td class="small">{{ e.host }}</td>
+<td><span class="badge bg-danger text-wrap">{{ e.signature }}</span></td>
+<td class="small">{% if e.held %}<span class="badge bg-warning text-dark">{{ e.state }}</span>{% else %}{{ e.state }}{% endif %}{% if !e.why.is_empty() %}<div class="muted">{{ e.why }}</div>{% endif %}</td>
+<td class="small text-nowrap">{{ e.when }}<div class="muted">{{ e.by }}</div></td>
+<td class="text-nowrap">{% if e.held %}<button class="btn btn-sm btn-outline-secondary" type="button" data-stepup="quarantine.restore" data-item="{{ e.id }}" data-csrf="{{ nav.csrf }}"><i class="fas fa-key" aria-hidden="true"></i> Restore</button>
+<button class="btn btn-sm btn-outline-danger" type="button" data-stepup="quarantine.delete" data-item="{{ e.id }}" data-csrf="{{ nav.csrf }}"><i class="fas fa-key" aria-hidden="true"></i> Delete</button>{% endif %}</td>
+</tr>{% else %}<tr><td colspan="6" class="muted">Nothing in quarantine.</td></tr>{% endfor %}
+</tbody></table>
+</div></section>
+<script defer src="/js/passkey.js?v={{ crate::web::asset_v() }}"></script>
+{% endblock %}

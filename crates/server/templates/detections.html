@@ -33,7 +33,7 @@
 </aside>
 <section class="card"><div class="card-body table-responsive">
 <table class="table table-sm align-middle">
-<thead><tr><th>Found</th><th>File</th><th>Signature</th><th>Type</th><th>Host</th></tr></thead>
+<thead><tr><th>Found</th><th>File</th><th>Signature</th><th>Type</th><th>Host</th>{% if nav.is_admin %}<th></th>{% endif %}</tr></thead>
 <tbody>
 {% for r in rows %}<tr>
 <td class="small text-nowrap"><a href="/jobs/{{ r.job_id }}">{{ r.at }}</a></td>
@@ -41,7 +41,8 @@
 <td><span class="badge bg-danger text-wrap">{{ r.signature }}</span></td>
 <td class="small">{{ r.kind }}</td>
 <td class="small">{{ r.host }}</td>
-</tr>{% else %}<tr><td colspan="5" class="muted">No detections match. That's good news.</td></tr>{% endfor %}
+{% if nav.is_admin %}<td class="text-end"><form class="d-inline" method="post" action="/admin/quarantine"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="detection" value="{{ r.id }}"><button class="btn btn-link btn-sm p-0" type="submit" title="Move this file into quarantine if clamd still finds it infected">quarantine</button></form></td>{% endif %}
+</tr>{% else %}<tr><td colspan="6" class="muted">No detections match. That's good news.</td></tr>{% endfor %}
 </tbody></table>
 {% if pages > 1 %}<nav aria-label="Pages" class="d-flex gap-2 align-items-center">
 {% if page > 0 %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page - 1) }}">Newer</a>{% endif %}

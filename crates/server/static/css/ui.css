@@ -98,3 +98,4 @@ body{min-height:100vh;background-attachment:fixed}
 .js .sidebar-header{padding-bottom:6px}
 .js .app-sidebar:not(.nav-open)>.sidebar-section,.js .app-sidebar:not(.nav-open)>.sidebar-divider{display:none}
 }
+.timer-input{width:auto;display:inline-block}

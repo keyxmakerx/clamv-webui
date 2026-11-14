@@ -165,6 +165,9 @@ pub async fn finish(st: &AppState, job: &Job, ep: &str, o: Outcome) {
         .map(|s| (crate::db::now_ms() - s) as f64 / 1000.0);
     st.metrics.record(job, &o, secs);
     st.notifier.notify(event("scan.finished", job, ep, &o));
+    if !o.detections.is_empty() && job.kind != crate::quarantine::KIND {
+        crate::quarantine::auto(st, &job.id).await;
+    }
 }
 
 /// The webhook view of a finished job.

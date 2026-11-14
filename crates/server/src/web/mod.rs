@@ -16,6 +16,7 @@ pub mod integrity;
 pub mod mfa;
 pub mod oidc;
 pub mod passkeys;
+pub mod quarantine;
 pub mod scan;
 pub mod schedules;
 pub mod search;
@@ -79,6 +80,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(timeline::routes())
         .merge(crowdsec::routes())
         .merge(firewall::routes())
+        .merge(quarantine::routes())
         .route(
             "/{*path}",
             get(asset).layer(tower_http::compression::CompressionLayer::new()),

@@ -8,7 +8,7 @@ polkit.addRule(function (action, subject) {
   var run = ["clamv-aide-check.service", "clamv-aide-accept.service",
              "clamv-rkhunter-check.service", "clamv-rkhunter-propupd.service",
              "clamv-firewall-snapshot.service", "clamv-firewall-apply.service",
-             "clamv-firewall-remove.service"];
+             "clamv-firewall-remove.service", "clamv-timer-set.service"];
   var timers = ["clamv-aide-check.timer", "clamv-rkhunter-check.timer"];
   if (run.indexOf(unit) >= 0 && verb === "start") {
     return polkit.Result.YES;

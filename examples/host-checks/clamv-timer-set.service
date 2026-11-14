@@ -1,0 +1,24 @@
+# clamv: set the daily AIDE and rkhunter times; one fixed script, writes only the two timer drop-ins.
+[Unit]
+Description=clamv host checks: set the daily timer times
+ConditionPathExists=/usr/local/libexec/clamv/timer-set
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/clamv/timer-set
+ProtectSystem=strict
+RuntimeDirectory=clamv-timers
+RuntimeDirectoryMode=0700
+ReadWritePaths=/var/lib/clamv/timers /etc/systemd/system/clamv-aide-check.timer.d /etc/systemd/system/clamv-rkhunter-check.timer.d
+PrivateTmp=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SYS_ADMIN
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native

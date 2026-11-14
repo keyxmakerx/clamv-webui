@@ -67,8 +67,11 @@ The agent enforces its own `SCAN_ROOTS`. Jobs queued for an offline agent wait (
 | `AGENT_SERVER_FINGERPRINT` | SHA-256 of the server certificate (logged at server start); trust exactly that certificate |
 | `AGENT_CA_FILE` | Or: a PEM CA bundle for the server certificate |
 | `REALTIME_PATHS` | Folders inside `SCAN_ROOTS` scanned as soon as files are written; results show up as watch jobs on the server |
+| `AGENT_ALLOW(_FILE)` | What this host lets the server ask for: `scan`, `canaries`, `checks`, `timers`, `baseline`, `firewall`, `quarantine` or `all` (default `scan,canaries,checks`); set only on the agent host |
 
-`CLAMD_ENDPOINT`, `SCAN_ROOTS`, `SCAN_CONCURRENCY`, `CLAMD_MAX_STREAM_MB`, `CLAMD_CONF_FILE` (its `ExcludePath` rules), `CANARY_FILES`, `WATCH_REALTIME` and `LOG_*` apply to the agent as they do to the server. Plain `http://` works but sends the token unencrypted, so use it only over a VPN or mesh.
+The agent writes its own JSON line for every job it runs (`agent.action`) or refuses (`agent.action_refused`), and limits each kind per hour (scans 600, canaries and checks 60, timers 20, firewall 6, baseline 4, quarantine 120); a refused or limited job fails with `AGENT_REFUSED` or `AGENT_RATE_LIMITED`. Firewall applies and baseline accepts stay off until that host enables them.
+
+`CLAMD_ENDPOINT`, `SCAN_ROOTS`, `SCAN_CONCURRENCY`, `CLAMD_MAX_STREAM_MB`, `CLAMD_CONF_FILE` (its `ExcludePath` rules), `CANARY_FILES`, `QUARANTINE_DIR`, `WATCH_REALTIME` and `LOG_*` apply to the agent as they do to the server. Plain `http://` works but sends the token unencrypted, so use it only over a VPN or mesh.
 
 ## Configuration
 
@@ -93,7 +96,7 @@ Every option is an environment variable (or a `--flag`; run `clamv-webui --help`
 | Variable | Default | Purpose |
 |---|---|---|
 | `CLAMD_ENDPOINT` | `tcp://clamav:3310` | Default endpoint (`tcp://host:port` or `unix:///path`), created on first start only; change it later under **Admin > clamd Endpoints** |
-| `CLAMD_HOST_ALLOWLIST` | empty | Hosts admins may add endpoints for; empty allows any host, so set it |
+| `CLAMD_HOST_ALLOWLIST` | empty | Hosts admins may add endpoints for; empty allows only the host of `CLAMD_ENDPOINT` |
 | `CLAMD_MAX_STREAM_MB` | `1024` | Upload size limit; raise clamd's `StreamMaxLength` to match (see below) |
 | `SCAN_ROOTS` | empty | Comma-separated paths that path scans, schedules and watches may use; clamd must see them at the same paths |
 | `SCAN_CONCURRENCY` | `2` | Path scans running at once |
@@ -105,7 +108,7 @@ Every option is an environment variable (or a `--flag`; run `clamv-webui --help`
 | `AUDIT_RETENTION_DAYS` | `365` | `0` keeps audit events forever |
 | `DETECTION_RETENTION_DAYS` | `365` | Jobs that found malware are kept at least this long; `0` keeps them forever |
 
-clamd refuses streams over its `StreamMaxLength` (100 MB in the official image, 25 MB in older releases), so set it to at least `CLAMD_MAX_STREAM_MB` in clamd.conf, e.g. `StreamMaxLength 1024M`, and keep `MaxFileSize` and `MaxScanSize` at or above it. Files with names that are not UTF-8 in watched folders are streamed to clamd, so they are scanned too.
+clamd refuses streams over its `StreamMaxLength` (100 MB in the official image, 25 MB in older releases), so set it to at least `CLAMD_MAX_STREAM_MB` in clamd.conf, e.g. `StreamMaxLength 1024M`, and keep `MaxFileSize` and `MaxScanSize` at or above it. The official image takes these as `CLAMD_CONF_StreamMaxLength` and so on, which the bundled compose file sets to 1024M. Files with names that are not UTF-8 in watched folders are streamed to clamd, so they are scanned too.
 
 | Variable | Purpose |
 |---|---|
@@ -166,11 +169,15 @@ Docker alone covers scans, canaries, CrowdSec and reading reports. Managed AIDE 
 docker run --rm --user 0 -v /:/host ghcr.io/keyxmakerx/clamv-webui:latest host-setup
 ```
 
-It adds a `clamv` user with the containers' uid (10001, or `--uid`), the units `clamv-aide-check`, `clamv-aide-accept`, `clamv-rkhunter-check`, `clamv-rkhunter-propupd`, `clamv-firewall-snapshot`, `clamv-firewall-apply` and `clamv-firewall-remove` (each one fixed script, read-only system, no network, few capabilities), daily timers, `/var/lib/clamv/firewall`, and a polkit rule that lets `clamv` start those units and switch the two timers, and nothing else. It ends with a note for anything the host still lacks (polkit 0.106 or newer, AIDE, rkhunter, nftables). `host-setup --remove` takes it away again. Without Docker, `sudo examples/host-checks/install.sh` does the same. AIDE and rkhunter themselves are host packages.
+It adds a `clamv` user with the containers' uid (10001, or `--uid`), the units `clamv-aide-check`, `clamv-aide-accept`, `clamv-rkhunter-check`, `clamv-rkhunter-propupd`, `clamv-firewall-snapshot`, `clamv-firewall-apply`, `clamv-firewall-remove` and `clamv-timer-set` (each one fixed script, read-only system, no network, few capabilities), daily timers, `/var/lib/clamv/firewall` and `/var/lib/clamv/timers`, and a polkit rule that lets `clamv` start those units and switch the two timers, and nothing else. It refuses hosts with polkit older than 0.106, which then stay on report reading, and ends with a note for anything else the host lacks (AIDE, rkhunter, nftables). Hosts set up before this release need `host-setup` again. `host-setup --remove` takes it away again. Without Docker, `sudo examples/host-checks/install.sh` does the same. AIDE and rkhunter themselves are host packages.
 
-Then mount `/run/dbus/system_bus_socket` read-only and `/var/lib/clamv/firewall` read-write into the clamv or agent container. Reports still reach clamv through `AIDE_LOG` and `RKHUNTER_LOG`.
+Then mount `/run/dbus/system_bus_socket` read-only and `/var/lib/clamv/firewall` and `/var/lib/clamv/timers` read-write into the clamv or agent container. The Integrity page then sets each timer's daily time (HH:MM, or empty for a random time). Reports still reach clamv through `AIDE_LOG` and `RKHUNTER_LOG`.
 
-The firewall plan only narrows: each rule lets the listed networks reach a port and drops everyone else, in clamv's own `inet clamv` table at priority -5, after established traffic and loopback. Ports published by Docker go through Docker's own chains first and are best limited in compose. clamv refuses a plan that closes SSH to everyone or blocks its own port for your address, and iptables-legacy rules, which nftables cannot override, are flagged.
+The firewall plan only narrows: each rule lets the listed networks reach a port and drops everyone else. On a host running ufw, clamv adds rules commented `clamv` above the host's own; with firewalld, rich rules in the default zone, saved once confirmed; otherwise its own `inet clamv` table at priority -5, after established traffic and loopback. It removes only what it added. Ports published by Docker go through Docker's own chains first and are best limited in compose. clamv refuses a plan that closes SSH to everyone or blocks its own port for your address, and iptables-legacy rules, which nftables cannot override, are flagged.
+
+### Quarantine
+
+Off until `QUARANTINE_DIR` is set (on the server, or on an agent that also allows `quarantine`). An admin then moves a detection there from **Detections**: clamd must still find the file infected, and the scan root must be mounted read-write. The copy is kept read-only with its SHA-256. Restore (to the original path, never over a file) and delete each need a passkey. `QUARANTINE_AUTO=true` moves every new detection automatically. Each step is logged and audited.
 
 ### Metrics
 
@@ -203,7 +210,7 @@ The Settings page (Admin) can change the scan, retention, watch, webhook-policy 
 
 ## Security model
 
-- Runs as UID 10001 in a read-only container with all capabilities dropped. Scan roots should be mounted read-only; the app never writes to them.
+- Runs as UID 10001 in a read-only container with all capabilities dropped. Scan roots should be mounted read-only; the app never writes to them unless quarantine is turned on.
 - Path scans resolve symlinks and must stay inside `SCAN_ROOTS`. clamd endpoints are limited to `CLAMD_HOST_ALLOWLIST`.
 - Passwords use Argon2id. Second factors: TOTP seeds are encrypted with `SECRET_KEY_FILE`, codes cannot be replayed, recovery codes are hashed and single-use, five wrong codes end the attempt and ten in 15 minutes lock the account's second step, however many times the password is entered. HTTP Basic on the API is refused for accounts with a second factor (use a token). Passkeys require user verification and are checked for origin, relying party, signature and counter. Admins can reset a user's second factors; `reset-admin` clears the admin's. Sessions are server-side with `SameSite=Strict` cookies, CSRF tokens on every form, login rate limiting, and a per-user limit of 30 scans a minute in the UI and API.
 - A strict Content-Security-Policy (no inline script or style) and the usual security headers on every response.
@@ -214,6 +221,8 @@ The Settings page (Admin) can change the scan, retention, watch, webhook-policy 
 - The CrowdSec watcher password is never logged. Admins add bans; their own address, loopback and anything wider than /8 (IPv4) or /32 (IPv6) is refused, and `CROWDSEC_READ_ONLY` removes writes.
 - Managed host checks never run as root inside clamv: systemd starts fixed units on a polkit allow-list, the agent refuses any action outside it too, and a baseline change needs a fresh passkey assertion bound to that action and host.
 - The firewall units accept only the inside of clamv's own table: the apply script reads the plan only if clamv's own user owns the file, accepts only the line shapes clamv generates (one input chain: listed networks reach a port, everyone else is dropped; no NAT, marks or other hooks), refuses table, ruleset, flush, delete and similar keywords, checks the plan in an empty network namespace where it must create exactly `inet clamv`, keeps the previous table, and restores it after 90 s unless the hash is confirmed. clamv confirms only once a new connection gets through, and every apply or removal is logged (`firewall.apply`, `firewall.removed`), audited and needs a passkey.
+- Agents act only on what their own host allows (`AGENT_ALLOW`), which the server cannot change, and rate-limit each kind of job.
+- Quarantine is off by default; it only moves files clamd confirms infected, restores only to the original path, and restore or delete needs a passkey.
 - Agent tokens are stored hashed, can be rotated or disabled, and only reach the agent endpoints. Results from an agent are size-limited and cleaned before they are stored, and each agent may send at most 1200 events a minute.
 
 Report vulnerabilities privately through GitHub security advisories.

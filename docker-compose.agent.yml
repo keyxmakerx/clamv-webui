@@ -13,6 +13,8 @@ services:
       SCAN_ROOTS: /data  # folders this agent may scan; clamd must see the same paths
       # REALTIME_PATHS: /data/downloads  # scan files here as soon as they are written
       # CANARY_FILES: /srv/secrets/passwords.kdbx  # decoy; any access alerts (mount it read-only)
+      # AGENT_ALLOW: scan,canaries,checks  # what this host lets the server ask for; add firewall, baseline, timers, quarantine
+      # QUARANTINE_DIR: /quarantine  # opt-in; needs a writable volume and read-write scan roots
       LOG_FORMAT: json  # one JSON object per line for log shippers
     secrets:
       - agent_token
@@ -31,6 +33,7 @@ services:
       # - /var/log/falco:/var/log/falco:ro  # Falco JSON alerts (json_output + file_output)
       # - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro  # managed AIDE/rkhunter and firewall (after host-setup)
       # - /var/lib/clamv/firewall:/var/lib/clamv/firewall  # firewall snapshots and plans (after host-setup)
+      # - /var/lib/clamv/timers:/var/lib/clamv/timers  # AIDE/rkhunter timer times (after host-setup)
 
 secrets:
   agent_token:

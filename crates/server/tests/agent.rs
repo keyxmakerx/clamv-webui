@@ -43,7 +43,12 @@ async fn server() -> Server {
 }
 
 fn agent_cli(url: &str, token: &str, clamd: u16, root: &str) -> Cli {
-    Cli::parse_from([
+    agent_cli_with(url, token, clamd, root, &[])
+}
+
+fn agent_cli_with(url: &str, token: &str, clamd: u16, root: &str, extra: &[&str]) -> Cli {
+    let clamd = format!("tcp://127.0.0.1:{clamd}");
+    let mut args = vec![
         "clamv-webui",
         "agent",
         "--listen",
@@ -53,10 +58,12 @@ fn agent_cli(url: &str, token: &str, clamd: u16, root: &str) -> Cli {
         "--agent-token",
         token,
         "--clamd-endpoint",
-        &format!("tcp://127.0.0.1:{clamd}"),
+        &clamd,
         "--scan-roots",
         root,
-    ])
+    ];
+    args.extend_from_slice(extra);
+    Cli::parse_from(args)
 }
 
 async fn queue(st: &AppState, kind: &str, target: &str, agent: i64) -> Job {
@@ -742,4 +749,115 @@ async fn firewall_jobs_go_through_the_fixed_units_only() {
     let s = srv.st.firewalls.get(Some(agent.id)).expect("snapshot").0;
     assert_eq!(s.tables.len(), 1);
     assert_eq!(s.status.expect("status").state, "applied");
+}
+
+#[tokio::test]
+async fn agents_refuse_what_their_host_does_not_allow() {
+    let srv = server().await;
+    let clamd = fake_clamd().await;
+    let root = std::env::temp_dir().join(format!("clamv-agent-{}", clamv_webui::db::new_id()));
+    std::fs::create_dir_all(&root).expect("mkdir");
+    let root_s = root.to_str().expect("utf8").to_owned();
+    let (agent, token) = srv
+        .st
+        .db
+        .create_agent("strict-1", "admin")
+        .await
+        .expect("agent");
+    let fw = queue(&srv.st, "FIREWALL", r#"{"op":"remove"}"#, agent.id).await;
+    let base = queue(&srv.st, "HOSTCHECK", "aide.accept", agent.id).await;
+    let qj = queue(
+        &srv.st,
+        "QUARANTINE",
+        r#"{"op":"delete","id":"abc"}"#,
+        agent.id,
+    )
+    .await;
+    let cli = agent_cli(&srv.url, &token, clamd, &root_s);
+    let handle = tokio::spawn(clamv_webui::agent::client::run(cli.config));
+    for id in [&fw.id, &base.id, &qj.id] {
+        let j = wait_done(&srv.st, id).await;
+        assert_eq!(j.error_code.as_deref(), Some("AGENT_REFUSED"), "{j:?}");
+        assert!(
+            j.error_message
+                .as_deref()
+                .unwrap_or("")
+                .contains("AGENT_ALLOW")
+        );
+    }
+    handle.abort();
+}
+
+#[tokio::test]
+async fn quarantine_moves_only_infected_files_on_agents_that_allow_it() {
+    use clamv_webui::db::quarantine as q;
+    let srv = server().await;
+    let clamd = fake_clamd().await;
+    let base = std::env::temp_dir().join(format!("clamv-agent-{}", clamv_webui::db::new_id()));
+    let root = base.join("root");
+    let qdir = base.join("q");
+    std::fs::create_dir_all(&root).expect("mkdir");
+    std::fs::create_dir_all(&qdir).expect("mkdir");
+    let bad = root.join("bad.com");
+    let good = root.join("good.txt");
+    std::fs::write(&bad, EICAR).expect("eicar");
+    std::fs::write(&good, b"hello").expect("clean");
+    let root_s = root.to_str().expect("utf8").to_owned();
+    let (agent, token) = srv.st.db.create_agent("q-1", "admin").await.expect("agent");
+    let mut jobs = Vec::new();
+    for p in [&bad, &good] {
+        let path = p.to_str().expect("utf8");
+        let item = srv
+            .st
+            .db
+            .create_quarantine(Some(agent.id), path, "Eicar-Test-Signature", "admin")
+            .await
+            .expect("q")
+            .expect("new");
+        let target = serde_json::json!({"op": "move", "id": item.id, "path": path}).to_string();
+        jobs.push((
+            item.id,
+            queue(&srv.st, "QUARANTINE", &target, agent.id).await,
+        ));
+    }
+    let qdir_s = qdir.to_str().expect("utf8").to_owned();
+    let cli = agent_cli_with(
+        &srv.url,
+        &token,
+        clamd,
+        &root_s,
+        &[
+            "--agent-allow",
+            "scan,quarantine",
+            "--quarantine-dir",
+            &qdir_s,
+        ],
+    );
+    let handle = tokio::spawn(clamv_webui::agent::client::run(cli.config));
+    let j = wait_done(&srv.st, &jobs[0].1.id).await;
+    assert!(j.error_code.is_none(), "{j:?}");
+    let held = srv
+        .st
+        .db
+        .quarantine_item(&jobs[0].0)
+        .await
+        .expect("q")
+        .expect("item");
+    assert_eq!(held.state, q::HELD);
+    assert_eq!(held.size_bytes, Some(EICAR.len() as i64));
+    assert!(!bad.exists());
+    assert!(qdir.join(format!("{}.quarantined", jobs[0].0)).exists());
+    let j = wait_done(&srv.st, &jobs[1].1.id).await;
+    assert_eq!(j.error_code.as_deref(), Some("QUARANTINE_NOT_INFECTED"));
+    assert!(good.exists());
+    let left = srv
+        .st
+        .db
+        .quarantine_item(&jobs[1].0)
+        .await
+        .expect("q")
+        .expect("item");
+    assert_eq!(left.state, q::FAILED);
+    handle.abort();
+    let _ = std::fs::remove_dir_all(&base);
 }

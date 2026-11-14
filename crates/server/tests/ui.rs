@@ -315,6 +315,7 @@ async fn route_table_by_role() {
         ("/admin/agents", Role::Admin),
         ("/admin/clamd-config", Role::Admin),
         ("/admin/firewall", Role::Admin),
+        ("/admin/quarantine", Role::Admin),
     ];
     let posts: &[(&str, Role)] = &[
         ("/admin/users", Role::Admin),
@@ -334,6 +335,7 @@ async fn route_table_by_role() {
         ("/crowdsec/refresh", Role::Admin),
         ("/integrity/run", Role::Admin),
         ("/admin/firewall/rules", Role::Admin),
+        ("/admin/quarantine", Role::Admin),
         ("/admin/firewall/rules/delete", Role::Admin),
         ("/admin/firewall/refresh", Role::Admin),
         ("/admin/api-tokens", Role::Admin),
@@ -1052,4 +1054,50 @@ async fn firewall_plan_is_checked_and_previewed() {
             .len(),
         3
     );
+}
+
+#[tokio::test]
+async fn quarantine_is_off_until_configured_and_needs_a_real_detection() {
+    let (app, st) = app().await;
+    let (c, t) = admin_cookie(&st).await;
+    let res = app
+        .clone()
+        .oneshot(get("/admin/quarantine", Some(&c)))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(body(res).await.contains("QUARANTINE_DIR"));
+    for d in ["999999", "x", ""] {
+        let res = app
+            .clone()
+            .oneshot(form(
+                "/admin/quarantine",
+                &format!("_csrf={t}&detection={d}"),
+                Some(&c),
+            ))
+            .await
+            .expect("res");
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{d}");
+    }
+}
+
+#[tokio::test]
+async fn empty_clamd_allowlist_allows_only_the_install_endpoint() {
+    let (app, st) = app().await;
+    let (c, t) = admin_cookie(&st).await;
+    let post = |addr: &str| {
+        let app = app.clone();
+        let c = c.clone();
+        let body = format!("_csrf={t}&name=x{}&address={addr}", addr.len());
+        async move {
+            app.oneshot(form("/admin/endpoints", &body, Some(&c)))
+                .await
+                .expect("res")
+        }
+    };
+    let res = post("tcp://evil.example:3310").await;
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert!(body(res).await.contains("CLAMD_HOST_ALLOWLIST"));
+    let res = post("tcp://127.0.0.1:3311").await;
+    assert_ne!(res.status(), StatusCode::BAD_REQUEST);
 }

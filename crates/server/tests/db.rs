@@ -991,3 +991,41 @@ async fn firewall_plans_are_per_host() {
         );
     }
 }
+
+#[tokio::test]
+async fn quarantine_entries_move_through_states() {
+    use clamv_webui::db::quarantine as q;
+    for db in databases().await {
+        let kind = db.kind();
+        let path = format!("/w/{}/x.exe", &new_id()[..8]);
+        let i = db
+            .create_quarantine(None, &path, "Eicar", "admin")
+            .await
+            .expect("create")
+            .expect("new");
+        assert_eq!(i.state, q::PENDING, "{kind:?}");
+        assert!(
+            db.create_quarantine(None, &path, "Eicar", "admin")
+                .await
+                .expect("again")
+                .is_none(),
+            "{kind:?} one at a time"
+        );
+        db.set_quarantine_state(&i.id, q::HELD, None, Some(("ab", 68)), "admin")
+            .await
+            .expect("held");
+        let got = db.quarantine_item(&i.id).await.expect("q").expect("item");
+        assert_eq!((got.state.as_str(), got.size_bytes), (q::HELD, Some(68)));
+        db.set_quarantine_state(&i.id, q::DELETED, None, None, "admin")
+            .await
+            .expect("deleted");
+        let got = db.quarantine_item(&i.id).await.expect("q").expect("item");
+        assert_eq!(got.sha256.as_deref(), Some("ab"), "{kind:?} kept");
+        assert!(
+            db.create_quarantine(None, &path, "Eicar", "admin")
+                .await
+                .expect("after")
+                .is_some()
+        );
+    }
+}

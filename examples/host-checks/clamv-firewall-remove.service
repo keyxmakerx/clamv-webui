@@ -1,6 +1,6 @@
-# clamv: remove clamv's own nftables table; one fixed script, no traffic, writes only /var/lib/clamv/firewall.
+# clamv: remove only what clamv wrote to the firewall; one fixed script, no traffic.
 [Unit]
-Description=clamv firewall: remove clamv's own nftables table
+Description=clamv firewall: remove clamv's rules
 ConditionPathExists=/usr/local/libexec/clamv/firewall-remove
 
 [Service]
@@ -9,13 +9,14 @@ ExecStart=/usr/local/libexec/clamv/firewall-remove
 ProtectSystem=strict
 RuntimeDirectory=clamv-firewall
 RuntimeDirectoryMode=0700
-ReadWritePaths=/var/lib/clamv/firewall
+StateDirectory=clamv-firewall
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/clamv/firewall -/etc/ufw -/lib/ufw -/run
 PrivateTmp=yes
 IPAddressDeny=any
-RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
 NoNewPrivileges=yes
-CapabilityBoundingSet=CAP_NET_ADMIN
-ProtectKernelTunables=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
 ProtectControlGroups=yes
 ProtectClock=yes
 ProtectHostname=yes

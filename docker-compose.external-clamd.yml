@@ -11,6 +11,7 @@ services:
       # CLAMD_MAX_STREAM_MB: "1024"  # default; clamd StreamMaxLength must be at least this
       CLAMD_HOST_ALLOWLIST: clamav  # admins can only add endpoints on these hosts
       SCAN_ROOTS: /data,/documents,/games  # clamd must see these at the same paths
+      # QUARANTINE_DIR: /app/data/quarantine  # opt-in; needs read-write scan roots
       LOG_FORMAT: json  # one JSON object per line for fluent-bit
       # TLS_SELF_SIGNED: "true"  # HTTPS for clamctl; certificate lands in ./data/tls
       # TLS_SELF_SIGNED_NAMES: 100.82.x.y  # the mesh IP or name clients connect to
@@ -42,6 +43,7 @@ services:
       # - /var/log/falco:/var/log/falco:ro  # Falco JSON alerts (json_output + file_output)
       # - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro  # managed AIDE/rkhunter and firewall (after host-setup)
       # - /var/lib/clamv/firewall:/var/lib/clamv/firewall  # firewall snapshots and plans (after host-setup)
+      # - /var/lib/clamv/timers:/var/lib/clamv/timers  # AIDE/rkhunter timer times (after host-setup)
       - /documents:/documents:ro
       - /games:/games:ro
 

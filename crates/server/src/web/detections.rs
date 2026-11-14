@@ -47,6 +47,7 @@ pub struct Facet {
 }
 
 pub struct Row {
+    id: i64,
     at: String,
     path: String,
     signature: String,
@@ -343,6 +344,7 @@ async fn page(
 
 fn view(d: DetectionRow, names: &Names) -> Row {
     Row {
+        id: d.id,
         at: fmt_ts(d.found_at),
         host: names.label(d.endpoint_id, d.agent_id),
         path: d.path,

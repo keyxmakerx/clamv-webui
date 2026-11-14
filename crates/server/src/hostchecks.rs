@@ -28,7 +28,7 @@ pub struct Action {
     pub label: &'static str,
 }
 
-pub const ACTIONS: [Action; 11] = [
+pub const ACTIONS: [Action; 12] = [
     Action {
         name: "aide.check",
         unit: "clamv-aide-check.service",
@@ -85,6 +85,14 @@ pub const ACTIONS: [Action; 11] = [
         passkey: false,
         label: "Daily rkhunter off",
     },
+    // Started only through `set_time`, which writes the time first.
+    Action {
+        name: "timers.set",
+        unit: "clamv-timer-set.service",
+        stop: false,
+        passkey: false,
+        label: "Set timer times",
+    },
     // Firewall units are started only by the firewall code, never from a host-check job.
     Action {
         name: "firewall.snapshot",
@@ -111,7 +119,74 @@ pub const ACTIONS: [Action; 11] = [
 
 /// An action a host-check job or the Host Checks page may ask for.
 pub fn check_action(name: &str) -> Option<&'static Action> {
-    action(name).filter(|a| !a.name.starts_with("firewall."))
+    action(name).filter(|a| !a.name.starts_with("firewall.") && a.name != "timers.set")
+}
+
+/// Shared with the host's timer-set unit, which uses this fixed path too.
+pub const TIMER_DIR: &str = "/var/lib/clamv/timers";
+
+/// A daily time, `HH:MM`, or `random` for systemd's own randomised daily run.
+pub fn valid_time(t: &str) -> bool {
+    if t == "random" {
+        return true;
+    }
+    let b = t.as_bytes();
+    b.len() == 5
+        && b[2] == b':'
+        && t[..2].parse::<u8>().is_ok_and(|h| h < 24)
+        && t[3..].parse::<u8>().is_ok_and(|m| m < 60)
+        && b.iter()
+            .enumerate()
+            .all(|(i, c)| i == 2 || c.is_ascii_digit())
+}
+
+/// The job target that sets a tool's daily time, e.g. `aide.timer.at 03:30`.
+pub fn timer_target(tool: &str, time: &str) -> String {
+    format!("{tool}.timer.at {time}")
+}
+
+pub fn parse_timer_target(t: &str) -> Option<(&'static str, String)> {
+    let (head, time) = t.split_once(' ')?;
+    let tool = match head {
+        "aide.timer.at" => "aide",
+        "rkhunter.timer.at" => "rkhunter",
+        _ => return None,
+    };
+    valid_time(time).then(|| (tool, time.to_owned()))
+}
+
+/// Ask the host's timer-set unit for a new daily time.
+pub async fn set_time(tool: &str, time: &str) -> Result<(), RunError> {
+    if !valid_time(time) || !matches!(tool, "aide" | "rkhunter") {
+        return Err(RunError {
+            code: FAILED,
+            message: "not a time".into(),
+        });
+    }
+    let dir = std::path::Path::new(TIMER_DIR);
+    let io = |e: std::io::Error| RunError {
+        code: NOT_INSTALLED,
+        message: format!("cannot write to {TIMER_DIR}: {e}"),
+    };
+    let tmp = dir.join(format!(".{tool}.want.tmp"));
+    std::fs::write(&tmp, format!("{time}\n")).map_err(io)?;
+    std::fs::rename(&tmp, dir.join(format!("{tool}.want"))).map_err(io)?;
+    let a = action("timers.set").ok_or_else(|| RunError {
+        code: FAILED,
+        message: "no timer unit".into(),
+    })?;
+    run(a).await
+}
+
+/// The time the host last applied for a tool, if clamv ever set one.
+fn applied_time(tool: &str) -> Option<String> {
+    use std::io::Read;
+    let f = std::fs::File::open(std::path::Path::new(TIMER_DIR).join(format!("{tool}.applied")))
+        .ok()?;
+    let mut s = String::new();
+    f.take(16).read_to_string(&mut s).ok()?;
+    let t = s.trim();
+    valid_time(t).then(|| t.to_owned())
 }
 
 pub fn action(name: &str) -> Option<&'static Action> {
@@ -130,6 +205,11 @@ pub struct UnitStates {
     pub aide_timer: Option<bool>,
     #[serde(default)]
     pub rkhunter_timer: Option<bool>,
+    /// The daily time clamv set (`HH:MM` or `random`); None when it never set one.
+    #[serde(default)]
+    pub aide_at: Option<String>,
+    #[serde(default)]
+    pub rkhunter_at: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
 }
@@ -142,6 +222,8 @@ impl UnitStates {
     /// Bounded, since an agent sends it.
     pub fn cleaned(mut self) -> Self {
         self.error = self.error.map(|e| crate::agent::proto::clean(&e, 200));
+        self.aide_at = self.aide_at.filter(|t| valid_time(t));
+        self.rkhunter_at = self.rkhunter_at.filter(|t| valid_time(t));
         self
     }
 }
@@ -276,6 +358,8 @@ mod imp {
                 prop(&c, "clamv-rkhunter-check.timer", "LoadState").await,
                 prop(&c, "clamv-rkhunter-check.timer", "ActiveState").await,
             ),
+            aide_at: None,
+            rkhunter_at: None,
             error: None,
         }
     }
@@ -308,7 +392,11 @@ pub async fn run(a: &Action) -> Result<(), RunError> {
 /// Read which units exist and whether their timers run.
 pub async fn probe() -> UnitStates {
     match tokio::time::timeout(Duration::from_secs(10), imp::probe()).await {
-        Ok(s) => s,
+        Ok(s) => UnitStates {
+            aide_at: applied_time("aide"),
+            rkhunter_at: applied_time("rkhunter"),
+            ..s
+        },
         Err(_) => UnitStates {
             error: Some("systemd did not answer in 10 s".into()),
             ..UnitStates::default()
@@ -378,6 +466,24 @@ mod tests {
         assert!(action("aide.accept").is_some_and(|a| a.passkey));
         assert!(action("rkhunter.timer.off").is_some_and(|a| a.stop && !a.passkey));
         assert!(action("../../etc").is_none());
+        assert!(check_action("timers.set").is_none());
+        for (t, ok) in [
+            ("03:30", true),
+            ("23:59", true),
+            ("24:00", false),
+            ("3:30", false),
+            ("03:3a", false),
+            ("random", true),
+            ("03:30\nx", false),
+        ] {
+            assert_eq!(valid_time(t), ok, "{t}");
+        }
+        assert_eq!(
+            parse_timer_target("aide.timer.at 03:30"),
+            Some(("aide", "03:30".into()))
+        );
+        assert_eq!(parse_timer_target("aide.timer.at 99:99"), None);
+        assert_eq!(parse_timer_target("sshd.timer.at 03:30"), None);
         let rules = include_str!("../../../examples/host-checks/50-clamv-host-checks.rules");
         for a in ACTIONS {
             assert!(a.unit.starts_with("clamv-"));

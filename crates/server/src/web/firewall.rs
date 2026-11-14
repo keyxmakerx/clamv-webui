@@ -83,6 +83,8 @@ struct FirewallPage {
     preview: String,
     pending: bool,
     dir: String,
+    /// The tool the host writes clamv's plan through.
+    backend: &'static str,
 }
 
 #[derive(Deserialize, Default)]
@@ -283,6 +285,7 @@ async fn show(st: &AppState, nav: Nav, host: Option<i64>) -> Response {
             ),
             pending,
             dir: crate::firewall::DIR.to_owned(),
+            backend: s.backend(),
             nav,
         },
     )

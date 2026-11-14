@@ -25,6 +25,7 @@ pub mod hostsetup;
 pub mod integrity;
 pub mod logging;
 pub mod metrics;
+pub mod quarantine;
 pub mod scan;
 pub mod schedule;
 pub mod settings;

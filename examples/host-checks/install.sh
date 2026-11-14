@@ -11,13 +11,15 @@ if ! id clamv >/dev/null 2>&1; then
   useradd --system --uid "$uid" --no-create-home --shell /usr/sbin/nologin clamv
 fi
 install -d -m 0755 /usr/local/libexec/clamv /var/log/aide
-install -d -m 0750 -o clamv -g root /var/lib/clamv/firewall
-for s in aide-accept firewall-snapshot firewall-apply firewall-remove; do
+install -d -m 0750 -o clamv -g root /var/lib/clamv/firewall /var/lib/clamv/timers
+install -d -m 0755 /etc/systemd/system/clamv-aide-check.timer.d /etc/systemd/system/clamv-rkhunter-check.timer.d
+for s in aide-accept firewall-snapshot firewall-apply firewall-remove firewall-lib timer-set; do
   install -m 0755 "$here/$s" "/usr/local/libexec/clamv/$s"
 done
 for u in clamv-aide-check.service clamv-aide-check.timer clamv-aide-accept.service \
          clamv-rkhunter-check.service clamv-rkhunter-check.timer clamv-rkhunter-propupd.service \
-         clamv-firewall-snapshot.service clamv-firewall-apply.service clamv-firewall-remove.service; do
+         clamv-firewall-snapshot.service clamv-firewall-apply.service clamv-firewall-remove.service \
+         clamv-timer-set.service; do
   install -m 0644 "$here/$u" "/etc/systemd/system/$u"
 done
 install -d -m 0755 /etc/polkit-1/rules.d

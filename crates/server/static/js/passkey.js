@@ -75,7 +75,7 @@
   async function stepUp(btn) {
     var csrf = btn.getAttribute("data-csrf");
     var opt = await post("/integrity/confirm/options", {
-      csrf: csrf, host: btn.getAttribute("data-host") || "", action: btn.getAttribute("data-stepup")
+      csrf: csrf, host: btn.getAttribute("data-host") || "", action: btn.getAttribute("data-stepup"), item: btn.getAttribute("data-item") || ""
     });
     var pk = opt.publicKey;
     pk.challenge = toBytes(pk.challenge);
@@ -91,7 +91,7 @@
     });
     var ok = document.getElementById("stepup-ok");
     if (ok) { ok.textContent = res.message || "Done."; ok.classList.remove("d-none"); ok.scrollIntoView({ block: "nearest" }); }
-    if (res.reload) { setTimeout(function () { window.location.reload(); }, 4000); }
+    if (res.reload) { setTimeout(function () { window.location.reload(); }, btn.hasAttribute("data-item") ? 1200 : 4000); }
   }
   document.addEventListener("click", function (ev) {
     var up = ev.target.closest("[data-stepup]");

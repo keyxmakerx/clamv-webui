@@ -3,7 +3,7 @@
 {% block head %}{% if pending %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
 {% block content %}
 <h1 class="h3">Firewall</h1>
-<p class="muted">clamv writes only its own nftables table, <code>inet clamv</code>. Rules from Docker, CrowdSec, ufw, firewalld and anything else are shown here read-only and never touched. Applying or removing needs your passkey, and an apply rolls back on the host after 90 s unless clamv confirms it can still reach it.</p>
+<p class="muted">clamv writes only its own rules: through ufw or firewalld when the host uses one, otherwise its own nftables table, <code>inet clamv</code>. Rules anything else made, Docker's and CrowdSec's included, are shown here read-only and never touched. Applying or removing needs your passkey, and an apply rolls back on the host after 90 s unless clamv confirms it can still reach it.</p>
 <div class="filter-chips mb-3">{% for c in chips %}<a class="chip{% if c.active %} active{% endif %}" href="/admin/firewall{% if !c.value.is_empty() %}?host={{ c.value }}{% endif %}"{% if c.active %} aria-current="page"{% endif %}>{{ c.label }}</a>{% endfor %}</div>
 <div id="passkey-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
 <div id="stepup-ok" class="alert alert-success py-2 small d-none" role="status"></div>
@@ -19,6 +19,7 @@
 <dt class="col-sm-3">Other rule owners</dt><dd class="col-sm-9">{% for o in owners %}<span class="badge bg-info text-dark">{{ o }}</span> {% else %}<span class="muted">none</span>{% endfor %}</dd>
 <dt class="col-sm-3">ufw</dt><dd class="col-sm-9">{% if ufw.is_empty() %}<span class="muted">not installed</span>{% else %}{{ ufw }}{% endif %}</dd>
 <dt class="col-sm-3">firewalld</dt><dd class="col-sm-9">{% if firewalld.is_empty() %}<span class="muted">not installed</span>{% else %}{{ firewalld }}{% endif %}</dd>
+<dt class="col-sm-3">clamv writes through</dt><dd class="col-sm-9">{{ backend }}{% if backend == "ufw" %} <span class="muted">(rules commented "clamv", placed above the host's own)</span>{% else if backend == "firewalld" %} <span class="muted">(rich rules in the default zone, saved once confirmed)</span>{% else %} <span class="muted">(its own table, inet clamv)</span>{% endif %}</dd>
 <dt class="col-sm-3">SELinux</dt><dd class="col-sm-9">{% if selinux.is_empty() %}<span class="muted">not present</span>{% else %}{{ selinux }}{% endif %}</dd>
 {% if !status.is_empty() %}<dt class="col-sm-3">Last apply</dt><dd class="col-sm-9"><span class="badge {% if status_ok %}bg-success{% else %}bg-warning text-dark{% endif %}">{{ status }}</span> <span class="muted">{{ status_at }}</span></dd>{% endif %}
 </dl>
