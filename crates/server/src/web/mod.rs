@@ -67,7 +67,31 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(mfa::routes())
         .merge(passkeys::routes())
         .merge(detections::routes())
-        .route("/{*path}", get(asset))
+        .route(
+            "/{*path}",
+            get(asset).layer(tower_http::compression::CompressionLayer::new()),
+        )
+}
+
+/// Short hash over every static file, appended as `?v=` so browsers can keep
+/// assets for a year and still pick up a new image at once.
+pub fn asset_v() -> &'static str {
+    static V: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    V.get_or_init(|| {
+        let mut ctx = ring::digest::Context::new(&ring::digest::SHA256);
+        let mut names: Vec<_> = Assets::iter().collect();
+        names.sort();
+        for n in names {
+            if let Some(f) = Assets::get(&n) {
+                ctx.update(n.as_bytes());
+                ctx.update(&f.metadata.sha256_hash());
+            }
+        }
+        ctx.finish().as_ref()[..6]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    })
 }
 
 /// Shared data for the page shell.
@@ -125,18 +149,41 @@ pub fn error_page(status: StatusCode, message: &str) -> Response {
     )
 }
 
-async fn asset(Path(path): Path<String>) -> Response {
+async fn asset(Path(path): Path<String>, uri: axum::http::Uri, headers: HeaderMap) -> Response {
     match Assets::get(&path) {
         Some(file) => {
-            let mime = file.metadata.mimetype();
-            let mut res = file.data.into_owned().into_response();
-            if let Ok(v) = HeaderValue::from_str(mime) {
-                res.headers_mut().insert(header::CONTENT_TYPE, v);
+            let etag: String = file.metadata.sha256_hash()[..16]
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            let etag = format!("\"{etag}\"");
+            // A matching ?v= means this exact content, so it never changes.
+            let versioned = uri
+                .query()
+                .is_some_and(|q| q.split('&').any(|p| p == format!("v={}", asset_v())));
+            let cache = if versioned {
+                "public, max-age=31536000, immutable"
+            } else {
+                "public, max-age=3600"
+            };
+            let fresh = headers
+                .get(header::IF_NONE_MATCH)
+                .and_then(|v| v.to_str().ok())
+                .is_some_and(|v| v.split(',').any(|t| t.trim() == etag));
+            let mut res = if fresh {
+                StatusCode::NOT_MODIFIED.into_response()
+            } else {
+                let mut r = file.data.into_owned().into_response();
+                if let Ok(v) = HeaderValue::from_str(file.metadata.mimetype()) {
+                    r.headers_mut().insert(header::CONTENT_TYPE, v);
+                }
+                r
+            };
+            let h = res.headers_mut();
+            h.insert(header::CACHE_CONTROL, HeaderValue::from_static(cache));
+            if let Ok(v) = HeaderValue::from_str(&etag) {
+                h.insert(header::ETAG, v);
             }
-            res.headers_mut().insert(
-                header::CACHE_CONTROL,
-                HeaderValue::from_static("public, max-age=86400"),
-            );
             res
         }
         None => error_page(StatusCode::NOT_FOUND, "Page not found."),

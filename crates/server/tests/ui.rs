@@ -791,3 +791,51 @@ fn urlencode(s: &str) -> String {
         })
         .collect()
 }
+
+#[tokio::test]
+async fn static_assets_are_versioned_compressed_and_revalidated() {
+    let (app, _st) = app().await;
+    let v = clamv_webui::web::asset_v();
+    let res = app
+        .clone()
+        .oneshot(
+            Request::get(format!("/css/bootstrap.min.css?v={v}"))
+                .header(header::ACCEPT_ENCODING, "gzip")
+                .body(Body::empty())
+                .expect("req"),
+        )
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers()[header::CONTENT_ENCODING], "gzip");
+    assert!(
+        res.headers()[header::CACHE_CONTROL]
+            .to_str()
+            .is_ok_and(|c| c.contains("immutable"))
+    );
+    let etag = res.headers()[header::ETAG].clone();
+    let res = app
+        .clone()
+        .oneshot(
+            Request::get("/css/bootstrap.min.css")
+                .header(header::IF_NONE_MATCH, etag)
+                .body(Body::empty())
+                .expect("req"),
+        )
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(res.headers()[header::CACHE_CONTROL], "public, max-age=3600");
+    let page = app
+        .oneshot(Request::get("/login").body(Body::empty()).expect("req"))
+        .await
+        .expect("res");
+    let html = String::from_utf8(
+        axum::body::to_bytes(page.into_body(), 1 << 20)
+            .await
+            .expect("body")
+            .to_vec(),
+    )
+    .expect("utf8");
+    assert!(html.contains(&format!("/css/ui.css?v={v}")));
+}

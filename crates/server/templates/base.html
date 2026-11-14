@@ -6,13 +6,13 @@
 {% block head %}{% endblock %}
 <title>{% block title %}ClamAV Web UI{% endblock %}</title>
 <link rel="icon" href="/favicon.ico">
-<link rel="stylesheet" href="/css/bootstrap.min.css">
-<link rel="stylesheet" href="/css/all.css">
-<link rel="stylesheet" href="/css/style.css">
-<link rel="stylesheet" href="/css/phase0.css">
-<link rel="stylesheet" href="/css/ui.css">
-<script src="/js/theme.js"></script>
-<script defer src="/js/script.js"></script>
+<link rel="stylesheet" href="/css/bootstrap.min.css?v={{ crate::web::asset_v() }}">
+<link rel="stylesheet" href="/css/all.css?v={{ crate::web::asset_v() }}">
+<link rel="stylesheet" href="/css/style.css?v={{ crate::web::asset_v() }}">
+<link rel="stylesheet" href="/css/phase0.css?v={{ crate::web::asset_v() }}">
+<link rel="stylesheet" href="/css/ui.css?v={{ crate::web::asset_v() }}">
+<script src="/js/theme.js?v={{ crate::web::asset_v() }}"></script>
+<script defer src="/js/script.js?v={{ crate::web::asset_v() }}"></script>
 </head>
 <body{% block body_class %}{% endblock %}>
 {% block body %}{% endblock %}

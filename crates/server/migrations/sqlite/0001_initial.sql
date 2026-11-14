@@ -245,3 +245,5 @@ CREATE INDEX idx_detections_found ON detections(found_at);
 CREATE INDEX idx_detections_sig ON detections(signature, found_at);
 CREATE INDEX idx_detections_job ON detections(job_id);
 CREATE INDEX idx_jobs_verdict ON scan_jobs(verdict, submitted_at);
+CREATE INDEX idx_jobs_kind ON scan_jobs(kind, status);
+CREATE INDEX idx_processed_at ON processed_files(processed_at);
