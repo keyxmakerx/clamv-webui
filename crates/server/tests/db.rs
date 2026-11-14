@@ -855,3 +855,64 @@ async fn canaries_everywhere() {
         db.recent_controls(0).await.expect("controls query");
     }
 }
+
+#[tokio::test]
+async fn integrity_reports_everywhere() {
+    use clamv_webui::integrity::Report;
+    for db in databases().await {
+        let kind = db.kind();
+        let (agent, _) = db
+            .create_agent(&format!("int-{}", &new_id()[..8]), "admin")
+            .await
+            .expect("agent");
+        let r = |tool: &str, at: i64, ok: bool| Report {
+            tool: tool.into(),
+            ran_at: at,
+            ok,
+            summary: "s".into(),
+            findings: vec!["changed: /etc/passwd".into()],
+        };
+        let base = clamv_webui::db::now_ms();
+        assert!(
+            db.add_integrity_report(Some(agent.id), &r("aide", base, false))
+                .await
+                .expect("add")
+        );
+        assert!(
+            !db.add_integrity_report(Some(agent.id), &r("aide", base, false))
+                .await
+                .expect("dup"),
+            "{kind:?}"
+        );
+        assert!(
+            db.add_integrity_report(Some(agent.id), &r("aide", base + 1, true))
+                .await
+                .expect("add")
+        );
+        assert!(
+            db.add_integrity_report(None, &r("rkhunter", base + 2, true))
+                .await
+                .expect("add")
+        );
+        let latest = db.latest_integrity().await.expect("latest");
+        let mine: Vec<_> = latest
+            .iter()
+            .filter(|x| x.agent_id == Some(agent.id))
+            .collect();
+        assert_eq!(mine.len(), 1, "{kind:?}");
+        assert!(mine[0].report.ok && mine[0].report.ran_at == base + 1);
+        assert!(
+            latest
+                .iter()
+                .any(|x| x.agent_id.is_none() && x.report.tool == "rkhunter"),
+            "{kind:?}"
+        );
+        assert_eq!(
+            db.latest_integrity_runs(Some(agent.id))
+                .await
+                .expect("runs"),
+            vec![("aide".to_owned(), base + 1)]
+        );
+        assert!(db.delete_agent(agent.id).await.expect("del"));
+    }
+}

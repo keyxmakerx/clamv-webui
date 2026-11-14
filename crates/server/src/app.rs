@@ -252,6 +252,7 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     crate::metrics::spawn(state.clone());
     crate::agent::spawn_monitor(state.clone());
     crate::update::spawn(state.clone());
+    crate::integrity::spawn(state.clone());
     let app = router(state, &cfg).into_make_service_with_connect_info::<std::net::SocketAddr>();
     let scheme = if cfg.tls_enabled() { "https" } else { "http" };
     tracing::info!(listen = %cfg.listen, scheme, clamd = %cfg.clamd_endpoint, data_dir = %cfg.data_dir.display(), version = env!("CARGO_PKG_VERSION"), "started");
@@ -370,6 +371,11 @@ fn spawn_housekeeping(state: Arc<AppState>) {
                     Ok(_) => {}
                     Err(e) => tracing::warn!(error = %e, "audit prune failed"),
                 }
+                // Integrity runs follow the audit retention.
+                let _ = state
+                    .db
+                    .prune_integrity(crate::db::now_ms().saturating_sub(ms))
+                    .await;
             }
         }
     });

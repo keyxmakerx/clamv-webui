@@ -10,6 +10,7 @@ Forked from an earlier Java application, which has been replaced entirely. Licen
 - **Scans**: upload scans (in-memory stream to clamd), path scans limited to `SCAN_ROOTS`, job history with per-file results.
 - **Dashboard**: scans, detections and failures over 24 h, 7 or 30 days, compared with the period before, with a clickable activity chart and the top signatures, folders and hosts.
 - **Coverage page**: one view of which threats each host is covered for (malware at rest and on arrival, canaries, EICAR checks, signature age), this server and every agent alike, with what is missing.
+- **Integrity checks**: AIDE and rkhunter runs from every host. Each host keeps running them on its own timer; mount the report read-only and every new run is stored, shown on the Integrity and Coverage pages, and alerted when it finds changes.
 - **Detections page**: every infected file across all hosts, filtered by signature, host, type and folder, with CSV export (up to 50,000 rows).
 - **Search**: the Jobs and Detections pages take free text plus `field:value` terms, for example `sig:Eicar host:nas -path:/games after:7d`. Quotes match exactly, `-` excludes, dates take `YYYY-MM-DD` or `7d`, `12h`, `30m`. Filters are remembered per browser.
 - **Display**: light and dark themes, times shown in your own time zone (or a fixed one) with a 12 or 24 hour clock, set under Account.
@@ -74,6 +75,7 @@ Every option is an environment variable (or a `--flag`; run `clamv-webui --help`
 | `DATABASE_URL(_FILE)` | SQLite in `DATA_DIR` | `sqlite://`, `postgres://`, `mysql://` or `mariadb://` |
 | `LOG_FORMAT` / `LOG_LEVEL` | `plain` / `info` | `json` for one object per line |
 | `BOOTSTRAP_ADMIN_PASSWORD` | generated | First admin password; a supplied one is not forced to change |
+| `AIDE_LOG` / `RKHUNTER_LOG` | `/var/log/aide/aide.log` / `/var/log/rkhunter.log` | Host reports to read (mount read-only); on agents too. Empty turns one off |
 | `UPDATE_CHECK` | `true` | Look up the latest GitHub release once a day and tell admins on the dashboard; sends only the version |
 
 ### clamd and scanning

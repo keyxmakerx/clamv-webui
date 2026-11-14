@@ -112,6 +112,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     tracing::info!(event = "agent.started", server = %a.base, clamd = %a.cfg.clamd_endpoint, roots = ?a.cfg.scan_roots, slots = a.cfg.scan_concurrency.max(1), version = env!("CARGO_PKG_VERSION"), "agent started");
     spawn_realtime(a.clone()).await;
     spawn_canaries(a.clone());
+    spawn_integrity(a.clone());
     tokio::select! {
         () = poll_loop(a) => {}
         () = shutdown() => tracing::info!("agent stopping"),
@@ -503,6 +504,21 @@ async fn realtime_scan(a: &Agent, p: &std::path::Path) -> AgentEvent {
         report,
         failure,
     }
+}
+
+/// Send each new AIDE or rkhunter run to the server.
+fn spawn_integrity(a: Arc<Agent>) {
+    let sources = crate::integrity::sources(&a.cfg);
+    // The server ignores runs it already has, so a restart may resend the latest.
+    crate::integrity::watch(sources, Vec::new(), move |report| {
+        let a = a.clone();
+        async move {
+            if !report.ok {
+                tracing::warn!(event = "integrity.findings", tool = %report.tool, summary = %report.summary, "integrity check found changes");
+            }
+            send_event(&a, &AgentEvent::Integrity { report }).await;
+        }
+    });
 }
 
 /// What the agent reports about its managed canaries on each poll.

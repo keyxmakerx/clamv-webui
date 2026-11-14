@@ -296,6 +296,7 @@ async fn route_table_by_role() {
         ("/dashboard", Role::Viewer),
         ("/clamd", Role::Viewer),
         ("/coverage", Role::Viewer),
+        ("/integrity", Role::Operator),
         ("/admin/users", Role::Admin),
         ("/admin/audit", Role::Admin),
         ("/admin/endpoints", Role::Admin),
@@ -920,4 +921,42 @@ async fn admin_manages_canaries_per_host() {
     assert!(html.contains("edge-1") && html.contains("this server"));
     assert!(html.contains("Ransomware and snooping") && html.contains("1 missing"));
     let _ = std::fs::remove_dir_all(&base);
+}
+
+#[tokio::test]
+async fn this_servers_aide_report_is_read_and_shown() {
+    let dir = std::env::temp_dir().join(format!("clamv-aide-{}", clamv_webui::db::new_id()));
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let log = dir.join("aide.log");
+    std::fs::write(
+        &log,
+        "Start timestamp: 2026-11-11 03:00:01 +0000 (AIDE 0.17.4)\nAIDE found differences between database and filesystem!!\n\nSummary:\n  Added entries:\t1\n  Removed entries:\t0\n  Changed entries:\t0\n\nAdded entries:\n\nf++++++++++++++++: /etc/cron.d/backdoor\n",
+    )
+    .expect("write");
+    let log_s = log.to_str().expect("utf8").to_owned();
+    let (app, st) = app_with(&["--aide-log", &log_s, "--rkhunter-log", ""]).await;
+    let (c, _) = admin_cookie(&st).await;
+    clamv_webui::integrity::spawn(st.clone());
+    let mut found = false;
+    for _ in 0..50 {
+        if !st.db.recent_integrity(5).await.expect("q").is_empty() {
+            found = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(found, "report read");
+    let html = body(
+        app.clone()
+            .oneshot(get("/integrity", Some(&c)))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(
+        html.contains("/etc/cron.d/backdoor") && html.contains("1 added, 0 removed, 0 changed")
+    );
+    let cov = body(app.oneshot(get("/coverage", Some(&c))).await.expect("res")).await;
+    assert!(cov.contains("aide: 1 added"));
+    let _ = std::fs::remove_dir_all(&dir);
 }

@@ -87,7 +87,7 @@ const THREATS: [(&str, &str); 8] = [
     ),
     (
         "Rootkits and changed system files",
-        "AIDE and rkhunter results reach this console.",
+        "AIDE or rkhunter ran in the last week and found nothing.",
     ),
     (
         "Suspicious behaviour at runtime",
@@ -152,9 +152,44 @@ fn control(controls: &[(Option<i64>, String, i64)], agent: Option<i64>, now: i64
     }
 }
 
+fn integrity(reports: &[crate::db::integrity::StoredReport], agent: Option<i64>, now: i64) -> Cell {
+    let mine: Vec<_> = reports
+        .iter()
+        .filter(|r| r.agent_id == agent)
+        .map(|r| &r.report)
+        .collect();
+    if mine.is_empty() {
+        return cell("off", "no AIDE or rkhunter reports");
+    }
+    let bad: Vec<String> = mine
+        .iter()
+        .filter(|r| !r.ok)
+        .map(|r| format!("{}: {}", r.tool, r.summary))
+        .collect();
+    if !bad.is_empty() {
+        return cell("warn", bad.join("; "));
+    }
+    let newest = mine.iter().map(|r| r.ran_at).max().unwrap_or(0);
+    let tools: Vec<&str> = mine.iter().map(|r| r.tool.as_str()).collect();
+    if now - newest > 8 * DAY {
+        cell(
+            "warn",
+            format!(
+                "{} clean, last run {}",
+                tools.join(" and "),
+                ago(now, newest)
+            ),
+        )
+    } else {
+        cell(
+            "ok",
+            format!("{} clean, {}", tools.join(" and "), ago(now, newest)),
+        )
+    }
+}
+
 fn soon(i: usize) -> Cell {
     match i {
-        5 => cell("soon", "AIDE and rkhunter come next"),
         6 => cell("soon", "Falco intake comes next"),
         _ => cell("soon", "planned after this release"),
     }
@@ -202,6 +237,7 @@ async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
     let all_canaries = st.db.list_canaries().await.unwrap_or_default();
     let agents = st.db.list_agents().await.unwrap_or_default();
     let watches = st.db.list_watches().await.unwrap_or_default();
+    let reports = st.db.latest_integrity().await.unwrap_or_default();
 
     // This server: its own clamd endpoints, folders and canaries.
     let eps = endpoints::probe_all(&st, st.db.list_endpoints().await.unwrap_or_default()).await;
@@ -276,7 +312,8 @@ async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
             })
             .unwrap_or_else(|| cell("off", "no clamd endpoint answers")),
     ];
-    cells.extend((5..THREATS.len()).map(soon));
+    cells.push(integrity(&reports, None, now));
+    cells.extend((6..THREATS.len()).map(soon));
     let mut hosts = vec![host(
         crate::canary::hostname(),
         "this server",
@@ -324,7 +361,8 @@ async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
                 cell("off", "agent offline")
             },
         ];
-        cells.extend((5..THREATS.len()).map(soon));
+        cells.push(integrity(&reports, id, now));
+        cells.extend((6..THREATS.len()).map(soon));
         hosts.push(host(
             a.name.clone(),
             "agent",

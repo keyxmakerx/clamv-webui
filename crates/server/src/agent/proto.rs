@@ -95,6 +95,10 @@ pub enum AgentEvent {
         path: String,
         what: String,
     },
+    /// A new AIDE or rkhunter run on the agent's host.
+    Integrity {
+        report: crate::integrity::Report,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]

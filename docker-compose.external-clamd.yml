@@ -34,6 +34,9 @@ services:
     volumes:
       - ./data:/app/data  # app state; owned by UID 10001
       - /data:/data:ro
+      # - /var/log/aide:/var/log/aide:ro  # AIDE reports, read every 5 min
+      # - /var/log/rkhunter.log:/var/log/rkhunter.log:ro  # rkhunter report
+      # - /var/log/audit:/var/log/audit:ro  # lets canary alerts name who touched them
       - /documents:/documents:ro
       - /games:/games:ro
 

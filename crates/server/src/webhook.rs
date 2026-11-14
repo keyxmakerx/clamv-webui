@@ -478,7 +478,7 @@ fn clip(s: &str, n: usize) -> String {
 fn severity(e: &Event) -> u8 {
     match (e.event, e.verdict.as_str()) {
         ("canary.tripped", _) => 5,
-        ("eicar.control_failed", _) | (_, jobs::VIRUS_FOUND) => 4,
+        ("eicar.control_failed" | "integrity.findings", _) | (_, jobs::VIRUS_FOUND) => 4,
         ("test", _) | (_, jobs::ERROR) => 3,
         _ if e.file_errors > 0 => 3,
         _ => 2,
@@ -509,6 +509,11 @@ fn title(e: &Event) -> String {
         ("test", _) => "Test from clamv-webui".to_owned(),
         ("canary.tripped", _) => format!("Canary file touched on {}", e.endpoint),
         ("eicar.control_failed", _) => format!("EICAR check failed on {}", e.endpoint),
+        ("integrity.findings", _) => format!(
+            "{} found changes on {}",
+            e.kind.to_ascii_lowercase(),
+            e.endpoint
+        ),
         (_, jobs::VIRUS_FOUND) => format!("Malware found on {}", e.endpoint),
         (_, jobs::ERROR) => format!("Scan failed on {}", e.endpoint),
         _ => format!("Scan finished on {}", e.endpoint),
@@ -554,6 +559,12 @@ fn discord_text(e: &Event) -> String {
             "**EICAR check failed** on `{}`: scan results cannot be trusted.",
             clean(&e.endpoint)
         ),
+        ("integrity.findings", _) => format!(
+            "**{} found changes** on `{}`: {}",
+            e.kind.to_ascii_lowercase(),
+            clean(&e.endpoint),
+            clean(&e.target)
+        ),
         (_, jobs::VIRUS_FOUND) => format!(
             "**Malware found** by `{}` ({} scan of `{}`):",
             clean(&e.endpoint),
@@ -592,8 +603,12 @@ fn discord_text(e: &Event) -> String {
             e.file_errors
         ));
     }
-    if let Some(m) = &e.error {
-        lines.push(format!("Reason: {}", clean(m)));
+    match &e.error {
+        Some(m) if e.event == "integrity.findings" => {
+            lines.extend(m.lines().map(|f| format!("- `{}`", clean(f))));
+        }
+        Some(m) if e.event != "canary.tripped" => lines.push(format!("Reason: {}", clean(m))),
+        _ => {}
     }
     if !e.job_id.is_empty() {
         lines.push(format!("Job `{}`", e.job_id));

@@ -163,6 +163,24 @@ pub struct Config {
     #[arg(long, env = "WEBHOOK_EVENTS", value_enum, default_value_t = WebhookEvents::Alerts, global = true)]
     pub webhook_events: WebhookEvents,
 
+    /// AIDE --check output on this host (mounted read-only); new runs are read every 5 minutes.
+    #[arg(
+        long,
+        env = "AIDE_LOG",
+        default_value = "/var/log/aide/aide.log",
+        global = true
+    )]
+    pub aide_log: std::path::PathBuf,
+
+    /// rkhunter log on this host (mounted read-only).
+    #[arg(
+        long,
+        env = "RKHUNTER_LOG",
+        default_value = "/var/log/rkhunter.log",
+        global = true
+    )]
+    pub rkhunter_log: std::path::PathBuf,
+
     /// Check GitHub once a day for a newer release and show it to admins.
     #[arg(long, env = "UPDATE_CHECK", default_value_t = true, action = clap::ArgAction::Set, global = true)]
     pub update_check: bool,

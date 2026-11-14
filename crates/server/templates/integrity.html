@@ -1,0 +1,19 @@
+{% extends "shell.html" %}
+{% block title %}Integrity · ClamAV Web UI{% endblock %}
+{% block content %}
+<h1 class="h3">Integrity checks</h1>
+<p class="muted">AIDE and rkhunter runs from every host. Each host runs them on its own timer; this server and the agents read <code>{{ aide }}</code> and <code>{{ rkhunter }}</code> (mount them read-only) and report each new run.</p>
+<section class="card mt-3"><div class="card-body table-responsive">
+<table class="table table-sm align-top">
+<thead><tr><th>Ran</th><th>Host</th><th>Tool</th><th>Result</th></tr></thead>
+<tbody>
+{% for r in runs %}<tr>
+<td class="small text-nowrap">{{ r.ran }}</td>
+<td class="small">{{ r.host }}</td>
+<td class="small">{{ r.tool }}</td>
+<td>{% if r.ok %}<span class="badge bg-success">clean</span>{% else %}<span class="badge bg-danger">changes</span>{% endif %} <span class="small">{{ r.summary }}</span>
+{% if !r.findings.is_empty() %}<details class="small mt-1"><summary>{{ r.findings.len() }} finding(s)</summary><ul class="mb-0">{% for f in r.findings %}<li class="text-break"><code>{{ f }}</code></li>{% endfor %}</ul></details>{% endif %}</td>
+</tr>{% else %}<tr><td colspan="4" class="muted">No runs yet. Mount the AIDE or rkhunter report into this container or an agent.</td></tr>{% endfor %}
+</tbody></table>
+</div></section>
+{% endblock %}

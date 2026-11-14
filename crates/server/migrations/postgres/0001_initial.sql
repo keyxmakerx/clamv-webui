@@ -261,3 +261,17 @@ CREATE TABLE canaries (
     CONSTRAINT fk_canaries_agent FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
 );
 CREATE INDEX idx_canaries_agent ON canaries(agent_id);
+
+CREATE TABLE integrity_reports (
+    id VARCHAR(36) PRIMARY KEY,
+    agent_id BIGINT,
+    tool VARCHAR(16) NOT NULL,
+    ran_at BIGINT NOT NULL,
+    ok BIGINT NOT NULL,
+    summary VARCHAR(512) NOT NULL,
+    findings_json TEXT NOT NULL,
+    received_at BIGINT NOT NULL,
+    CONSTRAINT fk_integrity_agent FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
+);
+CREATE INDEX idx_integrity_host ON integrity_reports(agent_id, tool, ran_at);
+CREATE INDEX idx_integrity_received ON integrity_reports(received_at);

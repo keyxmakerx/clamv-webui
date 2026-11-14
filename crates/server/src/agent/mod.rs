@@ -305,6 +305,11 @@ async fn events(
             let _ = st.db.canary_tripped(Some(c.agent.id), &path).await;
             crate::canary::tripped(&st, &c.agent.name, &path, &what).await;
         }
+        AgentEvent::Integrity { report } => {
+            if let Some(r) = report.cleaned() {
+                crate::integrity::record(&st, Some(c.agent.id), &c.agent.name, r).await;
+            }
+        }
         AgentEvent::Scan {
             path,
             report,

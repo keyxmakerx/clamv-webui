@@ -510,3 +510,50 @@ async fn canaries_set_in_the_ui_reach_the_agent() {
     handle.abort();
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[tokio::test]
+async fn integrity_runs_from_an_agent_are_stored_once_and_alerted() {
+    let srv = server().await;
+    let (agent, token) = srv
+        .st
+        .db
+        .create_agent("nas-4", "admin")
+        .await
+        .expect("agent");
+    let ev = r#"{"type":"integrity","report":{"tool":"rkhunter","ran_at":1763000000000,"ok":false,"summary":"1 warning(s), possible rootkits: 0","findings":["Hidden file found: /dev/.blk"]}}"#;
+    let send = |body: &'static str| {
+        Request::post("/agent/v1/events")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body))
+            .expect("req")
+    };
+    for _ in 0..2 {
+        let res = srv.app.clone().oneshot(send(ev)).await.expect("res");
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+    }
+    let bad =
+        r#"{"type":"integrity","report":{"tool":"rm -rf","ran_at":1,"ok":true,"summary":"x"}}"#;
+    let res = srv.app.clone().oneshot(send(bad)).await.expect("res");
+    assert_eq!(
+        res.status(),
+        StatusCode::NO_CONTENT,
+        "unknown tools are dropped"
+    );
+    let runs = srv.st.db.recent_integrity(10).await.expect("q");
+    assert_eq!(runs.len(), 1, "stored once");
+    assert_eq!(runs[0].agent_id, Some(agent.id));
+    assert_eq!(
+        runs[0].report.findings,
+        vec!["Hidden file found: /dev/.blk"]
+    );
+    let audit = srv.st.db.audit_page(0, 10).await.expect("audit");
+    assert_eq!(
+        audit
+            .0
+            .iter()
+            .filter(|a| a.action == "INTEGRITY_FINDINGS")
+            .count(),
+        1
+    );
+}

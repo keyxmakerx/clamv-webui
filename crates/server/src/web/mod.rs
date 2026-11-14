@@ -10,6 +10,7 @@ pub mod csrf;
 pub mod detections;
 pub mod endpoints;
 pub mod integrations;
+pub mod integrity;
 pub mod mfa;
 pub mod oidc;
 pub mod passkeys;
@@ -71,6 +72,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(detections::routes())
         .merge(canaries::routes())
         .merge(coverage::routes())
+        .merge(integrity::routes())
         .route(
             "/{*path}",
             get(asset).layer(tower_http::compression::CompressionLayer::new()),

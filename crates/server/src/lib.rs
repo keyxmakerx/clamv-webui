@@ -17,6 +17,7 @@ pub mod cron;
 pub mod db;
 pub mod fsevents;
 pub mod healthcheck;
+pub mod integrity;
 pub mod logging;
 pub mod metrics;
 pub mod scan;
