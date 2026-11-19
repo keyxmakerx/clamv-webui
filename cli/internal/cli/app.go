@@ -159,7 +159,7 @@ func helpRequested(args []string) bool {
 }
 
 func commandValueFlag(value string) bool {
-	return oneOf(value, "--username", "--password", "--token", "--status", "--verdict", "--limit", "--page", "--interval", "--timeout", "--transport", "--upload-root", "--listen", "--http-token-file", "--allowed-origin", "--max-upload-bytes", "--agent", "--cron", "--path")
+	return oneOf(value, "--username", "--password", "--token", "--status", "--verdict", "--limit", "--page", "--interval", "--timeout", "--transport", "--upload-root", "--listen", "--http-token-file", "--allowed-origin", "--max-upload-bytes", "--agent", "--cron", "--path", "--zone", "--window", "--exclude")
 }
 
 func (a *App) Run(ctx context.Context, args []string) int {
@@ -748,7 +748,7 @@ Health and scanning:
   clamctl jobs watch JOB_ID [--interval 2s] [--timeout 30m] [--json]
   clamctl jobs cancel JOB_ID
   clamctl schedules list
-  clamctl schedules add NAME --cron '0 3 * * *' --path /data [--path ...] [--agent NAME] [--eicar]
+  clamctl schedules add NAME --cron '0 3 * * *' --path /data [--path ...] [--agent NAME] [--zone TZ] [--window HH:MM-HH:MM] [--exclude P] [--eicar]
   clamctl schedules run|pause|resume|delete SCHEDULE_ID
   clamctl audit list [--limit 20] [--page 0]
   clamctl mcp serve [--upload-root DIRECTORY] [--transport stdio|http]

@@ -25,15 +25,21 @@ type agent struct {
 }
 
 type schedule struct {
-	ID         string     `json:"id"`
-	Name       string     `json:"name"`
-	Cron       string     `json:"cron"`
-	Paths      []string   `json:"paths"`
-	EndpointID *int64     `json:"endpointId"`
-	AgentID    *int64     `json:"agentId"`
-	Agent      *string    `json:"agent"`
-	Enabled    bool       `json:"enabled"`
-	EicarCheck bool       `json:"eicarCheck"`
+	ID         string   `json:"id"`
+	Name       string   `json:"name"`
+	Cron       string   `json:"cron"`
+	Paths      []string `json:"paths"`
+	EndpointID *int64   `json:"endpointId"`
+	AgentID    *int64   `json:"agentId"`
+	Agent      *string  `json:"agent"`
+	Enabled    bool     `json:"enabled"`
+	EicarCheck bool     `json:"eicarCheck"`
+	TimeZone   string   `json:"timeZone"`
+	Window     *struct {
+		Start string `json:"start"`
+		End   string `json:"end"`
+	} `json:"window"`
+	Exclusions []string   `json:"exclusions"`
 	LastRunAt  *time.Time `json:"lastRunAt"`
 	NextRunAt  *time.Time `json:"nextRunAt"`
 }
@@ -105,15 +111,19 @@ func scheduleRows(values []schedule) [][]string {
 		} else if v.EndpointID != nil {
 			where = "endpoint:" + fmt.Sprint(*v.EndpointID)
 		}
-		rows = append(rows, []string{v.ID, v.Name, v.Cron, where, strconv.FormatBool(v.Enabled), strings.Join(v.Paths, ","), when(v.NextRunAt)})
+		window := ""
+		if v.Window != nil {
+			window = v.Window.Start + "-" + v.Window.End
+		}
+		rows = append(rows, []string{v.ID, v.Name, v.Cron, where, v.TimeZone, window, strconv.FormatBool(v.Enabled), strings.Join(v.Paths, ","), when(v.NextRunAt)})
 	}
 	return rows
 }
 
-var scheduleHeaders = []string{"ID", "NAME", "CRON", "RUNS ON", "ENABLED", "PATHS", "NEXT RUN"}
+var scheduleHeaders = []string{"ID", "NAME", "CRON", "RUNS ON", "ZONE", "WINDOW", "ENABLED", "PATHS", "NEXT RUN"}
 
 func (a *App) schedules(ctx context.Context, options globals, args []string, client *apiClient) (int, error) {
-	const help = "usage: clamctl schedules list | add NAME --cron EXPR --path P [--path P] [--agent NAME] [--eicar] | run|pause|resume|delete ID"
+	const help = "usage: clamctl schedules list | add NAME --cron EXPR --path P [--path P] [--agent NAME] [--zone TZ] [--window HH:MM-HH:MM] [--exclude P] [--eicar] | run|pause|resume|delete ID"
 	if len(args) == 0 {
 		return 2, usage(help)
 	}
@@ -132,8 +142,11 @@ func (a *App) schedules(ctx context.Context, options globals, args []string, cli
 		cron := fs.String("cron", "", "Five-field cron expression")
 		agentName := fs.String("agent", "", "Run on this agent")
 		eicar := fs.Bool("eicar", false, "Run the EICAR control with each run")
-		var paths pathList
+		zone := fs.String("zone", "", "IANA time zone for the cron fields and window (default: the server's)")
+		window := fs.String("window", "", "Only start runs between HH:MM-HH:MM in that zone")
+		var paths, excludes pathList
 		fs.Var(&paths, "path", "Folder to scan; repeat for more")
+		fs.Var(&excludes, "exclude", "Path or glob to skip; repeat for more")
 		if err := parseFlags(args[1:], fs); err != nil {
 			return 2, err
 		}
@@ -141,6 +154,19 @@ func (a *App) schedules(ctx context.Context, options globals, args []string, cli
 			return 2, usage(help)
 		}
 		body := map[string]any{"name": fs.Arg(0), "cron": *cron, "paths": []string(paths), "eicarCheck": *eicar}
+		if *zone != "" {
+			body["timeZone"] = *zone
+		}
+		if *window != "" {
+			start, end, ok := strings.Cut(*window, "-")
+			if !ok || start == "" || end == "" {
+				return 2, usage("--window takes HH:MM-HH:MM, for example 22:00-06:00")
+			}
+			body["window"] = map[string]string{"start": start, "end": end}
+		}
+		if len(excludes) > 0 {
+			body["exclusions"] = []string(excludes)
+		}
 		if *agentName != "" {
 			body["agent"] = *agentName
 		} else if options.Endpoint > 0 {

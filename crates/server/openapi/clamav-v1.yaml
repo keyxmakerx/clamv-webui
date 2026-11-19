@@ -158,6 +158,9 @@ paths:
                 agentId: {type: integer, format: int64}
                 agent: {type: string, description: Agent name; instead of agentId}
                 eicarCheck: {type: boolean, default: false}
+                timeZone: {type: string, example: Europe/Berlin, description: IANA zone for the cron fields and window; empty means the server default}
+                window: {$ref: '#/components/schemas/Window'}
+                exclusions: {type: array, maxItems: 50, items: {type: string}, description: Paths or globs to skip; on an agent only whole paths}
       responses:
         '201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Schedule'}}}}
         '400': {$ref: '#/components/responses/BadRequest'}
@@ -362,10 +365,20 @@ components:
         agent: {type: string, nullable: true}
         enabled: {type: boolean}
         eicarCheck: {type: boolean}
+        timeZone: {type: string}
+        window: {allOf: [{$ref: '#/components/schemas/Window'}], nullable: true}
+        exclusions: {type: array, items: {type: string}}
         createdAt: {type: string, format: date-time}
         lastRunAt: {type: string, format: date-time, nullable: true}
         lastJobId: {type: string, nullable: true}
         nextRunAt: {type: string, format: date-time, nullable: true}
+    Window:
+      type: object
+      description: Runs start only between start and end (HH:MM in the schedule's zone; may cross midnight)
+      required: [start, end]
+      properties:
+        start: {type: string, example: '22:00'}
+        end: {type: string, example: '06:00'}
     JobPage:
       type: object
       properties:

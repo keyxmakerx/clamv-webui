@@ -329,6 +329,54 @@ async fn api_targets_agents_and_schedules() {
     let (s, _) = call(&t.app, del).await;
     assert_eq!(s, StatusCode::NO_CONTENT);
 
+    // Zone, window and whole-path exclusions; nextRunAt honours them.
+    let (s, b) = call(
+        &t.app,
+        post(
+            "/api/v1/schedules",
+            &full,
+            &json!({"name": "night", "cron": "*/30 * * * *", "paths": ["/data/a", "/data/b"], "agent": "nas",
+                "timeZone": "Europe/Berlin", "window": {"start": "22:00", "end": "06:00"}, "exclusions": ["/data/b/"]}),
+        ),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    assert_eq!(b["timeZone"], "Europe/Berlin");
+    assert_eq!(b["window"], json!({"start": "22:00", "end": "06:00"}));
+    assert_eq!(b["exclusions"], json!(["/data/b"]));
+    let next = b["nextRunAt"].as_str().expect("next run");
+    let at = next
+        .parse::<jiff::Timestamp>()
+        .expect("time")
+        .in_tz("Europe/Berlin")
+        .expect("zone");
+    let hm = i32::from(at.hour()) * 60 + i32::from(at.minute());
+    assert!(
+        !(6 * 60..22 * 60).contains(&hm),
+        "inside the window: {next}"
+    );
+    for (body, why) in [
+        (
+            json!({"name": "a", "cron": "0 3 * * *", "paths": ["/data"], "agent": "nas", "timeZone": "Mars/Base"}),
+            "zone",
+        ),
+        (
+            json!({"name": "b", "cron": "0 12 * * *", "paths": ["/data"], "agent": "nas", "window": {"start": "22:00", "end": "06:00"}}),
+            "never runs",
+        ),
+        (
+            json!({"name": "c", "cron": "0 3 * * *", "paths": ["/data"], "agent": "nas", "exclusions": ["/data/x"]}),
+            "inner exclusion",
+        ),
+        (
+            json!({"name": "d", "cron": "0 3 * * *", "paths": ["/data"], "agent": "nas", "window": {"start": "25:00", "end": "06:00"}}),
+            "bad time",
+        ),
+    ] {
+        let (s, _) = call(&t.app, post("/api/v1/schedules", &full, &body)).await;
+        assert_eq!(s, StatusCode::BAD_REQUEST, "{why}");
+    }
+
     // Prometheus has a series per agent.
     let text = clamv_webui::metrics::render(&t.st).await;
     assert!(

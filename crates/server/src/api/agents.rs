@@ -162,11 +162,34 @@ pub async fn cancel(
 
 // ---- schedules ----
 
-fn schedule_json(s: &Schedule, agents: &[Agent]) -> Value {
+fn hhmm(m: i64) -> String {
+    format!("{:02}:{:02}", m / 60, m % 60)
+}
+
+/// `HH:MM` to minute of the day.
+fn parse_hhmm(v: &str) -> Result<i64, String> {
+    let bad = || format!("{v} is not a time like 22:00.");
+    let (h, m) = v.trim().split_once(':').ok_or_else(bad)?;
+    let (h, m): (i64, i64) = (h.parse().map_err(|_| bad())?, m.parse().map_err(|_| bad())?);
+    if !(0..24).contains(&h) || !(0..60).contains(&m) {
+        return Err(bad());
+    }
+    Ok(h * 60 + m)
+}
+
+fn schedule_json(cfg: &crate::config::Config, s: &Schedule, agents: &[Agent]) -> Value {
+    let (zone, tz) = crate::schedule::zone_of(cfg, s);
+    // The next start in the schedule's zone, skipping cron times outside its window.
     let next = match s.cron.parse::<Cron>() {
-        Ok(c) if s.enabled => c
-            .next_after(now_ms().max(s.last_run_at.unwrap_or(0)))
-            .map(rfc3339),
+        Ok(c) if s.enabled => crate::schedule::next_runs(
+            &c,
+            s.window,
+            &tz,
+            now_ms().max(s.last_run_at.unwrap_or(0)),
+            1,
+        )
+        .first()
+        .map(|t| rfc3339(*t)),
         _ => None,
     };
     json!({
@@ -183,6 +206,9 @@ fn schedule_json(s: &Schedule, agents: &[Agent]) -> Value {
         "lastRunAt": s.last_run_at.map(rfc3339),
         "lastJobId": s.last_job_id,
         "nextRunAt": next,
+        "timeZone": zone,
+        "window": s.window.map(|(a, b)| json!({"start": hhmm(a), "end": hhmm(b)})),
+        "exclusions": s.exclusions,
     })
 }
 
@@ -200,7 +226,7 @@ pub async fn list_schedules(State(st): State<Arc<AppState>>, p: Principal) -> Re
             Some(_) => reaches_agents(&p),
             None => p.endpoint_ok(s.endpoint_id),
         })
-        .map(|s| schedule_json(s, &agents))
+        .map(|s| schedule_json(&st.cfg, s, &agents))
         .collect();
     ok(StatusCode::OK, Value::Array(items))
 }
@@ -216,6 +242,18 @@ pub struct NewScheduleBody {
     agent: Option<String>,
     #[serde(default)]
     eicar_check: bool,
+    /// IANA zone for the cron fields and the window; empty means the server default.
+    time_zone: Option<String>,
+    /// Start runs only between these local times.
+    window: Option<WindowBody>,
+    #[serde(default)]
+    exclusions: Vec<String>,
+}
+
+#[derive(Deserialize)]
+pub struct WindowBody {
+    start: String,
+    end: String,
 }
 
 /// `POST /api/v1/schedules`
@@ -239,8 +277,28 @@ pub async fn create_schedule(
         return bad("Names are 1 to 100 characters.");
     }
     let cron = b.cron.trim();
-    if let Err(e) = cron.parse::<Cron>() {
-        return bad(&format!("cron: {e}."));
+    let parsed = match cron.parse::<Cron>() {
+        Ok(c) => c,
+        Err(e) => return bad(&format!("cron: {e}.")),
+    };
+    let zone_name = b.time_zone.as_deref().map(str::trim).unwrap_or("");
+    let tz = match zone_name {
+        "" => crate::schedule::default_zone(&st.cfg).1,
+        z => match crate::cron::zone(z) {
+            Ok(tz) => tz,
+            Err(e) => return bad(&format!("timeZone: {e}.")),
+        },
+    };
+    let window = match &b.window {
+        None => None,
+        Some(w) => match (parse_hhmm(&w.start), parse_hhmm(&w.end)) {
+            (Ok(a), Ok(z)) if a != z => Some((a, z)),
+            (Err(e), _) | (_, Err(e)) => return bad(&format!("window: {e}")),
+            _ => return bad("window: start and end must differ."),
+        },
+    };
+    if crate::schedule::next_runs(&parsed, window, &tz, now_ms(), 1).is_empty() {
+        return bad("That schedule never runs inside its window.");
     }
     let agent = match find_agent(&st, b.agent_id, b.agent.as_deref()).await {
         Ok(a) => a,
@@ -308,6 +366,47 @@ pub async fn create_schedule(
     if paths.is_empty() || paths.len() > MAX_PATHS {
         return bad(&format!("Give 1 to {MAX_PATHS} paths."));
     }
+    let mut exclusions: Vec<String> = Vec::new();
+    for line in b
+        .exclusions
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+    {
+        let e = match &agent {
+            Some(a) => match crate::agent::refuse(a, line) {
+                None => line.trim_end_matches('/').to_owned(),
+                Some(m) => return bad(&format!("{line}: {m}")),
+            },
+            None => match scan::resolve_path(&st.cfg.scan_roots, line).await {
+                Ok(r) => match r.to_str() {
+                    Some(s) => s.to_owned(),
+                    None => return bad(&format!("{line}: only UTF-8 paths can be excluded.")),
+                },
+                Err(m) => return bad(&format!("{line}: {m}")),
+            },
+        };
+        if !exclusions.contains(&e) {
+            exclusions.push(e);
+        }
+    }
+    if exclusions.len() > MAX_PATHS {
+        return bad(&format!("At most {MAX_PATHS} exclusions."));
+    }
+    if agent.is_some() {
+        // The agent's folders cannot be listed from here to scan around an inner exclusion.
+        if let Some(e) = exclusions.iter().find(|e| {
+            paths
+                .iter()
+                .any(|p| std::path::Path::new(e).starts_with(p) && e != &p)
+        }) {
+            return bad(&format!(
+                "{e}: on an agent, exclusions can only leave out whole paths; use ExcludePath in that host's clamd.conf for folders inside a path."
+            ));
+        }
+    } else if let Err(m) = crate::schedule::expand(&paths, &exclusions).await {
+        return bad(&m);
+    }
     let created = st
         .db
         .create_schedule(NewSchedule {
@@ -317,9 +416,9 @@ pub async fn create_schedule(
             endpoint_id: if agent.is_some() { None } else { b.endpoint_id },
             agent_id: agent.as_ref().map(|a| a.id),
             eicar_check: b.eicar_check,
-            exclusions: &[],
-            window: None,
-            time_zone: None,
+            exclusions: &exclusions,
+            window,
+            time_zone: (!zone_name.is_empty()).then_some(zone_name),
         })
         .await;
     match created {
@@ -332,7 +431,7 @@ pub async fn create_schedule(
             )
             .await;
             let agents = st.db.list_agents().await.unwrap_or_default();
-            ok(StatusCode::CREATED, schedule_json(&s, &agents))
+            ok(StatusCode::CREATED, schedule_json(&st.cfg, &s, &agents))
         }
         Err(_) => err(
             StatusCode::CONFLICT,
@@ -433,7 +532,7 @@ pub async fn patch_schedule(
     match st.db.schedule(&s.id).await {
         Ok(Some(s)) => {
             let agents = st.db.list_agents().await.unwrap_or_default();
-            ok(StatusCode::OK, schedule_json(&s, &agents))
+            ok(StatusCode::OK, schedule_json(&st.cfg, &s, &agents))
         }
         _ => unavailable(),
     }

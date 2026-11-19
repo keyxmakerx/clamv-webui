@@ -385,8 +385,17 @@ async fn result(
         (None, Some(f)) => failure_outcome(&f),
         (None, None) => scan::failure(scan::SCAN_FAILED, "The agent sent an empty result."),
     };
-    scan::finish(&st, &job, &c.agent.name, o).await;
-    StatusCode::NO_CONTENT.into_response()
+    stored_reply(scan::finish(&st, &job, &c.agent.name, o).await)
+}
+
+/// 503 when the result could not be stored, so the agent keeps it queued and sends it again.
+fn stored_reply(stored: scan::Stored) -> Response {
+    match stored {
+        scan::Stored::Failed => reply(StatusCode::SERVICE_UNAVAILABLE, "result not stored; retry"),
+        scan::Stored::Saved | scan::Stored::AlreadyFinished => {
+            StatusCode::NO_CONTENT.into_response()
+        }
+    }
 }
 
 /// A real-time scan becomes a finished WATCH job; a canary raises an alert.
@@ -462,7 +471,7 @@ async fn events(
                 (None, Some(f)) => failure_outcome(&f),
                 (None, None) => scan::failure(scan::SCAN_FAILED, "The agent sent an empty result."),
             };
-            scan::finish(&st, &job, &c.agent.name, o).await;
+            return stored_reply(scan::finish(&st, &job, &c.agent.name, o).await);
         }
     }
     StatusCode::NO_CONTENT.into_response()

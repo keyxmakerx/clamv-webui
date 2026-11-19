@@ -118,6 +118,7 @@ clamctl agents list
 clamctl scan path /data/media --agent nas --wait
 clamctl schedules list
 clamctl schedules add nightly --cron '0 3 * * *' --path /data --agent nas --eicar
+clamctl schedules add night --cron '*/30 * * * *' --path /srv --zone Europe/Berlin --window 22:00-06:00 --exclude /srv/cache
 clamctl schedules run|pause|resume|delete SCHEDULE_ID
 clamctl audit list --limit 20
 clamctl version

@@ -542,11 +542,12 @@ func TestAgentsSchedulesAndCancel(t *testing.T) {
 		case "POST /api/v1/schedules":
 			var body map[string]any
 			_ = json.NewDecoder(r.Body).Decode(&body)
-			if body["agent"] != "nas" || body["cron"] != "0 3 * * *" || len(body["paths"].([]any)) != 2 {
+			if body["agent"] != "nas" || body["cron"] != "0 3 * * *" || len(body["paths"].([]any)) != 2 ||
+				body["timeZone"] != "Europe/Berlin" || len(body["exclusions"].([]any)) != 1 {
 				t.Error("schedule body", body)
 			}
 			w.WriteHeader(201)
-			writeJSON(w, map[string]any{"id": "s1", "name": "nightly", "cron": "0 3 * * *", "agent": "nas", "enabled": true, "paths": body["paths"]})
+			writeJSON(w, map[string]any{"id": "s1", "name": "nightly", "cron": "0 3 * * *", "agent": "nas", "enabled": true, "paths": body["paths"], "timeZone": body["timeZone"], "window": body["window"]})
 		case "GET /api/v1/schedules":
 			writeJSON(w, []map[string]any{{"id": "s1", "name": "nightly", "cron": "0 3 * * *", "agent": "nas", "enabled": true, "paths": []string{"/data"}}})
 		case "POST /api/v1/schedules/s1/run":
@@ -566,7 +567,10 @@ func TestAgentsSchedulesAndCancel(t *testing.T) {
 	check(t, h.run("agents", "list"), 0, "nas", "online", "/data")
 	check(t, h.run("scan", "path", "/data/x", "--agent", "nas"), 0, "job-7")
 	check(t, h.run("jobs", "cancel", "job-7"), 0, "FINISHED", "ERROR")
-	check(t, h.run("schedules", "add", "nightly", "--cron", "0 3 * * *", "--path", "/data", "--path", "/srv", "--agent", "nas"), 0, "agent:nas")
+	check(t, h.run("schedules", "add", "nightly", "--cron", "0 3 * * *", "--path", "/data", "--path", "/srv", "--agent", "nas", "--zone", "Europe/Berlin", "--window", "22:00-06:00", "--exclude", "/srv"), 0, "agent:nas", "Europe/Berlin", "22:00-06:00")
+	if got := h.run("schedules", "add", "x", "--cron", "0 3 * * *", "--path", "/data", "--window", "22:00"); got.code != 2 || !strings.Contains(got.stderr, "HH:MM-HH:MM") {
+		t.Errorf("bad --window: %+v", got)
+	}
 	check(t, h.run("schedules", "list"), 0, "nightly", "agent:nas")
 	check(t, h.run("schedules", "run", "s1"), 0, "2")
 	check(t, h.run("schedules", "pause", "s1"), 0, "false")

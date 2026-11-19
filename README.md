@@ -67,7 +67,7 @@ The agent enforces its own `SCAN_ROOTS`. Jobs queued for an offline agent wait (
 | `AGENT_SERVER_FINGERPRINT` | SHA-256 of the server certificate (logged at server start); trust exactly that certificate |
 | `AGENT_CA_FILE` | Or: a PEM CA bundle for the server certificate |
 | `AGENT_ALLOW_PLAINTEXT` | `true` accepts an `http://` server URL (token and results unencrypted); only for a private VPN or mesh |
-| `AGENT_QUEUE_DIR` | Writable folder that keeps unsent results across agent restarts (default: memory; up to 5,000 items) |
+| `AGENT_QUEUE_DIR` | Writable folder that keeps unsent results across agent restarts (default: memory; up to 5,000 items or 64 MB) |
 | `CANARY_DIRS` | Folders where the server may have the agent write decoys; elsewhere a canary is only watched |
 | `REALTIME_PATHS` | Folders inside `SCAN_ROOTS` scanned as soon as files are written; results show up as watch jobs on the server |
 | `AGENT_ALLOW(_FILE)` | What this host lets the server ask for: `scan`, `canaries`, `checks`, `timers`, `baseline`, `firewall`, `quarantine` or `all` (default `scan,canaries,checks`); set only on the agent host |

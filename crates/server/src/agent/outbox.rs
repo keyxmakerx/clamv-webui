@@ -16,8 +16,8 @@ use super::proto::{AgentEvent, ResultRequest};
 
 /// Most items held at once.
 pub const MAX_ITEMS: usize = 5_000;
-/// Most bytes held at once (sum of the JSON bodies).
-pub const MAX_BYTES: usize = 256 * 1024 * 1024;
+/// Most bytes held at once (sum of the JSON bodies); well under the agent compose mem_limit of 256m.
+pub const MAX_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "to", rename_all = "lowercase")]
