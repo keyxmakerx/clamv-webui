@@ -32,4 +32,5 @@
 </tbody></table>
 {% if more_errors > 0 %}<p class="muted small">{{ more_errors }} more not shown.</p>{% endif %}
 </div></section>{% endif %}
+{% if omitted > 0 %}<p class="muted small mt-3">{{ omitted }} more result lines were not stored; every line is in the server log (search for this job id).</p>{% endif %}
 {% endblock %}

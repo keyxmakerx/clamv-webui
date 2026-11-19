@@ -209,6 +209,10 @@ pub struct Config {
     )]
     pub falco_events: std::path::PathBuf,
 
+    /// Default time zone for schedules (IANA name, e.g. Europe/Berlin); falls back to TZ, then UTC.
+    #[arg(long, env = "SCHEDULE_TZ", global = true)]
+    pub schedule_tz: Option<String>,
+
     /// Folder infected files are moved into; quarantine is off while it is unset. Needs writable scan roots.
     #[arg(long, env = "QUARANTINE_DIR", global = true)]
     pub quarantine_dir: Option<std::path::PathBuf>,
