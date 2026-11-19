@@ -156,7 +156,7 @@ func testSpringMCP(t *testing.T, h *harness, binary, password, token, clean, inf
 				}
 			}()
 			tools, err := session.ListTools(ctx, nil)
-			if err != nil || len(tools.Tools) != 5 {
+			if err != nil || len(tools.Tools) != 7 {
 				t.Fatal("native MCP discovery", err)
 			}
 			resources, err := session.ListResources(ctx, nil)
@@ -196,7 +196,7 @@ func testSpringMCP(t *testing.T, h *harness, binary, password, token, clean, inf
 			}
 			mcpCall(t, session, "clamav_scan_path", map[string]any{"path": "/outside/allowed/roots"}, true)
 			mcpCall(t, session, "clamav_scan_file", map[string]any{"file_path": serverPath}, true)
-			t.Log("Native stdio MCP passed all five tools and three resources with", mode, "authentication against Spring and synthetic ClamD.")
+			t.Log("Native stdio MCP passed all seven tools and three resources with", mode, "authentication against Spring and synthetic ClamD.")
 			if mode == "token" {
 				check := exec.CommandContext(ctx, "python3", filepath.Join("..", "..", "..", "scripts", "home-lab-mcp-test.py"), "--clamctl", binary, "--upload-root", filepath.Dir(clean), "--eicar-file", infected, "--server-path", serverPath)
 				check.Env = append(command.Env, "CLAMAV_SERVER="+h.server.URL, "CLAMAV_CA_FILE="+h.ca, "CLAMAV_CONFIG="+h.config)

@@ -54,24 +54,27 @@ Lost the admin password? Run `docker compose exec clamv-webui /app/clamv-webui r
 
 ## Agents
 
-1. In **Admin > Agents**, add an agent. The page shows its token once, plus a compose file for the agent host.
+1. Turn on HTTPS on the server (`TLS_SELF_SIGNED=true` is enough). In **Admin > Agents**, add an agent. The page shows its token once, plus a compose file for the agent host.
 2. On that host, save the token as `./agent_token` (`chown 10001`, `chmod 600`) and start `docker-compose.agent.yml` next to a clamd. The agent logs `agent.connected` once it reaches the server, or `agent.unreachable` with the reason.
 3. Pick the agent under **Run on** when you scan a path or add a schedule. Schedules with the EICAR control run that check on the agent too.
 
-The agent enforces its own `SCAN_ROOTS`. Jobs queued for an offline agent wait (and expire after a day). A job the agent loses is marked failed. Online and offline changes are logged as `agent.online` and `agent.offline`.
+The agent enforces its own `SCAN_ROOTS`. Jobs queued for an offline agent wait (and expire after a day); a schedule that queues for one logs `schedule.agent_offline` at once. While the server is away the agent holds results and events and sends them, in order, when it is back; a job the server gave up on (`AGENT_LOST`) still takes a late result. Online and offline changes are logged as `agent.online` and `agent.offline`. An agent on another protocol version shows as **version mismatch** with which side to update. A queued or running scan can be cancelled from its job page, `POST /api/v1/jobs/{id}/cancel` or `clamctl jobs cancel`.
 
 | Variable | Purpose |
 |---|---|
-| `AGENT_SERVER_URL` | The server, as the agent host reaches it |
+| `AGENT_SERVER_URL` | The server, as the agent host reaches it; must be `https://` |
 | `AGENT_TOKEN(_FILE)` | The agent's token |
 | `AGENT_SERVER_FINGERPRINT` | SHA-256 of the server certificate (logged at server start); trust exactly that certificate |
 | `AGENT_CA_FILE` | Or: a PEM CA bundle for the server certificate |
+| `AGENT_ALLOW_PLAINTEXT` | `true` accepts an `http://` server URL (token and results unencrypted); only for a private VPN or mesh |
+| `AGENT_QUEUE_DIR` | Writable folder that keeps unsent results across agent restarts (default: memory; up to 5,000 items or 64 MB) |
+| `CANARY_DIRS` | Folders where the server may have the agent write decoys; elsewhere a canary is only watched |
 | `REALTIME_PATHS` | Folders inside `SCAN_ROOTS` scanned as soon as files are written; results show up as watch jobs on the server |
 | `AGENT_ALLOW(_FILE)` | What this host lets the server ask for: `scan`, `canaries`, `checks`, `timers`, `baseline`, `firewall`, `quarantine` or `all` (default `scan,canaries,checks`); set only on the agent host |
 
 The agent writes its own JSON line for every job it runs (`agent.action`) or refuses (`agent.action_refused`), and limits each kind per hour (scans 600, canaries and checks 60, timers 20, firewall 6, baseline 4, quarantine 120); a refused or limited job fails with `AGENT_REFUSED` or `AGENT_RATE_LIMITED`. Firewall applies and baseline accepts stay off until that host enables them.
 
-`CLAMD_ENDPOINT`, `SCAN_ROOTS`, `SCAN_CONCURRENCY`, `CLAMD_MAX_STREAM_MB`, `CLAMD_CONF_FILE` (its `ExcludePath` rules), `CANARY_FILES`, `QUARANTINE_DIR`, `WATCH_REALTIME` and `LOG_*` apply to the agent as they do to the server. Plain `http://` works but sends the token unencrypted, so use it only over a VPN or mesh.
+`CLAMD_ENDPOINT`, `SCAN_ROOTS`, `SCAN_CONCURRENCY`, `CLAMD_MAX_STREAM_MB`, `CLAMD_CONF_FILE` (its `ExcludePath` rules), `CANARY_FILES`, `QUARANTINE_DIR`, `WATCH_REALTIME` and `LOG_*` apply to the agent as they do to the server. Changing `TLS_SELF_SIGNED_NAMES` makes a new certificate; the server logs `tls.cert_replaced` and Admin > Agents shows the new fingerprint every agent needs. Prometheus gets `clamav_agent_up`, `clamav_agent_last_seen_timestamp`, `clamav_agent_jobs_queued` and friends, one series per agent.
 
 ## Configuration
 

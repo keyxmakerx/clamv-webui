@@ -13,6 +13,7 @@ pub mod endpoints;
 pub mod firewall;
 pub mod integrations;
 pub mod integrity;
+pub mod jobcancel;
 pub mod mfa;
 pub mod oidc;
 pub mod passkeys;
@@ -63,6 +64,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(admin::routes())
         .merge(endpoints::routes())
         .merge(scan::routes())
+        .merge(jobcancel::routes())
         .merge(tokens::routes())
         .merge(agents::routes())
         .merge(clamdconf::routes())

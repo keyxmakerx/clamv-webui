@@ -506,6 +506,7 @@ pub async fn render(st: &AppState) -> String {
             o.line(alias, &[("slot", &i.to_string())], &num(v));
         }
     }
+    agent_gauges(st, &mut o).await;
     o.head(
         "clamav_clamd_endpoint_info",
         "gauge",
@@ -519,6 +520,59 @@ pub async fn render(st: &AppState) -> String {
         );
     }
     o.0
+}
+
+/// One series per agent: online, last poll, slots and its jobs.
+async fn agent_gauges(st: &AppState, o: &mut Out) {
+    let Ok(list) = st.db.list_agents().await else {
+        return;
+    };
+    let now = crate::db::now_ms();
+    let mut rows = Vec::with_capacity(list.len());
+    for a in &list {
+        let count = |status| async move {
+            st.db
+                .agent_jobs(a.id, status)
+                .await
+                .map_or(-1, |l| l.len() as i64)
+        };
+        rows.push((
+            a.name.clone(),
+            [
+                i64::from(crate::agent::is_online(a, now)),
+                a.last_seen_at.map_or(-1, |t| t / 1000),
+                a.slots,
+                count(crate::db::jobs::QUEUED).await,
+                count(crate::db::jobs::RUNNING).await,
+                i64::from(st.agents.version_hint(a.id).is_some()),
+                i64::from(a.enabled),
+            ],
+        ));
+    }
+    let names = [
+        (
+            "clamav_agent_up",
+            "1 when the agent polled in the last 90 s",
+        ),
+        (
+            "clamav_agent_last_seen_timestamp",
+            "Last poll, Unix seconds; -1 if never",
+        ),
+        ("clamav_agent_slots", "Jobs the agent runs at once"),
+        ("clamav_agent_jobs_queued", "Jobs waiting for the agent"),
+        ("clamav_agent_jobs_running", "Jobs the agent is running"),
+        (
+            "clamav_agent_version_mismatch",
+            "1 when the agent is refused for its protocol version",
+        ),
+        ("clamav_agent_enabled", "1 when the agent is enabled"),
+    ];
+    for (i, (name, help)) in names.iter().enumerate() {
+        o.head(name, "gauge", help);
+        for (agent, v) in &rows {
+            o.line(name, &[("agent", agent)], &v[i].to_string());
+        }
+    }
 }
 
 /// clamd prints memory as e.g. `565.123M`; K, M, G and T are powers of 1024.

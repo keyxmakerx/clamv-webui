@@ -155,7 +155,7 @@ func TestMCPDiscoveryToolsAndResources(t *testing.T) {
 	})
 	session := mcpSession(t, b.server("2.1.0"))
 	tools, err := session.ListTools(context.Background(), nil)
-	if err != nil || len(tools.Tools) != 5 {
+	if err != nil || len(tools.Tools) != 7 {
 		t.Fatal("tool discovery", err)
 	}
 	for _, tool := range tools.Tools {
@@ -163,7 +163,8 @@ func TestMCPDiscoveryToolsAndResources(t *testing.T) {
 			t.Error("missing schema", tool.Name)
 		}
 		isScan := strings.HasPrefix(tool.Name, "clamav_scan_")
-		if tool.Annotations == nil || tool.Annotations.ReadOnlyHint == isScan {
+		writes := isScan || tool.Name == "clamav_cancel_job"
+		if tool.Annotations == nil || tool.Annotations.ReadOnlyHint == writes {
 			t.Error("incorrect tool annotations", tool.Name)
 		}
 		if isScan && (tool.Annotations.DestructiveHint == nil || !*tool.Annotations.DestructiveHint) {

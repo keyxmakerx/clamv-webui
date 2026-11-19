@@ -833,6 +833,8 @@ struct JobDetail {
     error_code: String,
     error_message: String,
     refresh: bool,
+    /// Shows the Cancel button.
+    cancellable: bool,
 }
 
 impl JobDetail {
@@ -884,6 +886,7 @@ async fn job_page(State(st): State<Arc<AppState>>, auth: Auth, Path(id): Path<St
             error_code: job.error_code.clone().unwrap_or_default(),
             error_message: job.error_message.clone().unwrap_or_default(),
             refresh: job.status != jobs::FINISHED,
+            cancellable: crate::cancel::refuse(&job).is_none(),
         },
     )
 }

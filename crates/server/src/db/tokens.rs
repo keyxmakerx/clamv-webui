@@ -6,13 +6,15 @@ use sqlx::any::AnyRow;
 use super::{Db, DbError, now_ms};
 use crate::auth::token::{hash_secret, random_secret};
 
-pub const SCOPES: [&str; 6] = [
+pub const SCOPES: [&str; 8] = [
     "scan:upload",
     "scan:path",
     "jobs:read",
     "endpoints:read",
     "health:read",
     "audit:read",
+    "schedules:read",
+    "schedules:write",
 ];
 
 /// Every secret starts with this, so leaked tokens are easy to spot and grep.

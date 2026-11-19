@@ -113,7 +113,7 @@ func (c *apiClient) request(ctx context.Context, method, path string, query url.
 				Error string `json:"error"`
 			}
 			_ = json.Unmarshal(data, &problem)
-			if !oneOf(problem.Error, "unauthorized", "invalid_token", "tls_required", "forbidden", "invalid_request", "not_found", "request_failed", "internal_error", "upload_too_large", "rate_limit_exceeded", "rate_limited") {
+			if !oneOf(problem.Error, "unauthorized", "invalid_token", "tls_required", "forbidden", "invalid_request", "not_found", "request_failed", "internal_error", "upload_too_large", "rate_limit_exceeded", "rate_limited", "conflict") {
 				problem.Error = http.StatusText(response.StatusCode)
 			}
 			return fmt.Errorf("API returned HTTP %d (%s)", response.StatusCode, problem.Error)

@@ -291,6 +291,8 @@ pub async fn pick_endpoint(st: &AppState, id: Option<i64>) -> Option<Endpoint> {
 pub struct Runner {
     wake: Notify,
     permits: Arc<Semaphore>,
+    /// Stops a running local job when it is cancelled.
+    stops: std::sync::Mutex<std::collections::HashMap<String, tokio::sync::oneshot::Sender<()>>>,
 }
 
 impl Runner {
@@ -298,6 +300,15 @@ impl Runner {
         Self {
             wake: Notify::new(),
             permits: Arc::new(Semaphore::new(concurrency.max(1))),
+            stops: std::sync::Mutex::default(),
+        }
+    }
+
+    /// Stop a running local job; true if one was running.
+    pub fn stop(&self, id: &str) -> bool {
+        match self.stops.lock().ok().and_then(|mut g| g.remove(id)) {
+            Some(tx) => tx.send(()).is_ok(),
+            None => false,
         }
     }
 
@@ -350,8 +361,20 @@ async fn dispatch(st: &Arc<AppState>) {
         };
         match st.db.claim_job(&id).await {
             Ok(true) => {
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                if let Ok(mut g) = st.runner.stops.lock() {
+                    g.insert(id.clone(), tx);
+                }
                 let st = st.clone();
-                tokio::spawn(async move { run(st, id, permit).await });
+                tokio::spawn(async move {
+                    tokio::select! {
+                        () = run(st.clone(), id.clone(), permit) => {}
+                        Ok(()) = rx => tracing::info!(job_id = %id, "cancelled scan stopped"),
+                    }
+                    if let Ok(mut g) = st.runner.stops.lock() {
+                        g.remove(&id);
+                    }
+                });
             }
             Ok(false) => {}
             Err(e) => tracing::warn!(error = %e, job_id = %id, "claim failed"),

@@ -1,11 +1,31 @@
-//! Wire format between agent and server. Bump `PROTOCOL` on any breaking change.
+//! Wire format between agent and server. Bump `PROTOCOL` when a job kind or field is added.
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL: u32 = 1;
+/// 2: agents list the job kinds they run, the server can cancel running jobs.
+pub const PROTOCOL: u32 = 2;
+/// Oldest agent protocol the server still talks to.
+pub const MIN_PROTOCOL: u32 = 1;
+
+/// Job kinds a protocol-1 agent runs (it does not list them).
+pub const LEGACY_KINDS: [&str; 5] = [
+    crate::scan::KIND_PATH,
+    crate::schedule::KIND_CONTROL,
+    crate::hostchecks::KIND,
+    crate::firewall::KIND,
+    crate::quarantine::KIND,
+];
+
+/// Job kinds this build's agent runs.
+pub const KINDS: [&str; 5] = LEGACY_KINDS;
+
+/// Failure code from an agent that does not know a job kind.
+pub const UNSUPPORTED: &str = "AGENT_UNSUPPORTED";
 
 /// Entries kept from one report; the rest are dropped with a note.
 const MAX_ENTRIES: usize = 20_000;
+/// The server refuses agent bodies over 32 MiB; agents trim reports to this first.
+pub const MAX_BODY: usize = 24 * 1024 * 1024;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PollRequest {
@@ -31,6 +51,9 @@ pub struct PollRequest {
     /// Which clamv host-check units this host has, read every few minutes.
     #[serde(default)]
     pub host_checks: Option<crate::hostchecks::UnitStates>,
+    /// Job kinds this agent runs (protocol 2+).
+    #[serde(default)]
+    pub kinds: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,6 +68,9 @@ pub struct PollResponse {
     /// The canaries an admin set for this agent (on top of its CANARY_FILES).
     #[serde(default)]
     pub canaries: Option<Vec<crate::canary::Spec>>,
+    /// Running jobs to stop at once: cancelled on the server.
+    #[serde(default)]
+    pub cancel: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,6 +173,40 @@ impl Report {
         }
     }
 
+    /// Trim to what the server accepts: detections are kept first, then errors, with a note for the rest.
+    pub fn fit(&mut self, max_bytes: usize) {
+        let size = |e: &Entry| e.path.len() + e.text.len() + 32;
+        for e in self.detections.iter_mut().chain(self.errors.iter_mut()) {
+            e.path = clean(&e.path, 4096);
+            e.text = clean(&e.text, 512);
+        }
+        let mut budget = max_bytes.saturating_sub(4096);
+        let mut dropped = 0usize;
+        let mut keep = |list: &mut Vec<Entry>| {
+            let mut n = 0;
+            for e in list.iter() {
+                let s = size(e);
+                if n >= MAX_ENTRIES || s > budget {
+                    break;
+                }
+                budget -= s;
+                n += 1;
+            }
+            dropped += list.len() - n;
+            list.truncate(n);
+        };
+        keep(&mut self.detections);
+        keep(&mut self.errors);
+        if dropped > 0 {
+            self.errors.push(Entry {
+                path: String::new(),
+                text: format!(
+                    "{dropped} more result line(s) were dropped by the agent; its log has them all."
+                ),
+            });
+        }
+    }
+
     /// Back to a clamd report, with sizes bounded: the agent is trusted to scan, not to fill the database.
     pub fn into_report(self) -> clamd::ScanReport {
         let dropped = self.detections.len().saturating_sub(MAX_ENTRIES)
@@ -185,6 +245,32 @@ impl Report {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reports_fit_the_server_limit() {
+        let mut r = Report {
+            ok: 3,
+            detections: vec![Entry {
+                path: "/d/x".into(),
+                text: "Eicar".into(),
+            }],
+            errors: (0..50_000)
+                .map(|i| Entry {
+                    path: format!("/d/{i}/{}", "p".repeat(400)),
+                    text: "Permission denied".into(),
+                })
+                .collect(),
+        };
+        r.fit(1024 * 1024);
+        let body = serde_json::to_vec(&r).expect("json");
+        assert!(body.len() < 1024 * 1024, "{}", body.len());
+        assert_eq!(r.detections.len(), 1, "detections kept first");
+        assert!(
+            r.errors
+                .last()
+                .is_some_and(|e| e.text.contains("dropped by the agent"))
+        );
+    }
 
     #[test]
     fn reports_are_bounded_and_cleaned() {
