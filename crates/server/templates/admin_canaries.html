@@ -1,39 +1,39 @@
 {% extends "shell.html" %}
-{% block title %}Canaries · ClamAV Web UI{% endblock %}
+{% block title %}{{ nav.t("Canaries · ClamAV Web UI") }}{% endblock %}
 {% block content %}
-<h1 class="h3">Canary files</h1>
-<p class="muted">Decoys nobody should touch. Opening, changing or deleting one raises an alert at once. Put them next to what they guard (a share, a home folder, a backup target) but outside scanned folders, because scans open every file.</p>
+<h1 class="h3">{{ nav.t("Canary files") }}</h1>
+<p class="muted">{{ nav.t("Decoys nobody should touch. Opening, changing or deleting one raises an alert at once. Put them next to what they guard (a share, a home folder, a backup target) but outside scanned folders, because scans open every file.") }}</p>
 <section class="card mt-3"><div class="card-body">
-<h2 class="h5">Add a canary</h2>
+<h2 class="h5">{{ nav.t("Add a canary") }}</h2>
 <form method="post" action="/admin/canaries" class="row g-3 align-items-end">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
-<div class="col-md-3"><label class="form-label" for="ch">Host</label><select class="form-select" id="ch" name="host">
+<div class="col-md-3"><label class="form-label" for="ch">{{ nav.t("Host") }}</label><select class="form-select" id="ch" name="host">
 {% for (v, l) in hosts %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div>
-<div class="col-md-5"><label class="form-label" for="cp">File</label><input class="form-control" id="cp" name="path" required maxlength="1024" placeholder="/srv/share/finance/passwords.xlsx" autocomplete="off"></div>
-<div class="col-md-2"><label class="form-check-label small"><input class="form-check-input" type="checkbox" name="create" value="1" checked> write a decoy if missing</label></div>
-<div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Add</button></div>
+<div class="col-md-5"><label class="form-label" for="cp">{{ nav.t("File") }}</label><input class="form-control" id="cp" name="path" required maxlength="1024" placeholder="{{ nav.t("/srv/share/finance/passwords.xlsx") }}" autocomplete="off"></div>
+<div class="col-md-2"><label class="form-check-label small"><input class="form-check-input" type="checkbox" name="create" value="1" checked> {{ nav.t("write a decoy if missing") }}</label></div>
+<div class="col-md-2"><button class="btn btn-primary w-100" type="submit">{{ nav.t("Add") }}</button></div>
 </form>
 </div></section>
 <section class="card mt-3"><div class="card-body table-responsive">
 <table class="table table-sm align-middle">
-<thead><tr><th>Host</th><th>File</th><th>State</th><th>Last touched</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+<thead><tr><th>{{ nav.t("Host") }}</th><th>{{ nav.t("File") }}</th><th>{{ nav.t("State") }}</th><th>{{ nav.t("Last touched") }}</th><th><span class="visually-hidden">{{ nav.t("Actions") }}</span></th></tr></thead>
 <tbody>
 {% for r in rows %}<tr>
 <td class="small">{{ r.host }}</td>
-<td class="path"><strong>{{ crate::web::wbr(r.path)|safe }}</strong>{% if r.fixed %} <span class="badge bg-secondary">CANARY_FILES</span>{% endif %}{% if r.created %} <span class="badge bg-secondary">decoy written</span>{% endif %}
-<details class="small mt-1"><summary class="muted">Name who touched it (auditd)</summary><p class="mb-1">On the host, add this rule and mount <code>/var/log/audit</code> read-only into the container:</p><code class="d-block text-break">{{ r.rule }}</code></details></td>
-<td>{% if r.state == "armed" %}<span class="badge bg-success">armed</span>{% else if r.state == "missing" %}<span class="badge bg-danger">missing</span>{% else %}<span class="badge bg-secondary">waiting for host</span>{% endif %}</td>
-<td class="small">{% if r.tripped.is_empty() %}<span class="muted">never</span>{% else %}<span class="text-danger">{{ r.tripped }}</span>{% endif %}</td>
-<td>{% if !r.fixed %}<div class="d-flex gap-2"><details class="edit"><summary class="btn btn-sm btn-outline-secondary">Edit</summary>
+<td class="path"><strong>{{ crate::web::wbr(r.path)|safe }}</strong>{% if r.fixed %} <span class="badge bg-secondary">CANARY_FILES</span>{% endif %}{% if r.created %} <span class="badge bg-secondary">{{ nav.t("decoy written") }}</span>{% endif %}
+<details class="small mt-1"><summary class="muted">{{ nav.t("Name who touched it (auditd)") }}</summary><p class="mb-1">{{ nav.t("On the host, add this rule and mount") }} <code>/var/log/audit</code> {{ nav.t("read-only into the container:") }}</p><code class="d-block text-break">{{ r.rule }}</code></details></td>
+<td>{% if r.state == "armed" %}<span class="badge bg-success">{{ nav.t("armed") }}</span>{% else if r.state == "missing" %}<span class="badge bg-danger">{{ nav.t("missing") }}</span>{% else %}<span class="badge bg-secondary">{{ nav.t("waiting for host") }}</span>{% endif %}</td>
+<td class="small">{% if r.tripped.is_empty() %}<span class="muted">{{ nav.t("never") }}</span>{% else %}<span class="text-danger">{{ r.tripped }}</span>{% endif %}</td>
+<td>{% if !r.fixed %}<div class="d-flex gap-2"><details class="edit"><summary class="btn btn-sm btn-outline-secondary">{{ nav.t("Edit") }}</summary>
 <form method="post" action="/admin/canaries/{{ r.id }}/edit" class="edit-form">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
-<label class="form-label" for="cp-{{ r.id }}">File on {{ r.host }}</label><input class="form-control form-control-sm" id="cp-{{ r.id }}" name="path" required maxlength="1024" value="{{ r.path }}" autocomplete="off">
-<label class="form-check-label small mt-2"><input class="form-check-input" type="checkbox" name="create" value="1"{% if r.created %} checked{% endif %}> write a decoy if missing</label>
-<div class="small muted mt-1">The old file stays where it is.</div>
-<div class="mt-2"><button class="btn btn-sm btn-primary" type="submit">Save</button></div>
+<label class="form-label" for="cp-{{ r.id }}">{{ nav.t("File on") }} {{ r.host }}</label><input class="form-control form-control-sm" id="cp-{{ r.id }}" name="path" required maxlength="1024" value="{{ r.path }}" autocomplete="off">
+<label class="form-check-label small mt-2"><input class="form-check-input" type="checkbox" name="create" value="1"{% if r.created %} checked{% endif %}> {{ nav.t("write a decoy if missing") }}</label>
+<div class="small muted mt-1">{{ nav.t("The old file stays where it is.") }}</div>
+<div class="mt-2"><button class="btn btn-sm btn-primary" type="submit">{{ nav.t("Save") }}</button></div>
 </form></details>
-<form method="post" action="/admin/canaries/{{ r.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form></div>{% endif %}</td>
-</tr>{% else %}<tr><td colspan="5" class="muted">No canaries yet. {{ server }} and every agent can have up to 50.</td></tr>{% endfor %}
+<form method="post" action="/admin/canaries/{{ r.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">{{ nav.t("Remove") }}</button></form></div>{% endif %}</td>
+</tr>{% else %}<tr><td colspan="5" class="muted">{{ nav.t("No canaries yet.") }} {{ server }} {{ nav.t("and every agent can have up to 50.") }}</td></tr>{% endfor %}
 </tbody></table>
 </div></section>
 {% endblock %}

@@ -1,5 +1,6 @@
-//! UI translations. Templates wrap text in `nav.t("...")`; the English text is
-//! the key, so a string without a translation shows in English.
+//! UI translations. Templates wrap text in `nav.t("...")` (signed-in pages) or
+//! `crate::i18n::tr("...")` (sign-in and error pages); the English text is the
+//! key, so a string without a translation shows in English.
 //!
 //! To add a language: copy `i18n/en.json` to `i18n/<code>.json`, translate the
 //! values, and add one line to `LANGS`.
@@ -11,7 +12,44 @@ use std::sync::LazyLock;
 pub const COOKIE: &str = "clamv_lang";
 
 /// (code, name in that language, catalog).
-pub const LANGS: &[(&str, &str, &str)] = &[("en", "English", include_str!("../i18n/en.json"))];
+pub const LANGS: &[(&str, &str, &str)] = &[
+    ("en", "English", include_str!("../i18n/en.json")),
+    ("uk", "Українська", include_str!("../i18n/uk.json")),
+    ("ro", "Română", include_str!("../i18n/ro.json")),
+    ("fr", "Français", include_str!("../i18n/fr.json")),
+    ("es", "Español", include_str!("../i18n/es.json")),
+    ("de", "Deutsch", include_str!("../i18n/de.json")),
+];
+
+tokio::task_local! {
+    /// The language of the request being handled, set by [`layer`].
+    static LANG: &'static str;
+}
+
+/// The current request's language, or English outside a request.
+pub fn current() -> &'static str {
+    LANG.try_with(|l| *l).unwrap_or("en")
+}
+
+/// `s` in the current request's language.
+pub fn tr(s: &str) -> &str {
+    t(current(), s)
+}
+
+/// Middleware: picks the language from the cookie or the browser for pages
+/// that have no signed-in session, such as sign-in and error pages.
+pub async fn layer(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let h = req.headers();
+    let lang = pick(
+        crate::web::session::cookie(h, COOKIE).as_deref(),
+        h.get(axum::http::header::ACCEPT_LANGUAGE)
+            .and_then(|v| v.to_str().ok()),
+    );
+    LANG.scope(lang, next.run(req)).await
+}
 
 static CATALOGS: LazyLock<HashMap<&'static str, HashMap<String, String>>> = LazyLock::new(|| {
     LANGS
@@ -77,7 +115,9 @@ mod tests {
     #[test]
     fn cookie_then_browser_then_english() {
         assert_eq!(pick(Some("en"), Some("de")), "en");
+        assert_eq!(pick(Some("UK"), None), "uk");
         assert_eq!(pick(Some("xx"), Some("fr;q=0.5, en-GB;q=0.9")), "en");
+        assert_eq!(pick(None, Some("de-AT, fr;q=0.8")), "de");
         assert_eq!(pick(None, Some("zz")), "en");
         assert_eq!(pick(None, None), "en");
     }
@@ -88,28 +128,37 @@ mod tests {
         assert_eq!(t("xx", "No such string"), "No such string");
     }
 
-    /// Every catalog is valid JSON and every `nav.t("...")` string in the
-    /// templates is listed in `en.json`, so translators see the full set.
+    /// Every catalog is valid JSON, `en.json` lists every string the templates
+    /// translate, and every other catalog has exactly the English keys.
     #[test]
     fn catalogs_cover_the_templates() {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/templates");
         let mut used = std::collections::BTreeSet::new();
         for e in std::fs::read_dir(dir).expect("templates") {
             let text = std::fs::read_to_string(e.expect("entry").path()).expect("read");
-            for part in text.split("nav.t(\"").skip(1) {
-                used.insert(part.split("\")").next().expect("close").to_owned());
+            for open in ["nav.t(\"", "i18n::tr(\""] {
+                for part in text.split(open).skip(1) {
+                    used.insert(part.split("\")").next().expect("close").to_owned());
+                }
             }
         }
-        for (code, _, raw) in LANGS {
+        let keys = |raw: &str| -> std::collections::BTreeSet<String> {
             let m: HashMap<String, String> = serde_json::from_str(raw).expect("valid catalog");
-            if *code == "en" {
-                let listed: std::collections::BTreeSet<String> = m.keys().cloned().collect();
-                assert_eq!(
-                    listed, used,
-                    "i18n/en.json must list exactly the template strings"
-                );
-            }
-            assert!(m.keys().all(|k| used.contains(k)), "{code}: unused keys");
+            m.into_keys().collect()
+        };
+        let en = keys(LANGS[0].2);
+        assert_eq!(
+            en, used,
+            "i18n/en.json must list exactly the template strings"
+        );
+        for (code, _, raw) in &LANGS[1..] {
+            let k = keys(raw);
+            let missing: Vec<_> = en.difference(&k).collect();
+            let extra: Vec<_> = k.difference(&en).collect();
+            assert!(
+                missing.is_empty() && extra.is_empty(),
+                "{code}: missing {missing:?}, extra {extra:?}"
+            );
         }
     }
 }

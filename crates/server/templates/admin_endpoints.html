@@ -1,46 +1,46 @@
 {% extends "shell.html" %}
-{% block title %}clamd Endpoints · ClamAV Web UI{% endblock %}
+{% block title %}{{ nav.t("clamd Endpoints · ClamAV Web UI") }}{% endblock %}
 {% block content %}
-<h1 class="h3">clamd endpoints</h1>
+<h1 class="h3">{{ nav.t("clamd endpoints") }}</h1>
 <section class="card mt-3"><div class="card-body">
-<h2 class="h5">Add endpoint</h2>
+<h2 class="h5">{{ nav.t("Add endpoint") }}</h2>
 <form method="post" action="/admin/endpoints" class="row g-2 align-items-end">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
-<div class="col-md-3"><label class="form-label" for="en">Name</label><input class="form-control" id="en" name="name" required maxlength="64" autocomplete="off"></div>
-<div class="col-md-5"><label class="form-label" for="ea">Address</label><input class="form-control" id="ea" name="address" required maxlength="512" placeholder="tcp://clamav:3310" autocomplete="off"></div>
-<div class="col-md-2"><label class="form-check-label small"><input class="form-check-input" type="checkbox" name="make_default" value="1"> make default</label></div>
-<div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Add</button></div>
+<div class="col-md-3"><label class="form-label" for="en">{{ nav.t("Name") }}</label><input class="form-control" id="en" name="name" required maxlength="64" autocomplete="off"></div>
+<div class="col-md-5"><label class="form-label" for="ea">{{ nav.t("Address") }}</label><input class="form-control" id="ea" name="address" required maxlength="512" placeholder="{{ nav.t("tcp://clamav:3310") }}" autocomplete="off"></div>
+<div class="col-md-2"><label class="form-check-label small"><input class="form-check-input" type="checkbox" name="make_default" value="1"> {{ nav.t("make default") }}</label></div>
+<div class="col-md-2"><button class="btn btn-primary w-100" type="submit">{{ nav.t("Add") }}</button></div>
 </form>
-{% if allowlist.is_empty() %}<p class="muted small mt-2">Only the host of CLAMD_ENDPOINT is allowed. Set CLAMD_HOST_ALLOWLIST to add others.</p>
-{% else %}<p class="muted small mt-2">Allowed hosts: <code>{{ allowlist }}</code></p>{% endif %}
+{% if allowlist.is_empty() %}<p class="muted small mt-2">{{ nav.t("Only the host of CLAMD_ENDPOINT is allowed. Set CLAMD_HOST_ALLOWLIST to add others.") }}</p>
+{% else %}<p class="muted small mt-2">{{ nav.t("Allowed hosts:") }} <code>{{ allowlist }}</code></p>{% endif %}
 </div></section>
 <section class="card mt-3"><div class="card-body table-responsive">
 <table class="table align-middle">
-<thead><tr><th>Name</th><th>Address</th><th>Enabled</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+<thead><tr><th>{{ nav.t("Name") }}</th><th>{{ nav.t("Address") }}</th><th>{{ nav.t("Enabled") }}</th><th><span class="visually-hidden">{{ nav.t("Actions") }}</span></th></tr></thead>
 <tbody>
 {% for e in endpoints %}
 <tr>
-<td><strong>{{ e.name }}</strong>{% if e.is_default %} <span class="badge bg-primary">default</span>{% endif %}</td>
+<td><strong>{{ e.name }}</strong>{% if e.is_default %} <span class="badge bg-primary">{{ nav.t("default") }}</span>{% endif %}</td>
 <td><code>{{ e.address }}</code></td>
-<td>{% if e.is_default %}<span class="muted small">always</span>{% else %}<form method="post" action="/admin/endpoints/{{ e.id }}/enabled" class="d-flex gap-2 align-items-center">
+<td>{% if e.is_default %}<span class="muted small">{{ nav.t("always") }}</span>{% else %}<form method="post" action="/admin/endpoints/{{ e.id }}/enabled" class="d-flex gap-2 align-items-center">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
-<label class="form-check-label small"><input class="form-check-input" type="checkbox" name="enabled" value="1"{% if e.enabled %} checked{% endif %}> enabled</label>
-<button class="btn btn-sm btn-outline-primary" type="submit">Save</button></form>{% endif %}</td>
+<label class="form-check-label small"><input class="form-check-input" type="checkbox" name="enabled" value="1"{% if e.enabled %} checked{% endif %}> {{ nav.t("enabled") }}</label>
+<button class="btn btn-sm btn-outline-primary" type="submit">{{ nav.t("Save") }}</button></form>{% endif %}</td>
 <td><div class="d-flex gap-2 flex-wrap">
-<details class="edit"><summary class="btn btn-sm btn-outline-secondary">Edit</summary>
+<details class="edit"><summary class="btn btn-sm btn-outline-secondary">{{ nav.t("Edit") }}</summary>
 <form method="post" action="/admin/endpoints/{{ e.id }}/edit" class="edit-form">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
-<label class="form-label" for="en-{{ e.id }}">Name</label><input class="form-control form-control-sm" id="en-{{ e.id }}" name="name" required maxlength="64" value="{{ e.name }}" autocomplete="off">
-<label class="form-label mt-2" for="ea-{{ e.id }}">Address</label><input class="form-control form-control-sm" id="ea-{{ e.id }}" name="address" required maxlength="512" value="{{ e.address }}" autocomplete="off">
-<div class="mt-2"><button class="btn btn-sm btn-primary" type="submit">Save</button></div>
+<label class="form-label" for="en-{{ e.id }}">{{ nav.t("Name") }}</label><input class="form-control form-control-sm" id="en-{{ e.id }}" name="name" required maxlength="64" value="{{ e.name }}" autocomplete="off">
+<label class="form-label mt-2" for="ea-{{ e.id }}">{{ nav.t("Address") }}</label><input class="form-control form-control-sm" id="ea-{{ e.id }}" name="address" required maxlength="512" value="{{ e.address }}" autocomplete="off">
+<div class="mt-2"><button class="btn btn-sm btn-primary" type="submit">{{ nav.t("Save") }}</button></div>
 </form></details>
-<form method="post" action="/admin/endpoints/{{ e.id }}/test"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-secondary" type="submit">Test</button></form>
-{% if !e.is_default %}<form method="post" action="/admin/endpoints/{{ e.id }}/default"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-secondary" type="submit">Make default</button></form>
-<form method="post" action="/admin/endpoints/{{ e.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Delete</button></form>{% endif %}
+<form method="post" action="/admin/endpoints/{{ e.id }}/test"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-secondary" type="submit">{{ nav.t("Test") }}</button></form>
+{% if !e.is_default %}<form method="post" action="/admin/endpoints/{{ e.id }}/default"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-secondary" type="submit">{{ nav.t("Make default") }}</button></form>
+<form method="post" action="/admin/endpoints/{{ e.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">{{ nav.t("Delete") }}</button></form>{% endif %}
 </div></td>
 </tr>
 {% endfor %}
 </tbody></table>
-<p class="muted small">Manual scans and schedules use the default endpoint unless they name another.</p>
+<p class="muted small">{{ nav.t("Manual scans and schedules use the default endpoint unless they name another.") }}</p>
 </div></section>
 {% endblock %}

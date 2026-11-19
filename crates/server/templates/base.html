@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="{% block lang %}en{% endblock %}">
+<html lang="{% block lang %}{{ crate::i18n::current() }}{% endblock %}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">

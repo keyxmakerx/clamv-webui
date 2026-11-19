@@ -1,86 +1,86 @@
 {% extends "shell.html" %}
-{% block title %}Firewall · ClamAV Web UI{% endblock %}
+{% block title %}{{ nav.t("Firewall · ClamAV Web UI") }}{% endblock %}
 {% block content %}
-<h1 class="h3">Firewall</h1>
-<p class="muted">clamv writes only its own rules: through ufw or firewalld when the host uses one, otherwise its own nftables table, <code>inet clamv</code>. Rules anything else made, Docker's and CrowdSec's included, are shown here read-only and never touched. Applying or removing needs your passkey, and an apply rolls back on the host after 90 s unless clamv confirms it can still reach it.</p>
+<h1 class="h3">{{ nav.t("Firewall") }}</h1>
+<p class="muted">{{ nav.t("clamv writes only its own rules: through ufw or firewalld when the host uses one, otherwise its own nftables table,") }} <code>inet clamv</code>{{ nav.t(". Rules anything else made, Docker's and CrowdSec's included, are shown here read-only and never touched. Applying or removing needs your passkey, and an apply rolls back on the host after 90 s unless clamv confirms it can still reach it.") }}</p>
 <div class="filter-chips mb-3">{% for c in chips %}<a class="chip{% if c.active %} active{% endif %}" href="/admin/firewall{% if !c.value.is_empty() %}?host={{ c.value }}{% endif %}"{% if c.active %} aria-current="page"{% endif %}>{{ c.label }}</a>{% endfor %}</div>
 <div id="passkey-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
 <div id="stepup-ok" class="alert alert-success py-2 small d-none" role="status"></div>
 <div id="r-fw" data-refresh-region{% if pending %} data-refresh="5" data-refresh-hidden{% endif %}>
-{% if confirmed %}<div class="alert alert-success py-2 small" role="status">Plan confirmed: you can still reach this server.</div>{% endif %}
-{% if pending %}<div class="alert alert-warning py-2 small" role="status">Waiting for this server to load the plan; this part of the page updates every 5 s to confirm you still reach it.</div>{% endif %}
+{% if confirmed %}<div class="alert alert-success py-2 small" role="status">{{ nav.t("Plan confirmed: you can still reach this server.") }}</div>{% endif %}
+{% if pending %}<div class="alert alert-warning py-2 small" role="status">{{ nav.t("Waiting for this server to load the plan; this part of the page updates every 5 s to confirm you still reach it.") }}</div>{% endif %}
 
 <h2 class="h5 mt-3">{{ host_name }}</h2>
 <section class="card mt-2"><div class="card-body">
-{% if !has_snapshot %}<p class="muted mb-2">No snapshot from this host yet. It needs the clamv firewall units (<code>host-setup</code>) and <code>{{ dir }}</code> mounted read-write.</p>
+{% if !has_snapshot %}<p class="muted mb-2">{{ nav.t("No snapshot from this host yet. It needs the clamv firewall units (") }}<code>host-setup</code>{{ nav.t(") and") }} <code>{{ dir }}</code> {{ nav.t("mounted read-write.") }}</p>
 {% else %}
 <dl class="row small mb-2">
-<dt class="col-sm-3">Read</dt><dd class="col-sm-9">{{ read }} ago</dd>
-<dt class="col-sm-3">nftables</dt><dd class="col-sm-9">{% if nft %}<span class="badge bg-success">present</span>{% else %}<span class="badge bg-secondary">not found</span>{% endif %}</dd>
-<dt class="col-sm-3">Other rule owners</dt><dd class="col-sm-9">{% for o in owners %}<span class="badge bg-info text-dark">{{ o }}</span> {% else %}<span class="muted">none</span>{% endfor %}</dd>
-<dt class="col-sm-3">ufw</dt><dd class="col-sm-9">{% if ufw.is_empty() %}<span class="muted">not installed</span>{% else %}{{ ufw }}{% endif %}</dd>
-<dt class="col-sm-3">firewalld</dt><dd class="col-sm-9">{% if firewalld.is_empty() %}<span class="muted">not installed</span>{% else %}{{ firewalld }}{% endif %}</dd>
-<dt class="col-sm-3">clamv writes through</dt><dd class="col-sm-9">{{ backend }}{% if backend == "ufw" %} <span class="muted">(rules commented "clamv", placed above the host's own)</span>{% else if backend == "firewalld" %} <span class="muted">(rich rules in the default zone, saved once confirmed)</span>{% else %} <span class="muted">(its own table, inet clamv)</span>{% endif %}</dd>
-<dt class="col-sm-3">SELinux</dt><dd class="col-sm-9">{% if selinux.is_empty() %}<span class="muted">not present</span>{% else %}{{ selinux }}{% endif %}</dd>
-{% if !status.is_empty() %}<dt class="col-sm-3">Last apply</dt><dd class="col-sm-9"><span class="badge {% if status_ok %}bg-success{% else %}bg-warning text-dark{% endif %}">{{ status }}</span> <span class="muted">{{ status_at }}</span></dd>{% endif %}
+<dt class="col-sm-3">{{ nav.t("Read") }}</dt><dd class="col-sm-9">{{ read }} {{ nav.t("ago") }}</dd>
+<dt class="col-sm-3">nftables</dt><dd class="col-sm-9">{% if nft %}<span class="badge bg-success">{{ nav.t("present") }}</span>{% else %}<span class="badge bg-secondary">{{ nav.t("not found") }}</span>{% endif %}</dd>
+<dt class="col-sm-3">{{ nav.t("Other rule owners") }}</dt><dd class="col-sm-9">{% for o in owners %}<span class="badge bg-info text-dark">{{ o }}</span> {% else %}<span class="muted">{{ nav.t("none") }}</span>{% endfor %}</dd>
+<dt class="col-sm-3">ufw</dt><dd class="col-sm-9">{% if ufw.is_empty() %}<span class="muted">{{ nav.t("not installed") }}</span>{% else %}{{ ufw }}{% endif %}</dd>
+<dt class="col-sm-3">firewalld</dt><dd class="col-sm-9">{% if firewalld.is_empty() %}<span class="muted">{{ nav.t("not installed") }}</span>{% else %}{{ firewalld }}{% endif %}</dd>
+<dt class="col-sm-3">{{ nav.t("clamv writes through") }}</dt><dd class="col-sm-9">{{ backend }}{% if backend == "ufw" %} <span class="muted">{{ nav.t("(rules commented “clamv”, placed above the host's own)") }}</span>{% else if backend == "firewalld" %} <span class="muted">{{ nav.t("(rich rules in the default zone, saved once confirmed)") }}</span>{% else %} <span class="muted">{{ nav.t("(its own table, inet clamv)") }}</span>{% endif %}</dd>
+<dt class="col-sm-3">SELinux</dt><dd class="col-sm-9">{% if selinux.is_empty() %}<span class="muted">{{ nav.t("not present") }}</span>{% else %}{{ selinux }}{% endif %}</dd>
+{% if !status.is_empty() %}<dt class="col-sm-3">{{ nav.t("Last apply") }}</dt><dd class="col-sm-9"><span class="badge {% if status_ok %}bg-success{% else %}bg-warning text-dark{% endif %}">{{ status }}</span> <span class="muted">{{ status_at }}</span></dd>{% endif %}
 </dl>
-{% if legacy_rules > 0 %}<div class="alert alert-warning py-2 small">{{ legacy_rules }} iptables-legacy rule(s) also filter traffic outside nftables; clamv's table cannot override them.</div>{% endif %}
+{% if legacy_rules > 0 %}<div class="alert alert-warning py-2 small">{{ legacy_rules }} {{ nav.t("iptables-legacy rule(s) also filter traffic outside nftables; clamv's table cannot override them.") }}</div>{% endif %}
 {% endif %}
-<form class="d-inline" method="post" action="/admin/firewall/refresh"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ host }}"><button class="btn btn-sm btn-outline-secondary" type="submit"><i class="fas fa-sync" aria-hidden="true"></i> Read now</button></form>
+<form class="d-inline" method="post" action="/admin/firewall/refresh"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ host }}"><button class="btn btn-sm btn-outline-secondary" type="submit"><i class="fas fa-sync" aria-hidden="true"></i> {{ nav.t("Read now") }}</button></form>
 </div></section>
 </div>
 
-<h2 class="h5 mt-4">Listening ports</h2>
-<p class="muted">Ports published by Docker containers pass through Docker's own chains before this table sees them; clamv does not change those. Restrict them in the compose file instead.</p>
+<h2 class="h5 mt-4">{{ nav.t("Listening ports") }}</h2>
+<p class="muted">{{ nav.t("Ports published by Docker containers pass through Docker's own chains before this table sees them; clamv does not change those. Restrict them in the compose file instead.") }}</p>
 <section class="card mt-2"><div class="card-body table-responsive">
 <table class="table table-sm align-middle">
-<thead><tr><th>Port</th><th>Address</th><th>Process</th><th>With clamv's plan</th></tr></thead>
+<thead><tr><th>{{ nav.t("Port") }}</th><th>{{ nav.t("Address") }}</th><th>{{ nav.t("Process") }}</th><th>{{ nav.t("With clamv's plan") }}</th></tr></thead>
 <tbody>
 {% for p in ports %}<tr>
 <td class="small text-nowrap">{{ p.port }}/{{ p.proto }}</td>
 <td class="small"><code>{{ p.addr }}</code></td>
 <td class="small text-break">{{ p.process }}</td>
 <td class="small">{% if p.exposed %}{{ p.plan }}{% else %}<span class="muted">{{ p.plan }}</span>{% endif %}</td>
-</tr>{% else %}<tr><td colspan="4" class="muted">Nothing read yet.</td></tr>{% endfor %}
+</tr>{% else %}<tr><td colspan="4" class="muted">{{ nav.t("Nothing read yet.") }}</td></tr>{% endfor %}
 </tbody></table>
 </div></section>
 
-<h2 class="h5 mt-4">Rules owned by others</h2>
+<h2 class="h5 mt-4">{{ nav.t("Rules owned by others") }}</h2>
 <section class="card mt-2"><div class="card-body table-responsive">
 <table class="table table-sm align-middle">
-<thead><tr><th>Table</th><th>Owner</th><th>Chains</th></tr></thead>
+<thead><tr><th>{{ nav.t("Table") }}</th><th>{{ nav.t("Owner") }}</th><th>{{ nav.t("Chains") }}</th></tr></thead>
 <tbody>
 {% for t in tables %}<tr>
 <td class="small"><code>{{ t.family }} {{ t.name }}</code></td>
-<td>{% if t.owner == "clamv" %}<span class="badge bg-primary">clamv</span>{% else %}<span class="badge bg-secondary">{{ t.owner }}</span> <span class="muted small">read-only</span>{% endif %}</td>
+<td>{% if t.owner == "clamv" %}<span class="badge bg-primary">{{ nav.t("clamv") }}</span>{% else %}<span class="badge bg-secondary">{{ t.owner }}</span> <span class="muted small">{{ nav.t("read-only") }}</span>{% endif %}</td>
 <td class="small">{{ t.chains }}</td>
-</tr>{% else %}<tr><td colspan="3" class="muted">No nftables tables read.</td></tr>{% endfor %}
+</tr>{% else %}<tr><td colspan="3" class="muted">{{ nav.t("No nftables tables read.") }}</td></tr>{% endfor %}
 </tbody></table>
 </div></section>
 
-<h2 class="h5 mt-4">clamv's plan</h2>
-<p class="muted">Each rule lets only the listed networks reach a port; everyone else is dropped. Leave the list empty to close the port. Ports without a rule stay as they are.</p>
+<h2 class="h5 mt-4">{{ nav.t("clamv's plan") }}</h2>
+<p class="muted">{{ nav.t("Each rule lets only the listed networks reach a port; everyone else is dropped. Leave the list empty to close the port. Ports without a rule stay as they are.") }}</p>
 <section class="card mt-2"><div class="card-body">
 <div class="table-responsive"><table class="table table-sm align-middle">
-<thead><tr><th>Port</th><th>Allowed from</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+<thead><tr><th>{{ nav.t("Port") }}</th><th>{{ nav.t("Allowed from") }}</th><th><span class="visually-hidden">{{ nav.t("Actions") }}</span></th></tr></thead>
 <tbody>
 {% for r in rules %}<tr>
 <td class="small text-nowrap">{{ r.port }}/{{ r.proto }}</td>
 <td class="small text-break">{{ r.allow }}</td>
-<td class="text-end"><form class="d-inline" method="post" action="/admin/firewall/rules/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ host }}"><input type="hidden" name="port" value="{{ r.port }}"><input type="hidden" name="proto" value="{{ r.proto }}"><button class="btn btn-link btn-sm p-0" type="submit">remove</button></form></td>
-</tr>{% else %}<tr><td colspan="3" class="muted">No rules yet.</td></tr>{% endfor %}
+<td class="text-end"><form class="d-inline" method="post" action="/admin/firewall/rules/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ host }}"><input type="hidden" name="port" value="{{ r.port }}"><input type="hidden" name="proto" value="{{ r.proto }}"><button class="btn btn-link btn-sm p-0" type="submit">{{ nav.t("remove") }}</button></form></td>
+</tr>{% else %}<tr><td colspan="3" class="muted">{{ nav.t("No rules yet.") }}</td></tr>{% endfor %}
 </tbody></table></div>
 <form class="row g-2 align-items-end" method="post" action="/admin/firewall/rules">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ host }}">
-<div class="col-6 col-md-2"><label class="form-label small" for="fw-port">Port</label><input class="form-control form-control-sm" id="fw-port" name="port" inputmode="numeric" required></div>
-<div class="col-6 col-md-2"><label class="form-label small" for="fw-proto">Protocol</label><select class="form-select form-select-sm" id="fw-proto" name="proto"><option value="tcp">tcp</option><option value="udp">udp</option></select></div>
-<div class="col-12 col-md-6"><label class="form-label small" for="fw-allow">Allowed from (CIDRs, comma separated)</label><input class="form-control form-control-sm" id="fw-allow" name="allow" placeholder="100.82.0.0/16, 192.168.1.0/24"></div>
-<div class="col-12 col-md-2"><button class="btn btn-sm btn-outline-primary w-100" type="submit">Add to plan</button></div>
+<div class="col-6 col-md-2"><label class="form-label small" for="fw-port">{{ nav.t("Port") }}</label><input class="form-control form-control-sm" id="fw-port" name="port" inputmode="numeric" required></div>
+<div class="col-6 col-md-2"><label class="form-label small" for="fw-proto">{{ nav.t("Protocol") }}</label><select class="form-select form-select-sm" id="fw-proto" name="proto"><option value="tcp">{{ nav.t("tcp") }}</option><option value="udp">{{ nav.t("udp") }}</option></select></div>
+<div class="col-12 col-md-6"><label class="form-label small" for="fw-allow">{{ nav.t("Allowed from (CIDRs, comma separated)") }}</label><input class="form-control form-control-sm" id="fw-allow" name="allow" placeholder="100.82.0.0/16, 192.168.1.0/24"></div>
+<div class="col-12 col-md-2"><button class="btn btn-sm btn-outline-primary w-100" type="submit">{{ nav.t("Add to plan") }}</button></div>
 </form>
-<details class="small mt-3"><summary class="muted">What gets loaded</summary><pre class="small mt-2 mb-0">{{ preview }}</pre></details>
+<details class="small mt-3"><summary class="muted">{{ nav.t("What gets loaded") }}</summary><pre class="small mt-2 mb-0">{{ preview }}</pre></details>
 <div class="mt-3 d-flex flex-wrap gap-2">
-<button class="btn btn-sm btn-warning" type="button" data-stepup="firewall.apply" data-host="{{ host }}" data-csrf="{{ nav.csrf }}"{% if rules.is_empty() %} disabled{% endif %}><i class="fas fa-key" aria-hidden="true"></i> Apply with passkey</button>
-<button class="btn btn-sm btn-outline-danger" type="button" data-stepup="firewall.remove" data-host="{{ host }}" data-csrf="{{ nav.csrf }}"><i class="fas fa-key" aria-hidden="true"></i> Remove clamv's table</button>
+<button class="btn btn-sm btn-warning" type="button" data-stepup="firewall.apply" data-host="{{ host }}" data-csrf="{{ nav.csrf }}"{% if rules.is_empty() %} disabled{% endif %}><i class="fas fa-key" aria-hidden="true"></i> {{ nav.t("Apply with passkey") }}</button>
+<button class="btn btn-sm btn-outline-danger" type="button" data-stepup="firewall.remove" data-host="{{ host }}" data-csrf="{{ nav.csrf }}"><i class="fas fa-key" aria-hidden="true"></i> {{ nav.t("Remove clamv's table") }}</button>
 </div>
 </div></section>
 <script defer src="/js/passkey.js?v={{ crate::web::asset_v() }}"></script>

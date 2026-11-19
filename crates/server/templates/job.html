@@ -1,37 +1,37 @@
 {% extends "shell.html" %}
-{% block title %}Job · ClamAV Web UI{% endblock %}
+{% block title %}{{ nav.t("Job · ClamAV Web UI") }}{% endblock %}
 {% block content %}
-<p><a href="/jobs">&larr; All jobs</a></p>
+<p><a href="/jobs">{{ nav.t("← All jobs") }}</a></p>
 <div id="r-job" data-refresh-region{% if refresh %} data-refresh="3"{% endif %}>
 <h1 class="h3 path">{{ crate::web::wbr(j.target)|safe }}</h1>
-<p>{% if j.verdict.is_empty() %}<span class="badge bg-secondary">{{ j.status }}</span>{% if refresh %} <span class="muted small">refreshing…</span>{% endif %}{% else %}<span class="badge {{ self.badge(j.verdict) }}">{{ j.verdict }}</span>{% endif %}
+<p>{% if j.verdict.is_empty() %}<span class="badge bg-secondary">{{ j.status }}</span>{% if refresh %} <span class="muted small">{{ nav.t("refreshing…") }}</span>{% endif %}{% else %}<span class="badge {{ self.badge(j.verdict) }}">{{ j.verdict }}</span>{% endif %}
 {% if !error_message.is_empty() %} <span class="small">{{ error_message }}</span>{% endif %}</p>
-{% if cancellable || can_rescan %}<div class="d-flex gap-2 flex-wrap mb-2">{% if cancellable %}<form method="post" action="/jobs/{{ j.id }}/cancel"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Cancel job</button></form>{% endif %}{% if can_rescan %}<form method="post" action="/jobs/{{ j.id }}/rescan"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-primary" type="submit"><i class="fas fa-redo" aria-hidden="true"></i> Scan again</button></form>{% endif %}</div>{% endif %}
+{% if cancellable || can_rescan %}<div class="d-flex gap-2 flex-wrap mb-2">{% if cancellable %}<form method="post" action="/jobs/{{ j.id }}/cancel"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">{{ nav.t("Cancel job") }}</button></form>{% endif %}{% if can_rescan %}<form method="post" action="/jobs/{{ j.id }}/rescan"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-primary" type="submit"><i class="fas fa-redo" aria-hidden="true"></i> {{ nav.t("Scan again") }}</button></form>{% endif %}</div>{% endif %}
 <section class="card mt-3"><div class="card-body">
 <dl class="row mb-0 small">
-<dt class="col-sm-3">Type</dt><dd class="col-sm-9">{{ j.kind }}</dd>
-<dt class="col-sm-3">Endpoint</dt><dd class="col-sm-9">{{ j.endpoint }}</dd>
-<dt class="col-sm-3">Submitted</dt><dd class="col-sm-9">{{ j.submitted }} by {{ j.submitted_by }}</dd>
-{% if !started.is_empty() %}<dt class="col-sm-3">Started</dt><dd class="col-sm-9">{{ started }}</dd>{% endif %}
-{% if !finished.is_empty() %}<dt class="col-sm-3">Finished</dt><dd class="col-sm-9">{{ finished }} ({{ j.duration }})</dd>{% endif %}
-{% if !size.is_empty() %}<dt class="col-sm-3">Size</dt><dd class="col-sm-9">{{ size }}</dd>{% endif %}
+<dt class="col-sm-3">{{ nav.t("Type") }}</dt><dd class="col-sm-9">{{ j.kind }}</dd>
+<dt class="col-sm-3">{{ nav.t("Endpoint") }}</dt><dd class="col-sm-9">{{ j.endpoint }}</dd>
+<dt class="col-sm-3">{{ nav.t("Submitted") }}</dt><dd class="col-sm-9">{{ j.submitted }} {{ nav.t("by") }} {{ j.submitted_by }}</dd>
+{% if !started.is_empty() %}<dt class="col-sm-3">{{ nav.t("Started") }}</dt><dd class="col-sm-9">{{ started }}</dd>{% endif %}
+{% if !finished.is_empty() %}<dt class="col-sm-3">{{ nav.t("Finished") }}</dt><dd class="col-sm-9">{{ finished }} ({{ j.duration }})</dd>{% endif %}
+{% if !size.is_empty() %}<dt class="col-sm-3">{{ nav.t("Size") }}</dt><dd class="col-sm-9">{{ size }}</dd>{% endif %}
 {% if !sha256.is_empty() %}<dt class="col-sm-3">SHA-256</dt><dd class="col-sm-9"><code class="text-break">{{ sha256 }}</code></dd>{% endif %}
-{% if !error_code.is_empty() %}<dt class="col-sm-3">Error code</dt><dd class="col-sm-9"><code>{{ error_code }}</code></dd>{% endif %}
-<dt class="col-sm-3">Job id</dt><dd class="col-sm-9"><code>{{ j.id }}</code></dd>
+{% if !error_code.is_empty() %}<dt class="col-sm-3">{{ nav.t("Error code") }}</dt><dd class="col-sm-9"><code>{{ error_code }}</code></dd>{% endif %}
+<dt class="col-sm-3">{{ nav.t("Job id") }}</dt><dd class="col-sm-9"><code>{{ j.id }}</code></dd>
 </dl>
 </div></section>
 {% if !detections.is_empty() %}<section class="card mt-3"><div class="card-body table-responsive">
-<h2 class="h5">Detections</h2>
-<table class="table table-sm align-middle"><thead><tr><th>File</th><th>Signature</th>{% if nav.is_admin %}<th><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead><tbody>
-{% for (p, s, id) in detections %}<tr><td class="small path">{{ crate::web::wbr(p)|safe }}</td><td><code>{{ s }}</code></td>{% if nav.is_admin %}<td class="text-end">{% if let Some(id) = id %}<form method="post" action="/admin/quarantine"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="detection" value="{{ id }}"><input type="hidden" name="back" value="/jobs/{{ j.id }}"><button class="btn btn-sm btn-outline-danger" type="submit" title="Move this file into quarantine if clamd still finds it infected">Quarantine</button></form>{% endif %}</td>{% endif %}</tr>{% endfor %}
+<h2 class="h5">{{ nav.t("Detections") }}</h2>
+<table class="table table-sm align-middle"><thead><tr><th>{{ nav.t("File") }}</th><th>{{ nav.t("Signature") }}</th>{% if nav.is_admin %}<th><span class="visually-hidden">{{ nav.t("Actions") }}</span></th>{% endif %}</tr></thead><tbody>
+{% for (p, s, id) in detections %}<tr><td class="small path">{{ crate::web::wbr(p)|safe }}</td><td><code>{{ s }}</code></td>{% if nav.is_admin %}<td class="text-end">{% if let Some(id) = id %}<form method="post" action="/admin/quarantine"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="detection" value="{{ id }}"><input type="hidden" name="back" value="/jobs/{{ j.id }}"><button class="btn btn-sm btn-outline-danger" type="submit" title="{{ nav.t("Move this file into quarantine if clamd still finds it infected") }}">{{ nav.t("Quarantine") }}</button></form>{% endif %}</td>{% endif %}</tr>{% endfor %}
 </tbody></table></div></section>{% endif %}
 {% if !errors.is_empty() %}<section class="card mt-3"><div class="card-body table-responsive">
-<h2 class="h5">Not fully scanned</h2>
-<table class="table table-sm"><thead><tr><th>File</th><th>Reason</th></tr></thead><tbody>
+<h2 class="h5">{{ nav.t("Not fully scanned") }}</h2>
+<table class="table table-sm"><thead><tr><th>{{ nav.t("File") }}</th><th>{{ nav.t("Reason") }}</th></tr></thead><tbody>
 {% for (p, m) in errors %}<tr><td class="small path">{{ crate::web::wbr(p)|safe }}</td><td class="small">{{ m }}</td></tr>{% endfor %}
 </tbody></table>
-{% if more_errors > 0 %}<p class="muted small">{{ more_errors }} more not shown.</p>{% endif %}
+{% if more_errors > 0 %}<p class="muted small">{{ more_errors }} {{ nav.t("more not shown.") }}</p>{% endif %}
 </div></section>{% endif %}
-{% if omitted > 0 %}<p class="muted small mt-3">{{ omitted }} more result lines were not stored; every line is in the server log (search for this job id).</p>{% endif %}
+{% if omitted > 0 %}<p class="muted small mt-3">{{ omitted }} {{ nav.t("more result lines were not stored; every line is in the server log (search for this job id).") }}</p>{% endif %}
 </div>
 {% endblock %}

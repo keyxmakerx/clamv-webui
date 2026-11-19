@@ -243,6 +243,7 @@ pub fn router(state: Arc<AppState>, cfg: &Config) -> Router {
         .merge(agents)
         .with_state(state.clone())
         .layer(axum::middleware::from_fn(crate::web::csrf::same_origin))
+        .layer(axum::middleware::from_fn(crate::i18n::layer))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             crate::web::session::check_host,
