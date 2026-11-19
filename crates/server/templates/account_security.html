@@ -8,6 +8,7 @@
 <p>Each code signs you in once if you lose your phone. Store them somewhere safe; they will not be shown again.</p>
 <ul class="recovery-codes">{% for c in codes %}<li><code>{{ c }}</code></li>{% endfor %}</ul>
 </div></section>{% endif %}
+{% if totp_since.is_none() || confirm.kind == "sso" %}{% include "_confirm.html" %}{% endif %}
 <section class="card mt-3"><div class="card-body">
 <h2 class="h5"><i class="fas fa-mobile-alt" aria-hidden="true"></i> Authenticator app</h2>
 {% if let Some(since) = totp_since %}
@@ -51,12 +52,12 @@
 {% if !passkeys.is_empty() %}<table class="table table-sm align-middle">
 <thead><tr><th>Name</th><th>Added</th><th>Last used</th><th></th></tr></thead>
 <tbody>{% for k in passkeys %}<tr><td>{{ k.name }}</td><td class="small">{{ k.created }}</td><td class="small">{{ k.last_used }}</td>
-<td><form method="post" action="/account/passkeys/{{ k.id }}/delete" class="d-flex gap-2 justify-content-end"><input type="hidden" name="_csrf" value="{{ nav.csrf }}">{% if proof == "totp" %}<input class="form-control form-control-sm w-auto" name="proof" required autocomplete="one-time-code" maxlength="64" placeholder="Authenticator code" aria-label="Authenticator code">{% else if proof == "password" %}<input class="form-control form-control-sm w-auto" type="password" name="proof" required autocomplete="current-password" maxlength="256" placeholder="Current password" aria-label="Current password">{% endif %}<button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form></td></tr>{% endfor %}</tbody>
+<td><form method="post" action="/account/passkeys/{{ k.id }}/delete" class="d-flex gap-2 justify-content-end"><input type="hidden" name="_csrf" value="{{ nav.csrf }}">{% if proof == "totp" %}<input class="form-control form-control-sm w-auto" name="proof" required autocomplete="one-time-code" maxlength="64" placeholder="Authenticator code" aria-label="Authenticator code">{% else if proof == "password" || proof == "ldap" %}<input class="form-control form-control-sm w-auto" type="password" name="proof" required autocomplete="current-password" maxlength="256" placeholder="Current password" aria-label="Current password">{% endif %}<button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form></td></tr>{% endfor %}</tbody>
 </table>{% endif %}
-{% if !proof.is_empty() %}<p class="muted small">Adding or removing a passkey asks for your {% if proof == "totp" %}authenticator code{% else %}current password{% endif %} again.</p>{% endif %}
+{% if proof == "sso" %}<p class="muted small">Adding or removing a passkey needs a fresh sign-in at your provider first (Confirm it's you, above).</p>{% else if !proof.is_empty() %}<p class="muted small">Adding or removing a passkey asks for your {% if proof == "totp" %}authenticator code{% else if proof == "ldap" %}directory password{% else %}current password{% endif %} again.</p>{% endif %}
 <div class="d-flex gap-2 passkey-add">
 <input class="form-control" id="passkey-name" maxlength="64" placeholder="Name, e.g. Laptop" aria-label="Passkey name">
-{% if proof == "totp" %}<input class="form-control" id="passkey-proof" autocomplete="one-time-code" maxlength="64" placeholder="Authenticator code" aria-label="Authenticator code">{% else if proof == "password" %}<input class="form-control" type="password" id="passkey-proof" autocomplete="current-password" maxlength="256" placeholder="Current password" aria-label="Current password">{% endif %}
+{% if proof == "totp" %}<input class="form-control" id="passkey-proof" autocomplete="one-time-code" maxlength="64" placeholder="Authenticator code" aria-label="Authenticator code">{% else if proof == "password" || proof == "ldap" %}<input class="form-control" type="password" id="passkey-proof" autocomplete="current-password" maxlength="256" placeholder="Current password" aria-label="Current password">{% endif %}
 <button type="button" class="btn btn-primary text-nowrap" id="passkey-add" data-passkey="register" data-csrf="{{ nav.csrf }}">Add passkey</button>
 </div>
 <div class="alert alert-danger d-none mt-2" role="alert" id="passkey-error"></div>
