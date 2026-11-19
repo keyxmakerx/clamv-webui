@@ -511,6 +511,9 @@ async fn eicar_control_failure_is_recorded() {
             endpoint_id: Some(dead.id),
             agent_id: None,
             eicar_check: true,
+            exclusions: &[],
+            window: None,
+            time_zone: None,
         })
         .await
         .expect("schedule");
@@ -524,6 +527,136 @@ async fn eicar_control_failure_is_recorded() {
         .expect("job");
     assert_eq!(j.verdict.as_deref(), Some("ERROR"));
     assert_eq!(j.error_code.as_deref(), Some("SCAN_FAILED"));
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[tokio::test]
+async fn schedules_take_zone_window_and_exclusions() {
+    let base = std::env::temp_dir().join(format!("clamv-sx-{}", clamv_webui::db::new_id()));
+    let media = base.join("media");
+    for d in ["tv/Downloads/x", "tv/Shows", "movies"] {
+        std::fs::create_dir_all(media.join(d)).expect("mkdir");
+    }
+    std::fs::write(media.join("tv/notes.txt"), b"n").expect("file");
+    let media = std::fs::canonicalize(&media).expect("real");
+    let roots = media.to_str().expect("utf8").to_owned();
+    let (app, st, c, t) = app(&["--scan-roots", &roots]).await;
+    let enc = |v: &str| {
+        v.replace('/', "%2F")
+            .replace(' ', "+")
+            .replace('\n', "%0A")
+            .replace(':', "%3A")
+    };
+    let fields = |extra: &str| {
+        format!(
+            "_csrf={t}&name=Night&cron={}&paths={}&exclusions={}&time_zone=Europe%2FBerlin&window_start=22%3A00&window_end=06%3A00{extra}",
+            enc("30 23 * * *"),
+            enc(&roots),
+            enc(&format!("{roots}/tv/Downloads")),
+        )
+    };
+    // Preview: next runs in Berlin, nothing saved.
+    let res = app
+        .clone()
+        .oneshot(form("/admin/schedules", &fields("&preview=1"), &c))
+        .await
+        .expect("res");
+    let html = body(res).await;
+    assert!(html.contains("Next runs"), "preview shown");
+    assert!(html.contains(" 23:30</li>"));
+    assert!(st.db.list_schedules().await.expect("q").is_empty());
+    // A window that never meets the cron is refused.
+    let never = fields("")
+        .replace("window_start=22%3A00", "window_start=01%3A00")
+        .replace("window_end=06%3A00", "window_end=02%3A00");
+    let res = app
+        .clone()
+        .oneshot(form("/admin/schedules", &never, &c))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    // Saved.
+    let res = app
+        .clone()
+        .oneshot(form("/admin/schedules", &fields(""), &c))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::OK);
+    let s = st.db.list_schedules().await.expect("q").remove(0);
+    assert_eq!(s.time_zone.as_deref(), Some("Europe/Berlin"));
+    assert_eq!(s.window, Some((22 * 60, 6 * 60)));
+    // A run scans around the exclusion: movies, tv/Shows and tv/notes.txt, not tv/Downloads.
+    let n = clamv_webui::schedule::run(&st, &s, "manual")
+        .await
+        .expect("run");
+    let (jobs, _) = st
+        .db
+        .list_jobs(&JobFilter::default(), 0, 50)
+        .await
+        .expect("list");
+    let mut targets: Vec<String> = jobs
+        .iter()
+        .filter(|j| j.kind == "PATH")
+        .map(|j| j.target.trim_start_matches(&roots).to_owned())
+        .collect();
+    targets.sort();
+    assert_eq!(targets, ["/movies", "/tv/Shows", "/tv/notes.txt"]);
+    assert_eq!(n, 3);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[tokio::test]
+async fn closed_windows_drop_queued_paths() {
+    let base = std::env::temp_dir().join(format!("clamv-sw-{}", clamv_webui::db::new_id()));
+    std::fs::create_dir_all(&base).expect("mkdir");
+    let roots = base.to_str().expect("utf8").to_owned();
+    let (_app, st, _c, _t) = app(&["--scan-roots", &roots]).await;
+    let now_min = (clamv_webui::db::now_ms() / 60_000).rem_euclid(1440);
+    // A window that closed a minute ago (UTC), opened two hours before.
+    let window = Some(((now_min + 1440 - 120) % 1440, (now_min + 1440 - 1) % 1440));
+    let s = st
+        .db
+        .create_schedule(clamv_webui::db::schedules::NewSchedule {
+            name: "w",
+            cron: "0 0 1 1 *",
+            paths: std::slice::from_ref(&roots),
+            endpoint_id: None,
+            agent_id: None,
+            eicar_check: false,
+            exclusions: &[],
+            window,
+            time_zone: Some("UTC"),
+        })
+        .await
+        .expect("schedule");
+    let job = st
+        .db
+        .create_job(clamv_webui::db::jobs::NewJob {
+            kind: "PATH",
+            target: &roots,
+            endpoint_id: None,
+            schedule_id: Some(&s.id),
+            agent_id: None,
+            submitted_by: Some("schedule:w"),
+            transport: "SCHEDULER",
+            running: false,
+        })
+        .await
+        .expect("job");
+    // Queued inside the window.
+    sqlx::query(
+        st.db
+            .sql("UPDATE scan_jobs SET submitted_at = ? WHERE id = ?"),
+    )
+    .bind(clamv_webui::db::now_ms() - 30 * 60_000)
+    .bind(&job.id)
+    .execute(st.db.pool())
+    .await
+    .expect("backdate");
+    clamv_webui::schedule::tick(&st).await.expect("tick");
+    let j = st.db.job(&job.id).await.expect("q").expect("job");
+    assert_eq!(j.status, "FINISHED");
+    assert_eq!(j.error_code.as_deref(), Some("WINDOW_CLOSED"));
     let _ = std::fs::remove_dir_all(&base);
 }
 

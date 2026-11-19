@@ -26,6 +26,46 @@ use crate::scan;
 
 const MAX_PATHS: usize = 50;
 
+/// `HH:MM` → minute of the day.
+fn parse_hhmm(v: &str) -> Result<Option<i64>, String> {
+    let v = v.trim();
+    if v.is_empty() {
+        return Ok(None);
+    }
+    let bad = || format!("{v} is not a time like 22:00.");
+    let (h, m) = v.split_once(':').ok_or_else(bad)?;
+    let (h, m): (i64, i64) = (h.parse().map_err(|_| bad())?, m.parse().map_err(|_| bad())?);
+    if !(0..24).contains(&h) || !(0..60).contains(&m) {
+        return Err(bad());
+    }
+    Ok(Some(h * 60 + m))
+}
+
+fn hhmm(m: i64) -> String {
+    format!("{:02}:{:02}", m / 60, m % 60)
+}
+
+/// A time in `tz`, as `2026-11-20 02:00`.
+fn fmt_in(tz: &jiff::tz::TimeZone, ms: i64) -> String {
+    jiff::Timestamp::from_millisecond(ms)
+        .map(|t| tz.to_datetime(t).strftime("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_default()
+}
+
+/// What the form holds, kept when it is shown again (errors, preview).
+#[derive(Default)]
+pub struct Draft {
+    name: String,
+    cron: String,
+    paths: String,
+    endpoint: String,
+    eicar: bool,
+    time_zone: String,
+    window_start: String,
+    window_end: String,
+    exclusions: String,
+}
+
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/admin/schedules", get(page).post(create))
@@ -47,6 +87,10 @@ pub struct Row {
     control_job: String,
     last_run: String,
     last_job: String,
+    zone: String,
+    window: String,
+    exclusions: Vec<String>,
+    upcoming: Vec<String>,
 }
 
 #[derive(Template)]
@@ -57,6 +101,9 @@ struct SchedulesPage {
     endpoints: Vec<Endpoint>,
     agents: Vec<super::scan::AgentChoice>,
     roots: Vec<String>,
+    default_zone: String,
+    draft: Draft,
+    preview: Vec<String>,
 }
 
 async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
@@ -64,17 +111,33 @@ async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
         Ok(x) => x,
         Err(r) => return r,
     };
-    show(&st, Nav::new("schedules", &s, &u)).await
+    show(&st, Nav::new("schedules", &s, &u), fresh(), Vec::new()).await
+}
+
+fn fresh() -> Draft {
+    Draft {
+        eicar: true,
+        ..Draft::default()
+    }
 }
 
 async fn row(st: &AppState, s: Schedule, names: &super::scan::Names) -> Row {
+    let (zone, tz) = crate::schedule::zone_of(&st.cfg, &s);
+    let from = now_ms().max(s.last_run_at.unwrap_or(0));
+    let runs = match s.cron.parse::<Cron>() {
+        Ok(c) => crate::schedule::next_runs(&c, s.window, &tz, from, 3),
+        Err(_) => Vec::new(),
+    };
     let next = match s.cron.parse::<Cron>() {
-        Ok(c) if s.enabled => c
-            .next_after(now_ms().max(s.last_run_at.unwrap_or(0)))
-            .map_or_else(|| "never".into(), fmt_ts),
+        Ok(_) if s.enabled => runs.first().map_or_else(|| "never".into(), |t| fmt_ts(*t)),
         Ok(_) => "paused".into(),
         Err(_) => "invalid".into(),
     };
+    let upcoming = runs.iter().map(|t| fmt_in(&tz, *t)).collect();
+    let window = s
+        .window
+        .map(|(a, b)| format!("{}–{}", hhmm(a), hhmm(b)))
+        .unwrap_or_default();
     let control = st.db.last_control_job(&s.id).await.ok().flatten();
     let (state, cj) = match &control {
         None => ("none", String::new()),
@@ -95,10 +158,14 @@ async fn row(st: &AppState, s: Schedule, names: &super::scan::Names) -> Row {
         paths: s.paths,
         enabled: s.enabled,
         eicar: s.eicar_check,
+        zone,
+        window,
+        exclusions: s.exclusions,
+        upcoming,
     }
 }
 
-async fn show(st: &AppState, nav: Nav) -> Response {
+async fn show(st: &AppState, nav: Nav, draft: Draft, preview: Vec<String>) -> Response {
     let (Ok(list), Ok(endpoints)) = (st.db.list_schedules().await, st.db.list_endpoints().await)
     else {
         return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
@@ -126,6 +193,9 @@ async fn show(st: &AppState, nav: Nav) -> Response {
                 .iter()
                 .map(|p| p.display().to_string())
                 .collect(),
+            default_zone: crate::schedule::default_zone(&st.cfg).0,
+            draft,
+            preview,
         },
     )
 }
@@ -137,10 +207,22 @@ async fn result(
     error: Option<String>,
     success: Option<String>,
 ) -> Response {
+    with_draft(st, s, me, error, success, fresh(), Vec::new()).await
+}
+
+async fn with_draft(
+    st: &AppState,
+    s: &Session,
+    me: &User,
+    error: Option<String>,
+    success: Option<String>,
+    draft: Draft,
+    preview: Vec<String>,
+) -> Response {
     let mut nav = Nav::new("schedules", s, me);
     nav.error = error;
     nav.success = success;
-    show(st, nav).await
+    show(st, nav, draft, preview).await
 }
 
 #[derive(Deserialize)]
@@ -155,6 +237,33 @@ struct CreateForm {
     paths: String,
     endpoint: Option<String>,
     eicar: Option<String>,
+    #[serde(default)]
+    time_zone: String,
+    #[serde(default)]
+    window_start: String,
+    #[serde(default)]
+    window_end: String,
+    #[serde(default)]
+    exclusions: String,
+    /// Show the next run times instead of saving.
+    preview: Option<String>,
+}
+
+/// Check one exclusion line for where the schedule runs.
+async fn exclusion(st: &AppState, run_on: &RunOn, line: &str) -> Result<String, String> {
+    match run_on {
+        RunOn::Agent(a) => match crate::agent::refuse(a, line) {
+            None => Ok(line.trim_end_matches('/').to_owned()),
+            Some(m) => Err(format!("{line}: {m}")),
+        },
+        RunOn::Endpoint(_) => match scan::resolve_path(&st.cfg.scan_roots, line).await {
+            Ok(p) => p
+                .to_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("{line}: only UTF-8 paths can be excluded.")),
+            Err(m) => Err(format!("{line}: {m}")),
+        },
+    }
 }
 
 async fn create(
@@ -167,14 +276,57 @@ async fn create(
         Ok(x) => x,
         Err(r) => return r,
     };
-    let fail = |m: String| result(&st, &s, &me, Some(m), None);
+    let draft = || Draft {
+        name: f.name.clone(),
+        cron: f.cron.clone(),
+        paths: f.paths.clone(),
+        endpoint: f.endpoint.clone().unwrap_or_default(),
+        eicar: f.eicar.is_some(),
+        time_zone: f.time_zone.clone(),
+        window_start: f.window_start.clone(),
+        window_end: f.window_end.clone(),
+        exclusions: f.exclusions.clone(),
+    };
+    let fail = |m: String| with_draft(&st, &s, &me, Some(m), None, draft(), Vec::new());
+    let zone_name = f.time_zone.trim();
+    let tz = match zone_name {
+        "" => crate::schedule::default_zone(&st.cfg).1,
+        z => match crate::cron::zone(z) {
+            Ok(tz) => tz,
+            Err(e) => return fail(format!("Time zone: {e}.")).await,
+        },
+    };
+    let window = match (parse_hhmm(&f.window_start), parse_hhmm(&f.window_end)) {
+        (Ok(None), Ok(None)) => None,
+        (Ok(Some(a)), Ok(Some(b))) if a != b => Some((a, b)),
+        (Err(e), _) | (_, Err(e)) => return fail(format!("Scan window: {e}")).await,
+        _ => {
+            return fail("Scan window: give a start and a different end, or neither.".into()).await;
+        }
+    };
     let name = f.name.trim();
-    if name.is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control) {
+    if f.preview.is_none()
+        && (name.is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control))
+    {
         return fail("Names are 1 to 100 characters.".into()).await;
     }
     let cron = f.cron.trim();
-    if let Err(e) = cron.parse::<Cron>() {
-        return fail(format!("Schedule: {e}.")).await;
+    let parsed = match cron.parse::<Cron>() {
+        Ok(c) => c,
+        Err(e) => return fail(format!("Schedule: {e}.")).await,
+    };
+    let upcoming = crate::schedule::next_runs(&parsed, window, &tz, now_ms(), 5);
+    if f.preview.is_some() {
+        let shown: Vec<String> = upcoming.iter().map(|t| fmt_in(&tz, *t)).collect();
+        let msg = if shown.is_empty() {
+            Some("That schedule never runs inside its window.".to_owned())
+        } else {
+            None
+        };
+        return with_draft(&st, &s, &me, msg, None, draft(), shown).await;
+    }
+    if upcoming.is_empty() {
+        return fail("That schedule never runs inside its window.".into()).await;
     }
     let run_on = match super::scan::chosen_target(&st, f.endpoint.as_deref()).await {
         Ok(r) => r,
@@ -214,6 +366,37 @@ async fn create(
     if paths.is_empty() || paths.len() > MAX_PATHS {
         return fail(format!("Give 1 to {MAX_PATHS} paths, one per line.")).await;
     }
+    let mut exclusions = Vec::new();
+    for line in f
+        .exclusions
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+    {
+        match exclusion(&st, &run_on, line).await {
+            Ok(p) if !exclusions.contains(&p) => exclusions.push(p),
+            Ok(_) => {}
+            Err(m) => return fail(m).await,
+        }
+    }
+    if exclusions.len() > MAX_PATHS {
+        return fail(format!("At most {MAX_PATHS} exclusions.")).await;
+    }
+    if let RunOn::Agent(_) = &run_on {
+        // The agent's folders cannot be listed from here to scan around an inner exclusion.
+        if let Some(e) = exclusions.iter().find(|e| {
+            paths
+                .iter()
+                .any(|p| std::path::Path::new(e).starts_with(p) && e != &p)
+        }) {
+            return fail(format!(
+                "{e}: on an agent, exclusions can only leave out whole paths; use ExcludePath in that host's clamd.conf for folders inside a path."
+            ))
+            .await;
+        }
+    } else if let Err(m) = crate::schedule::expand(&paths, &exclusions).await {
+        return fail(m).await;
+    }
     let (endpoint_id, agent_id) = match &run_on {
         RunOn::Agent(a) => (None, Some(a.id)),
         RunOn::Endpoint(e) => (*e, None),
@@ -227,6 +410,9 @@ async fn create(
             endpoint_id,
             agent_id,
             eicar_check: f.eicar.is_some(),
+            exclusions: &exclusions,
+            window,
+            time_zone: (!zone_name.is_empty()).then_some(zone_name),
         })
         .await
     {
@@ -236,7 +422,20 @@ async fn create(
                 &me,
                 &info,
                 "SCHEDULE_CREATE",
-                format!("{name} [{cron}] {}", paths.join(", ")),
+                format!(
+                    "{name} [{cron}{}] {}{}",
+                    if zone_name.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {zone_name}")
+                    },
+                    paths.join(", "),
+                    if exclusions.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" excluding {}", exclusions.join(", "))
+                    }
+                ),
             )
             .await;
             result(&st, &s, &me, None, Some(format!("Added {name}."))).await

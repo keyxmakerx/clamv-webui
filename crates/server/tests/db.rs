@@ -414,6 +414,9 @@ async fn schedules_claim_once() {
                 endpoint_id: None,
                 agent_id: None,
                 eicar_check: true,
+                exclusions: &[],
+                window: None,
+                time_zone: None,
             })
             .await
             .expect("create");
