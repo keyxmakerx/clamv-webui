@@ -105,7 +105,7 @@ def main():
         require(result.get("serverInfo", {}).get("name") == "clamav-webui", "Unexpected MCP server identity.")
         client.send("notifications/initialized", {})
         tools = client.call("tools/list", {})
-        require({t["name"] for t in tools["tools"]} == {"clamav_scan_file", "clamav_scan_path", "clamav_get_job", "clamav_check_health", "clamav_list_endpoints"}, "Tool discovery mismatch.")
+        require({t["name"] for t in tools["tools"]} == {"clamav_scan_file", "clamav_scan_path", "clamav_get_job", "clamav_check_health", "clamav_list_endpoints", "clamav_list_agents", "clamav_cancel_job"}, "Tool discovery mismatch.")
         resources = client.call("resources/list", {})
         require({r["uri"] for r in resources["resources"]} == {"clamav://stats", "clamav://jobs/recent", "clamav://audit/recent"}, "Resource discovery mismatch.")
         print("PASS initialization and discovery", flush=True)
