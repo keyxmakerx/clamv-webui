@@ -1,12 +1,12 @@
 {% extends "shell.html" %}
-{% block head %}{% if refresh %}<meta http-equiv="refresh" content="3">{% endif %}{% endblock %}
 {% block title %}Job · ClamAV Web UI{% endblock %}
 {% block content %}
 <p><a href="/jobs">&larr; All jobs</a></p>
-<h1 class="h3 text-break">{{ j.target }}</h1>
+<div id="r-job" data-refresh-region{% if refresh %} data-refresh="3"{% endif %}>
+<h1 class="h3 path">{{ crate::web::wbr(j.target)|safe }}</h1>
 <p>{% if j.verdict.is_empty() %}<span class="badge bg-secondary">{{ j.status }}</span>{% if refresh %} <span class="muted small">refreshing…</span>{% endif %}{% else %}<span class="badge {{ self.badge(j.verdict) }}">{{ j.verdict }}</span>{% endif %}
 {% if !error_message.is_empty() %} <span class="small">{{ error_message }}</span>{% endif %}</p>
-{% if cancellable %}<form method="post" action="/jobs/{{ j.id }}/cancel"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Cancel job</button></form>{% endif %}
+{% if cancellable || can_rescan %}<div class="d-flex gap-2 flex-wrap mb-2">{% if cancellable %}<form method="post" action="/jobs/{{ j.id }}/cancel"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Cancel job</button></form>{% endif %}{% if can_rescan %}<form method="post" action="/jobs/{{ j.id }}/rescan"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-primary" type="submit"><i class="fas fa-redo" aria-hidden="true"></i> Scan again</button></form>{% endif %}</div>{% endif %}
 <section class="card mt-3"><div class="card-body">
 <dl class="row mb-0 small">
 <dt class="col-sm-3">Type</dt><dd class="col-sm-9">{{ j.kind }}</dd>
@@ -22,15 +22,16 @@
 </div></section>
 {% if !detections.is_empty() %}<section class="card mt-3"><div class="card-body table-responsive">
 <h2 class="h5">Detections</h2>
-<table class="table table-sm"><thead><tr><th>File</th><th>Signature</th></tr></thead><tbody>
-{% for (p, s) in detections %}<tr><td class="small text-break">{{ p }}</td><td><code>{{ s }}</code></td></tr>{% endfor %}
+<table class="table table-sm align-middle"><thead><tr><th>File</th><th>Signature</th>{% if nav.is_admin %}<th><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead><tbody>
+{% for (p, s, id) in detections %}<tr><td class="small path">{{ crate::web::wbr(p)|safe }}</td><td><code>{{ s }}</code></td>{% if nav.is_admin %}<td class="text-end">{% if let Some(id) = id %}<form method="post" action="/admin/quarantine"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="detection" value="{{ id }}"><input type="hidden" name="back" value="/jobs/{{ j.id }}"><button class="btn btn-sm btn-outline-danger" type="submit" title="Move this file into quarantine if clamd still finds it infected">Quarantine</button></form>{% endif %}</td>{% endif %}</tr>{% endfor %}
 </tbody></table></div></section>{% endif %}
 {% if !errors.is_empty() %}<section class="card mt-3"><div class="card-body table-responsive">
 <h2 class="h5">Not fully scanned</h2>
 <table class="table table-sm"><thead><tr><th>File</th><th>Reason</th></tr></thead><tbody>
-{% for (p, m) in errors %}<tr><td class="small text-break">{{ p }}</td><td class="small">{{ m }}</td></tr>{% endfor %}
+{% for (p, m) in errors %}<tr><td class="small path">{{ crate::web::wbr(p)|safe }}</td><td class="small">{{ m }}</td></tr>{% endfor %}
 </tbody></table>
 {% if more_errors > 0 %}<p class="muted small">{{ more_errors }} more not shown.</p>{% endif %}
 </div></section>{% endif %}
 {% if omitted > 0 %}<p class="muted small mt-3">{{ omitted }} more result lines were not stored; every line is in the server log (search for this job id).</p>{% endif %}
+</div>
 {% endblock %}

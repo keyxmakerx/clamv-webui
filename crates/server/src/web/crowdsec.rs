@@ -250,7 +250,7 @@ fn bars(alerts: &[Alert], since: i64, now: i64, offset_ms: i64, range: &str) -> 
     let mut s = String::new();
     let _ = write!(
         s,
-        r#"<svg class="chart" viewBox="0 0 {W} {H}" role="img" aria-label="CrowdSec alerts over time">"#
+        r#"<svg class="chart" viewBox="0 0 {W} {H}" role="group" aria-label="CrowdSec alerts over time. Each bar links to its alerts.">"#
     );
     let mut v = 0;
     while v <= top {
@@ -323,7 +323,7 @@ fn map(alerts: &[Alert], banned: &std::collections::HashSet<String>) -> String {
         e.1 |= banned.contains(&a.value);
     }
     let mut s = String::from(
-        r#"<svg class="attack-map" viewBox="0 0 360 150" role="img" aria-label="Where attacks came from"><image class="map-land" href="/images/world.svg" x="0" y="0" width="360" height="150"/>"#,
+        r#"<svg class="attack-map" viewBox="0 0 360 150" role="group" aria-label="Where attacks came from"><image class="map-land" aria-hidden="true" href="/images/world.svg" x="0" y="0" width="360" height="150"/>"#,
     );
     let mut list: Vec<_> = spots.into_iter().collect();
     list.sort_by_key(|(_, (n, _, _))| *n);
@@ -773,10 +773,8 @@ fn result(
     error: Option<String>,
     ok: Option<String>,
 ) -> Response {
-    let mut nav = Nav::new("crowdsec", s, me);
-    nav.error = error;
-    nav.success = ok;
-    show_decisions(st, nav, &Q::default())
+    let _ = (st, me);
+    super::ux::back(s, "/crowdsec/decisions", error, ok)
 }
 
 #[derive(Deserialize)]

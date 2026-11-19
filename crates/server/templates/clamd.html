@@ -1,9 +1,9 @@
 {% extends "shell.html" %}
-{% block head %}<meta http-equiv="refresh" content="10">{% endblock %}
 {% block title %}clamd Status · ClamAV Web UI{% endblock %}
 {% block content %}
 <h1 class="h3">clamd status</h1>
-<p class="muted">Sampled every 30 s from clamd STATS. This page refreshes every 10 s.</p>
+<p class="muted">Sampled every 30 s from clamd STATS. This page updates every 10 s.</p>
+<div id="r-clamd" data-refresh-region data-refresh="10">
 {% for e in rows %}
 <section class="card mt-3"><div class="card-body">
 <h2 class="h5">{{ e.name }} {% if e.available %}<span class="badge bg-success">reachable</span>{% else %}<span class="badge bg-danger">unreachable</span>{% endif %} <span class="small muted">sampled {{ e.sampled }}</span></h2>
@@ -20,4 +20,5 @@
 {% else %}
 <p class="muted mt-3">No samples yet. The first arrives within 30 s of start.</p>
 {% endfor %}
+</div>
 {% endblock %}

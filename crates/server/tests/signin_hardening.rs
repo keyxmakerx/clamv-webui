@@ -116,7 +116,7 @@ async fn making_an_admin_needs_a_fresh_confirmation() {
         .oneshot(form("/admin/users", &body, &session))
         .await
         .expect("res");
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
     assert!(st.db.user_by_username("second").await.expect("q").is_none());
     // A viewer needs no confirmation.
     let res = app
@@ -128,7 +128,7 @@ async fn making_an_admin_needs_a_fresh_confirmation() {
         ))
         .await
         .expect("res");
-    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
     let viewer = st
         .db
         .user_by_username("viewer1")
@@ -145,7 +145,7 @@ async fn making_an_admin_needs_a_fresh_confirmation() {
         ))
         .await
         .expect("res");
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
     // Confirm with the password, then it works.
     let res = app
         .clone()
@@ -162,7 +162,7 @@ async fn making_an_admin_needs_a_fresh_confirmation() {
         .oneshot(form("/admin/users", &body, &session))
         .await
         .expect("res");
-    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
     assert!(st.db.user_by_username("second").await.expect("q").is_some());
 }
 

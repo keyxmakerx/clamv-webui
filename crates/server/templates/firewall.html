@@ -1,13 +1,14 @@
 {% extends "shell.html" %}
 {% block title %}Firewall · ClamAV Web UI{% endblock %}
-{% block head %}{% if pending %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
 {% block content %}
 <h1 class="h3">Firewall</h1>
 <p class="muted">clamv writes only its own rules: through ufw or firewalld when the host uses one, otherwise its own nftables table, <code>inet clamv</code>. Rules anything else made, Docker's and CrowdSec's included, are shown here read-only and never touched. Applying or removing needs your passkey, and an apply rolls back on the host after 90 s unless clamv confirms it can still reach it.</p>
 <div class="filter-chips mb-3">{% for c in chips %}<a class="chip{% if c.active %} active{% endif %}" href="/admin/firewall{% if !c.value.is_empty() %}?host={{ c.value }}{% endif %}"{% if c.active %} aria-current="page"{% endif %}>{{ c.label }}</a>{% endfor %}</div>
 <div id="passkey-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
 <div id="stepup-ok" class="alert alert-success py-2 small d-none" role="status"></div>
-{% if pending %}<div class="alert alert-warning py-2 small" role="status">Waiting for this server to load the plan; this page reloads every 5 s to confirm you still reach it.</div>{% endif %}
+<div id="r-fw" data-refresh-region{% if pending %} data-refresh="5" data-refresh-hidden{% endif %}>
+{% if confirmed %}<div class="alert alert-success py-2 small" role="status">Plan confirmed: you can still reach this server.</div>{% endif %}
+{% if pending %}<div class="alert alert-warning py-2 small" role="status">Waiting for this server to load the plan; this part of the page updates every 5 s to confirm you still reach it.</div>{% endif %}
 
 <h2 class="h5 mt-3">{{ host_name }}</h2>
 <section class="card mt-2"><div class="card-body">
@@ -27,6 +28,7 @@
 {% endif %}
 <form class="d-inline" method="post" action="/admin/firewall/refresh"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ host }}"><button class="btn btn-sm btn-outline-secondary" type="submit"><i class="fas fa-sync" aria-hidden="true"></i> Read now</button></form>
 </div></section>
+</div>
 
 <h2 class="h5 mt-4">Listening ports</h2>
 <p class="muted">Ports published by Docker containers pass through Docker's own chains before this table sees them; clamv does not change those. Restrict them in the compose file instead.</p>
@@ -60,7 +62,7 @@
 <p class="muted">Each rule lets only the listed networks reach a port; everyone else is dropped. Leave the list empty to close the port. Ports without a rule stay as they are.</p>
 <section class="card mt-2"><div class="card-body">
 <div class="table-responsive"><table class="table table-sm align-middle">
-<thead><tr><th>Port</th><th>Allowed from</th><th></th></tr></thead>
+<thead><tr><th>Port</th><th>Allowed from</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
 <tbody>
 {% for r in rules %}<tr>
 <td class="small text-nowrap">{{ r.port }}/{{ r.proto }}</td>

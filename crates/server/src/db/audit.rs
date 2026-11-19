@@ -28,6 +28,26 @@ pub struct AuditRow {
     pub ip: Option<String>,
 }
 
+macro_rules! audit_where {
+    () => {
+        "WHERE (? IS NULL OR username LIKE ? ESCAPE '!' OR action LIKE ? ESCAPE '!' \
+         OR details LIKE ? ESCAPE '!' OR ip LIKE ? ESCAPE '!' OR job_id LIKE ? ESCAPE '!') \
+         AND (? IS NULL OR username = ?) AND (? IS NULL OR action = ?) AND (? IS NULL OR outcome = ?) \
+         AND (? IS NULL OR at >= ?)"
+    };
+}
+
+/// Audit log search; `None` fields match everything.
+#[derive(Debug, Clone, Default)]
+pub struct AuditFilter {
+    /// Contained in the user, action, details, address or job id.
+    pub text: Option<String>,
+    pub user: Option<String>,
+    pub action: Option<String>,
+    pub outcome: Option<String>,
+    pub since: Option<i64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct AuditApiRow {
     pub id: i64,
@@ -99,6 +119,74 @@ impl Db {
     }
 
     /// A page of events without IPs or details, newest first (for `/api/v1/audit`).
+    /// Matching events, newest first, and how many match in all.
+    pub async fn search_audit(
+        &self,
+        f: &AuditFilter,
+        offset: i64,
+        limit: i64,
+    ) -> Result<(Vec<AuditRow>, i64), DbError> {
+        let text = f.text.as_deref().map(super::jobs::like_pattern);
+        macro_rules! binds {
+            ($q:expr) => {
+                $q.bind(text.as_deref())
+                    .bind(text.as_deref())
+                    .bind(text.as_deref())
+                    .bind(text.as_deref())
+                    .bind(text.as_deref())
+                    .bind(text.as_deref())
+                    .bind(f.user.as_deref())
+                    .bind(f.user.as_deref())
+                    .bind(f.action.as_deref())
+                    .bind(f.action.as_deref())
+                    .bind(f.outcome.as_deref())
+                    .bind(f.outcome.as_deref())
+                    .bind(f.since)
+                    .bind(f.since)
+            };
+        }
+        let total: i64 = binds!(sqlx::query_scalar(self.sql(concat!(
+            "SELECT COUNT(*) FROM audit_events ",
+            audit_where!()
+        ))))
+        .fetch_one(self.pool())
+        .await?;
+        let rows = binds!(sqlx::query(self.sql(concat!(
+            "SELECT at, username, action, outcome, details, job_id, ip FROM audit_events ",
+            audit_where!(),
+            " ORDER BY id DESC LIMIT ? OFFSET ?"
+        ))))
+        .bind(limit.clamp(1, 10_000))
+        .bind(offset.max(0))
+        .fetch_all(self.pool())
+        .await?;
+        let items = rows
+            .iter()
+            .map(|r| {
+                Ok(AuditRow {
+                    at: r.try_get("at")?,
+                    username: r.try_get("username")?,
+                    action: r.try_get("action")?,
+                    outcome: r.try_get("outcome")?,
+                    details: r.try_get("details")?,
+                    job_id: r.try_get("job_id")?,
+                    ip: r.try_get("ip")?,
+                })
+            })
+            .collect::<Result<_, DbError>>()?;
+        Ok((items, total))
+    }
+
+    /// Distinct action names, for the filter list.
+    pub async fn audit_actions(&self) -> Result<Vec<String>, DbError> {
+        let rows: Vec<String> = sqlx::query_scalar(
+            self.sql("SELECT DISTINCT action FROM audit_events ORDER BY action LIMIT 500"),
+        )
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows)
+    }
+
     pub async fn audit_page(
         &self,
         page: i64,

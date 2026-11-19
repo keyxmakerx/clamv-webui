@@ -241,6 +241,22 @@ fn post_req(uri: &str, body: &str, cookie: &str) -> Request<Body> {
         .expect("req")
 }
 
+/// Forms answer with 303 to their list; load that page as the browser would.
+async fn follow(app: &axum::Router, res: axum::response::Response, cookie: &str) -> String {
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let to = res.headers()[header::LOCATION]
+        .to_str()
+        .expect("loc")
+        .to_owned();
+    body(
+        app.clone()
+            .oneshot(get_req(&to, cookie))
+            .await
+            .expect("res"),
+    )
+    .await
+}
+
 async fn body(res: axum::response::Response) -> String {
     let b = http_body_util::BodyExt::collect(res.into_body())
         .await
@@ -307,8 +323,7 @@ async fn console_reads_alerts_and_manages_decisions() {
         ))
         .await
         .expect("res");
-    assert_eq!(res.status(), StatusCode::OK);
-    let page = body(res).await;
+    let page = follow(&app, res, &c).await;
     assert!(page.contains("ban on 203.0.113.7 for 4h"), "{page}");
     assert!(page.contains("<code>203.0.113.7</code>"));
     {
@@ -338,7 +353,7 @@ async fn console_reads_alerts_and_manages_decisions() {
         ))
         .await
         .expect("res");
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert!(follow(&app, res, &c).await.contains("alert-danger"));
 
     // Removing one decision, then all on an IP.
     let res = app
@@ -346,7 +361,11 @@ async fn console_reads_alerts_and_manages_decisions() {
         .oneshot(post_req("/crowdsec/decisions/11/delete", "", &c))
         .await
         .expect("res");
-    assert!(body(res).await.contains("Removed ban 198.51.100.4"));
+    assert!(
+        follow(&app, res, &c)
+            .await
+            .contains("Removed ban 198.51.100.4")
+    );
     assert!(fake.lock().expect("lock").deleted.contains(&11));
     let res = app
         .clone()
@@ -358,7 +377,7 @@ async fn console_reads_alerts_and_manages_decisions() {
         .await
         .expect("res");
     assert!(
-        body(res)
+        follow(&app, res, &c)
             .await
             .contains("Removed 1 decision(s) on 203.0.113.7")
     );
@@ -413,7 +432,7 @@ async fn read_only_wrong_password_and_unset() {
         ))
         .await
         .expect("res");
-    assert!(body(res).await.contains("CROWDSEC_READ_ONLY"));
+    assert!(follow(&app, res, &c).await.contains("CROWDSEC_READ_ONLY"));
 
     let (app, _st, c) = app_with(&[]).await;
     let page = body(app.oneshot(get_req("/crowdsec", &c)).await.expect("res")).await;

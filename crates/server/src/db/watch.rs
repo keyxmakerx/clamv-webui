@@ -75,6 +75,23 @@ impl Db {
         self.watch(&id).await?.ok_or(DbError::Missing)
     }
 
+    pub async fn update_watch(
+        &self,
+        id: &str,
+        path: &str,
+        endpoint_id: Option<i64>,
+    ) -> Result<bool, DbError> {
+        let r = sqlx::query(
+            self.sql("UPDATE watched_directories SET path = ?, endpoint_id = ? WHERE id = ?"),
+        )
+        .bind(path)
+        .bind(endpoint_id)
+        .bind(id)
+        .execute(self.pool())
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     pub async fn set_watch_enabled(&self, id: &str, enabled: bool) -> Result<(), DbError> {
         sqlx::query(self.sql("UPDATE watched_directories SET enabled = ? WHERE id = ?"))
             .bind(i64::from(enabled))

@@ -128,6 +128,33 @@ impl Db {
         self.schedule(&id).await?.ok_or(DbError::Missing)
     }
 
+    /// Change what a schedule scans and when; its run history stays.
+    pub async fn update_schedule(&self, id: &str, s: NewSchedule<'_>) -> Result<bool, DbError> {
+        let paths = serde_json::to_string(s.paths).map_err(|e| DbError::Encode(e.to_string()))?;
+        let excl =
+            serde_json::to_string(s.exclusions).map_err(|e| DbError::Encode(e.to_string()))?;
+        let r = sqlx::query(self.sql(
+            "UPDATE scan_schedules SET name = ?, cron = ?, paths_json = ?, exclusions_json = ?, endpoint_id = ?, \
+             agent_id = ?, eicar_check = ?, window_start_min = ?, window_end_min = ?, time_zone = ?, updated_at = ? \
+             WHERE id = ?",
+        ))
+        .bind(s.name)
+        .bind(s.cron)
+        .bind(paths)
+        .bind(excl)
+        .bind(s.endpoint_id)
+        .bind(s.agent_id)
+        .bind(i64::from(s.eicar_check))
+        .bind(s.window.map(|w| w.0))
+        .bind(s.window.map(|w| w.1))
+        .bind(s.time_zone)
+        .bind(now_ms())
+        .bind(id)
+        .execute(self.pool())
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     pub async fn set_schedule_enabled(&self, id: &str, enabled: bool) -> Result<(), DbError> {
         sqlx::query(self.sql("UPDATE scan_schedules SET enabled = ?, updated_at = ? WHERE id = ?"))
             .bind(i64::from(enabled))

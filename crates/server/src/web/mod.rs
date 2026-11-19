@@ -25,7 +25,10 @@ pub mod session;
 pub mod settings;
 pub mod timeline;
 pub mod tokens;
+pub mod ux;
 pub mod watch;
+
+pub use ux::wbr;
 
 use endpoints::Status;
 
@@ -130,6 +133,7 @@ impl Nav {
     }
 
     pub fn new(page: &'static str, s: &crate::db::sessions::Session, u: &User) -> Self {
+        let (error, success) = ux::take(s);
         Self {
             page,
             username: u.username.clone(),
@@ -137,8 +141,8 @@ impl Nav {
             is_admin: u.role.allows(Role::Admin),
             is_operator: u.role.allows(Role::Operator),
             csrf: s.csrf_token.clone(),
-            error: None,
-            success: None,
+            error,
+            success,
             lang: s.lang,
         }
     }

@@ -42,7 +42,7 @@ secrets:
 </div></section>
 <section class="card mt-3"><div class="card-body table-responsive">
 <table class="table table-sm align-middle">
-<thead><tr><th>Agent</th><th>State</th><th>clamd</th><th>Roots</th><th>Jobs</th><th></th></tr></thead>
+<thead><tr><th>Agent</th><th>State</th><th>clamd</th><th>Roots</th><th>Jobs</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
 <tbody>
 {% for r in rows %}<tr>
 <td><strong>{{ r.name }}</strong> <code class="small">{{ r.prefix }}…</code><div class="small muted">{% if !r.version.is_empty() %}v{{ r.version }} · {% endif %}{% if !r.ip.is_empty() %}{{ r.ip }} · {% endif %}seen {{ r.last_seen }}</div></td>
@@ -50,10 +50,16 @@ secrets:
 <td class="small text-break">{{ r.clamd }}</td>
 <td class="small text-break">{% for p in r.roots %}<div><code>{{ p }}</code></div>{% endfor %}</td>
 <td class="small text-nowrap">{{ r.running }}/{{ r.slots }} running{% if r.queued > 0 %}<div>{{ r.queued }} queued</div>{% endif %}</td>
-<td><div class="d-flex gap-2">
+<td><div class="d-flex gap-2 flex-wrap">
+<details class="edit"><summary class="btn btn-sm btn-outline-secondary">Rename</summary>
+<form method="post" action="/admin/agents/{{ r.id }}/rename" class="edit-form">
+<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
+<label class="form-label" for="an-{{ r.id }}">Name</label><input class="form-control form-control-sm" id="an-{{ r.id }}" name="name" required maxlength="64" pattern="[A-Za-z0-9._-]+" value="{{ r.name }}" autocomplete="off">
+<div class="mt-2"><button class="btn btn-sm btn-primary" type="submit">Save</button></div>
+</form></details>
 <form method="post" action="/admin/agents/{{ r.id }}/enabled"><input type="hidden" name="_csrf" value="{{ nav.csrf }}">{% if !r.enabled %}<input type="hidden" name="enabled" value="1">{% endif %}<button class="btn btn-sm btn-outline-secondary" type="submit">{% if r.enabled %}Disable{% else %}Enable{% endif %}</button></form>
-<form method="post" action="/admin/agents/{{ r.id }}/rotate"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-warning" type="submit">New token</button></form>
-<form method="post" action="/admin/agents/{{ r.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form>
+<details class="confirm"><summary class="btn btn-sm btn-outline-warning">New token</summary><div class="confirm-box"><p>Issue a new token for {{ r.name }}? The running agent drops off at once until you install the new token on its host.</p><form method="post" action="/admin/agents/{{ r.id }}/rotate"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-danger" type="submit">Issue new token</button></form></div></details>
+<details class="confirm"><summary class="btn btn-sm btn-outline-danger">Remove</summary><div class="confirm-box"><p>Remove {{ r.name }}? Its token stops working at once. This can't be undone.</p><form method="post" action="/admin/agents/{{ r.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-danger" type="submit">Remove agent</button></form></div></details>
 </div></td>
 </tr>{% else %}<tr><td colspan="6" class="muted">No agents yet.</td></tr>{% endfor %}
 </tbody></table>

@@ -139,10 +139,10 @@ async fn test(
         if r.is_ok() { "ok" } else { "failed" }.to_owned(),
     )
     .await;
-    let mut nav = Nav::new("integrations", &s, &me);
-    match r {
-        Ok(()) => nav.success = Some("Test message delivered.".into()),
-        Err(m) => nav.error = Some(format!("Test message failed: {m}")),
-    }
-    show(&st, nav)
+    super::ux::back_with(
+        &s,
+        "/admin/integrations",
+        r.map(|()| "Test message delivered.".to_owned())
+            .map_err(|m| format!("Test message failed: {m}")),
+    )
 }

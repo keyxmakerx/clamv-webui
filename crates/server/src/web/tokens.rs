@@ -139,6 +139,10 @@ async fn result(
     success: Option<String>,
     secret: Option<String>,
 ) -> Response {
+    // A new secret is shown once, on this response; it is never kept for a redirect.
+    if secret.is_none() {
+        return super::ux::back(s, "/admin/api-tokens", error, success);
+    }
     let mut nav = Nav::new("tokens", s, me);
     nav.error = error;
     nav.success = success;

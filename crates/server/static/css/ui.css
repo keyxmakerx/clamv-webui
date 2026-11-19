@@ -99,3 +99,69 @@ body{min-height:100vh;background-attachment:fixed}
 .js .app-sidebar:not(.nav-open)>.sidebar-section,.js .app-sidebar:not(.nav-open)>.sidebar-divider{display:none}
 }
 .timer-input{width:auto;display:inline-block}
+/* Accessibility (u01): visible focus, readable badges and buttons, marked current page. */
+:focus-visible{outline:3px solid var(--accent2);outline-offset:2px}
+.nav-btn:focus-visible,.tab-link:focus-visible,.seg-btn:focus-visible,.facet:focus-visible,.chip:focus-visible,.kpi:focus-visible,.toprow:focus-visible{outline:3px solid var(--accent2);outline-offset:2px;box-shadow:none}
+.chart a:focus-visible .chart-hit{fill:var(--border);stroke:var(--accent2);stroke-width:2}
+.skip-link{position:absolute;left:12px;top:-60px;z-index:1000;padding:.5rem 1rem;border-radius:10px;background:var(--accent);color:#fff;font-weight:700;text-decoration:none}
+.skip-link:focus{top:12px;color:#fff}
+#main:focus{outline:none}
+.nav-btn.active,.nav-btn[aria-current="page"]{box-shadow:inset 4px 0 0 var(--accent2);font-weight:700}
+html[data-theme="light"] .nav-btn.active,html[data-theme="light"] .nav-btn[aria-current="page"]{background:rgba(43,103,255,.16);border-color:#2b67ff;color:#0a3ba8;box-shadow:inset 4px 0 0 #2b67ff}
+html body .badge.bg-warning,html body .badge.bg-info,html body .badge.text-dark{color:#111 !important}
+html body .badge.bg-danger{background-color:#b42332 !important;color:#fff !important}
+html body .badge.bg-success{background-color:#146c43 !important;color:#fff !important}
+html body .badge.bg-primary{background-color:#0a58ca !important;color:#fff !important}
+html body .badge.bg-secondary{background-color:#535b62 !important;color:#fff !important}
+html[data-theme="light"] .btn-outline-warning{color:#7a4f00;border-color:#a06800}
+html[data-theme="light"] .btn-outline-warning:hover,html[data-theme="light"] .btn-outline-warning:focus-visible{background:#ffc107;color:#111;border-color:#ffc107}
+/* Confirm step (u03): a disclosure, so it needs no script. */
+.confirm{display:inline-block;position:relative}
+.confirm>summary{list-style:none;display:inline-block}
+.confirm>summary::-webkit-details-marker{display:none}
+.confirm[open]>summary{opacity:.7}
+.confirm-box{margin-top:6px;padding:8px 10px;border:1px solid var(--danger);border-radius:10px;background:var(--card);max-width:320px;font-size:.85rem}
+.confirm-box p{margin:0 0 6px}
+/* Background refresh (u02). */
+.refresh-note{font-size:.8rem}
+/* Paths break at slashes, not mid-word (u04). */
+.path{overflow-wrap:break-word;word-break:normal !important}
+/* Upload progress (u06). */
+.dropzone{border:2px dashed var(--border);border-radius:var(--radius-sm);padding:18px;text-align:center;color:var(--muted)}
+.dropzone.drag{border-color:var(--accent2);background:color-mix(in srgb,var(--accent2) 10%,transparent);color:var(--text)}
+.upload-progress{width:100%;height:10px}
+/* Account and logout live in the menu on phones. */
+.phone-only{display:none}
+/* Phones (u04): table rows become cards, one slim header, bigger touch targets. */
+@media(max-width:700px){
+.app-shell{gap:10px}
+.app-main{gap:10px}
+.app-sidebar{padding:8px 10px}
+.sidebar-header{padding:0;gap:10px}
+.sidebar-logo{width:32px;height:32px;border-radius:9px}
+.sidebar-caption{display:none}
+.app-topbar{display:none !important}
+.phone-only{display:inline-grid}
+div.phone-only{display:flex}
+.sidebar-header .nav-toggle{margin-left:0}
+.sidebar-header .phone-only{margin-left:auto}
+.topbar-icon{width:44px;height:44px}
+.table-responsive{overflow-x:visible}
+table.table-stack,table.table-stack tbody,table.table-stack tr,table.table-stack td,table.table-stack th[scope="row"]{display:block;width:100%}
+table.table-stack thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+table.table-stack tr{border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px 10px;margin-bottom:10px;background:var(--card2)}
+table.table-stack>:not(caption)>*>*{border:0;padding:4px 0}
+table.table-stack td[data-label]:not([data-label=""])::before{content:attr(data-label);display:block;font-size:.75rem;color:var(--muted);font-weight:600}
+table.table-stack td.text-nowrap{white-space:normal !important}
+table.table-stack .d-flex{flex-wrap:wrap}
+.form-check-input{width:1.35em;height:1.35em}
+.btn-link.btn-sm,.btn-sm{min-height:36px}
+}
+/* Edit in place (u06): the form opens over the row on wide screens, inline on phones. */
+.edit{display:inline-block;position:relative}
+.edit>summary{list-style:none;display:inline-block}
+.edit>summary::-webkit-details-marker{display:none}
+.edit-form{position:absolute;right:0;top:calc(100% + 6px);z-index:30;width:min(440px,90vw);padding:12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg1);box-shadow:var(--shadow);text-align:left}
+.confirm-box{position:absolute;right:0;top:calc(100% + 0px);z-index:30;width:max-content;max-width:min(320px,85vw);box-shadow:var(--shadow);background:var(--bg1)}
+@media(max-width:700px){.edit,.confirm{display:block}.edit-form,.confirm-box{position:static;width:auto;max-width:none}}
+button.nav-btn{text-align:left;color:var(--text);font:inherit;font-weight:600}

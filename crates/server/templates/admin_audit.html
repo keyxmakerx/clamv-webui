@@ -1,14 +1,32 @@
 {% extends "shell.html" %}
 {% block title %}Audit log · ClamAV Web UI{% endblock %}
 {% block content %}
-<h1 class="h3">Audit log</h1>
-<p class="muted">Latest 200 events. Every event is also written to the container log.</p>
+<div class="page-head"><h1 class="h3">Audit log</h1><span class="muted small">{{ total }} event(s)</span>
+<a class="btn btn-sm btn-outline-secondary ms-auto" href="{{ self.csv_link() }}"><i class="fas fa-file-csv" aria-hidden="true"></i> Export CSV</a></div>
+<p class="muted">Every event is also written to the container log. The export holds up to 10,000 events.</p>
+<form method="get" action="/admin/audit" class="filter-bar" data-remember="audit">
+<div class="filter-search"><i class="fas fa-search" aria-hidden="true"></i>
+<input class="form-control" type="search" name="q" value="{{ q.q }}" maxlength="256" placeholder="Search user, action, details, address or job" aria-label="Search the audit log"></div>
+<div class="filter-chips">
+<select class="form-select form-select-sm" name="range" aria-label="Time range"><option value="">Any time</option>{% for (v, l) in [("1h", "Last hour"), ("24h", "Last 24 h"), ("7d", "Last 7 days"), ("30d", "Last 30 days")] %}<option value="{{ v }}"{% if q.range == *v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select>
+<select class="form-select form-select-sm" name="action" aria-label="Action"><option value="">Any action</option>{% for a in actions %}<option{% if q.action == *a %} selected{% endif %}>{{ a }}</option>{% endfor %}</select>
+<select class="form-select form-select-sm" name="outcome" aria-label="Outcome"><option value="">Any outcome</option>{% for v in ["OK", "FAILED", "FAIL", "DENIED", "ALERT"] %}<option{% if q.outcome == *v %} selected{% endif %}>{{ v }}</option>{% endfor %}</select>
+<input class="form-control form-control-sm w-auto" name="user" value="{{ q.user }}" maxlength="64" placeholder="User" aria-label="User">
+<button class="btn btn-sm btn-primary" type="submit">Apply</button>
+<a class="btn btn-sm btn-outline-secondary" href="/admin/audit?reset=1" data-forget="audit">Clear</a>
+</div>
+</form>
 <section class="card mt-3"><div class="card-body table-responsive">
 <table class="table table-sm">
 <thead><tr><th>Time</th><th>User</th><th>Action</th><th>Outcome</th><th>Details</th><th>IP</th></tr></thead>
 <tbody>
-{% for r in rows %}<tr><td class="small text-nowrap">{{ r.at }}</td><td>{{ r.user }}</td><td><code>{{ r.action }}</code></td><td>{{ r.outcome }}</td><td class="small">{{ r.details }}</td><td class="small">{{ r.ip }}</td></tr>
-{% else %}<tr><td colspan="6" class="muted">No events yet.</td></tr>{% endfor %}
+{% for r in rows %}<tr><td class="small text-nowrap">{{ r.at }}</td><td>{{ r.user }}</td><td><code>{{ r.action }}</code></td><td>{{ r.outcome }}</td><td class="small text-break">{{ r.details }}</td><td class="small">{{ r.ip }}</td></tr>
+{% else %}<tr><td colspan="6" class="muted">No events match.</td></tr>{% endfor %}
 </tbody></table>
+{% if pages > 1 %}<nav aria-label="Pages" class="d-flex gap-2 align-items-center">
+{% if page > 0 %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page - 1) }}">Newer</a>{% endif %}
+<span class="small muted">Page {{ page + 1 }} of {{ pages }}</span>
+{% if page + 1 < pages %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page + 1) }}">Older</a>{% endif %}
+</nav>{% endif %}
 </div></section>
 {% endblock %}

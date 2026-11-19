@@ -131,7 +131,7 @@ async fn users_and_sessions() {
             .expect("session");
         assert_ne!(raw, s.id_hash);
         let (s2, u2) = db
-            .session_user(&raw, 600_000)
+            .session_user(&raw, 600_000, true)
             .await
             .expect("lookup")
             .expect("valid");
@@ -141,7 +141,7 @@ async fn users_and_sessions() {
             "{kind:?}"
         );
         assert!(
-            db.session_user("not-a-session", 600_000)
+            db.session_user("not-a-session", 600_000, true)
                 .await
                 .expect("lookup")
                 .is_none()
@@ -152,7 +152,7 @@ async fn users_and_sessions() {
             .await
             .expect("pw");
         assert!(
-            db.session_user(&raw, 600_000)
+            db.session_user(&raw, 600_000, true)
                 .await
                 .expect("lookup")
                 .is_none(),
@@ -168,7 +168,7 @@ async fn users_and_sessions() {
             .await
             .expect("disable");
         assert!(
-            db.session_user(&raw2, 600_000)
+            db.session_user(&raw2, 600_000, true)
                 .await
                 .expect("lookup")
                 .is_none(),
@@ -182,7 +182,7 @@ async fn users_and_sessions() {
             .expect("session");
         assert!(db.delete_user(&u.id).await.expect("delete"));
         assert!(
-            db.session_user(&raw3, 600_000)
+            db.session_user(&raw3, 600_000, true)
                 .await
                 .expect("lookup")
                 .is_none(),

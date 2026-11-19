@@ -30,7 +30,11 @@ impl FromRequestParts<Arc<AppState>> for Auth {
         };
         match state
             .db
-            .session_user(&raw, state.cfg.session_idle_ms())
+            .session_user(
+                &raw,
+                state.cfg.session_idle_ms(),
+                !super::ux::is_refresh(&parts.headers),
+            )
             .await
         {
             Ok(found) => {

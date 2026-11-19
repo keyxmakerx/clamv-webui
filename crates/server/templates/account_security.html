@@ -50,7 +50,7 @@
 <h2 class="h5"><i class="fas fa-key" aria-hidden="true"></i> Passkeys</h2>
 <p class="muted">Sign in with your fingerprint, face or security key instead of a password. Passkeys need HTTPS (or localhost).</p>
 {% if !passkeys.is_empty() %}<table class="table table-sm align-middle">
-<thead><tr><th>Name</th><th>Added</th><th>Last used</th><th></th></tr></thead>
+<thead><tr><th>Name</th><th>Added</th><th>Last used</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
 <tbody>{% for k in passkeys %}<tr><td>{{ k.name }}</td><td class="small">{{ k.created }}</td><td class="small">{{ k.last_used }}</td>
 <td><form method="post" action="/account/passkeys/{{ k.id }}/delete" class="d-flex gap-2 justify-content-end"><input type="hidden" name="_csrf" value="{{ nav.csrf }}">{% if proof == "totp" %}<input class="form-control form-control-sm w-auto" name="proof" required autocomplete="one-time-code" maxlength="64" placeholder="Authenticator code" aria-label="Authenticator code">{% else if proof == "password" || proof == "ldap" %}<input class="form-control form-control-sm w-auto" type="password" name="proof" required autocomplete="current-password" maxlength="256" placeholder="Current password" aria-label="Current password">{% endif %}<button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form></td></tr>{% endfor %}</tbody>
 </table>{% endif %}
@@ -71,11 +71,11 @@
 <div><label class="form-label" for="pref-clock">Clock</label><select class="form-select" id="pref-clock"><option value="">Locale default</option><option value="24">24-hour</option><option value="12">12-hour</option></select></div>
 </div>
 <p class="small text-success mt-2 mb-0 d-none" id="pref-saved" role="status">Saved. Times update on the next page.</p>
-<form method="post" action="/account/language" class="d-flex flex-wrap gap-2 align-items-end mt-3">
+{% if crate::i18n::LANGS.len() > 1 %}<form method="post" action="/account/language" class="d-flex flex-wrap gap-2 align-items-end mt-3">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
 <div><label class="form-label" for="pref-lang">{{ nav.t("Language") }}</label><select class="form-select" id="pref-lang" name="lang"><option value="">{{ nav.t("This browser's language") }}</option>{% for (code, name, _) in crate::i18n::LANGS %}<option value="{{ code }}"{% if *code == nav.lang %} selected{% endif %}>{{ name }}</option>{% endfor %}</select></div>
 <button class="btn btn-outline-primary" type="submit">{{ nav.t("Save language") }}</button>
-</form>
+</form>{% endif %}
 </div></section>
 <p class="mt-3"><a href="/account/password">Change password</a></p>
 <script defer src="/js/passkey.js?v={{ crate::web::asset_v() }}"></script>

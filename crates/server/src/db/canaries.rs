@@ -104,6 +104,24 @@ impl Db {
         row.as_ref().map(from_row).transpose()
     }
 
+    /// A new path or decoy setting; the host reports its state again.
+    pub async fn update_canary(
+        &self,
+        id: &str,
+        path: &str,
+        create_file: bool,
+    ) -> Result<bool, DbError> {
+        let r = sqlx::query(self.sql(
+            "UPDATE canaries SET path = ?, create_file = ?, armed = NULL, checked_at = NULL WHERE id = ?",
+        ))
+        .bind(path)
+        .bind(i64::from(create_file))
+        .bind(id)
+        .execute(self.pool())
+        .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     pub async fn delete_canary(&self, id: &str) -> Result<bool, DbError> {
         let r = sqlx::query(self.sql("DELETE FROM canaries WHERE id = ?"))
             .bind(id)

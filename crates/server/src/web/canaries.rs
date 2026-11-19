@@ -23,6 +23,7 @@ pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/admin/canaries", get(page).post(create))
         .route("/admin/canaries/{id}/delete", post(delete))
+        .route("/admin/canaries/{id}/edit", post(edit))
 }
 
 pub struct Row {
@@ -126,16 +127,13 @@ async fn show(st: &AppState, nav: Nav) -> Response {
 }
 
 async fn result(
-    st: &AppState,
+    _st: &AppState,
     s: &Session,
-    me: &User,
+    _me: &User,
     error: Option<String>,
     success: Option<String>,
 ) -> Response {
-    let mut nav = Nav::new("canaries", s, me);
-    nav.error = error;
-    nav.success = success;
-    show(st, nav).await
+    super::ux::back(s, "/admin/canaries", error, success)
 }
 
 #[derive(Deserialize)]
@@ -175,38 +173,8 @@ async fn create(
         },
     };
     let agent_id = agent.as_ref().map(|a| a.id);
-    // Scans open every file they read, so a canary inside a scanned folder would trip itself.
-    let roots: Vec<String> = match &agent {
-        None => st
-            .cfg
-            .scan_roots
-            .iter()
-            .map(|p| p.display().to_string())
-            .collect(),
-        Some(a) => a.roots.clone(),
-    };
-    if let Some(r) = roots.iter().find(|r| {
-        let r = r.trim_end_matches('/');
-        path.starts_with(&format!("{r}/"))
-    }) {
-        return fail(format!(
-            "{path} is inside the scanned folder {r}; scans would trip it. Put canaries next to what they guard, outside scanned folders."
-        ))
-        .await;
-    }
-    let existing = st.db.host_canaries(agent_id).await.unwrap_or_default();
-    if existing.iter().any(|c| c.path == path)
-        || (agent_id.is_none()
-            && st
-                .cfg
-                .canary_files
-                .iter()
-                .any(|p| p.as_os_str() == path.as_str()))
-    {
-        return fail("That canary already exists on this host.".into()).await;
-    }
-    if existing.len() >= MAX_PER_HOST {
-        return fail(format!("At most {MAX_PER_HOST} canaries per host.")).await;
+    if let Err(m) = placement(&st, agent.as_ref(), &path, None).await {
+        return fail(m).await;
     }
     if st
         .db
@@ -233,6 +201,114 @@ async fn create(
         "Canary added and armed if the file exists.".to_owned()
     };
     result(&st, &s, &me, None, Some(msg)).await
+}
+
+/// Where a canary may go on its host. `skip` is the canary being edited.
+async fn placement(
+    st: &AppState,
+    agent: Option<&crate::db::agents::Agent>,
+    path: &str,
+    skip: Option<&str>,
+) -> Result<(), String> {
+    let agent_id = agent.map(|a| a.id);
+    // Scans open every file they read, so a canary inside a scanned folder would trip itself.
+    let roots: Vec<String> = match agent {
+        None => st
+            .cfg
+            .scan_roots
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect(),
+        Some(a) => a.roots.clone(),
+    };
+    if let Some(r) = roots.iter().find(|r| {
+        let r = r.trim_end_matches('/');
+        path.starts_with(&format!("{r}/"))
+    }) {
+        return Err(format!(
+            "{path} is inside the scanned folder {r}; scans would trip it. Put canaries next to what they guard, outside scanned folders."
+        ));
+    }
+    let existing: Vec<_> = st
+        .db
+        .host_canaries(agent_id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|c| Some(c.id.as_str()) != skip)
+        .collect();
+    if existing.iter().any(|c| c.path == path)
+        || (agent_id.is_none() && st.cfg.canary_files.iter().any(|p| p.as_os_str() == path))
+    {
+        return Err("That canary already exists on this host.".into());
+    }
+    if skip.is_none() && existing.len() >= MAX_PER_HOST {
+        return Err(format!("At most {MAX_PER_HOST} canaries per host."));
+    }
+    Ok(())
+}
+
+async fn edit(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    info: RequestInfo,
+    Path(id): Path<String>,
+    Form(f): Form<CreateForm>,
+) -> Response {
+    let (s, me) = match admin_post(auth, f.csrf.as_deref()) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let fail = |m: String| result(&st, &s, &me, Some(m), None);
+    let Ok(Some(c)) = st.db.canary(&id).await else {
+        return fail("No such canary.".into()).await;
+    };
+    let path = f.path.trim().to_owned();
+    if let Err(m) = crate::canary::valid_path(&path) {
+        return fail(m.into()).await;
+    }
+    let agent = match c.agent_id {
+        None => None,
+        Some(a) => match st.db.agent(a).await {
+            Ok(Some(a)) => Some(a),
+            _ => return fail("Unknown agent.".into()).await,
+        },
+    };
+    if let Err(m) = placement(&st, agent.as_ref(), &path, Some(&c.id)).await {
+        return fail(m).await;
+    }
+    if st
+        .db
+        .update_canary(&c.id, &path, f.create.is_some())
+        .await
+        .is_err()
+    {
+        return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+    }
+    let host = agent
+        .as_ref()
+        .map_or_else(crate::canary::hostname, |a| a.name.clone());
+    audit(
+        &st,
+        &me,
+        &info,
+        "CANARY_UPDATE",
+        format!("{host}: {} -> {path}", c.path),
+    )
+    .await;
+    if c.agent_id.is_none() {
+        crate::canary::reload(&st).await;
+    } else {
+        st.agents.poke();
+    }
+    result(
+        &st,
+        &s,
+        &me,
+        None,
+        Some(format!("Saved. {} was left in place.", c.path)),
+    )
+    .await
 }
 
 #[derive(Deserialize)]

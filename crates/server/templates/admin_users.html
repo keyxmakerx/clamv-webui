@@ -15,7 +15,7 @@
 </div></section>
 <section class="card mt-3"><div class="card-body table-responsive">
 <table class="table align-middle">
-<thead><tr><th>User</th><th>Role and status</th><th>Last sign-in</th><th>Reset password</th><th></th></tr></thead>
+<thead><tr><th>User</th><th>Role and status</th><th>Last sign-in</th><th>Reset password</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
 <tbody>
 {% for u in users %}
 <tr>
@@ -30,12 +30,8 @@
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
 <input class="form-control form-control-sm" type="password" name="password" required minlength="12" maxlength="128" autocomplete="new-password" aria-label="New password for {{ u.username }}">
 <button class="btn btn-sm btn-outline-secondary" type="submit">Reset</button></form></td>
-<td>{% if !u.is_self %}<form method="post" action="/admin/users/{{ u.id }}/delete">
-<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
-<button class="btn btn-sm btn-outline-danger" type="submit">Delete</button></form>{% endif %}
-{% if !u.mfa.is_empty() %}<form method="post" action="/admin/users/{{ u.id }}/mfa-reset" class="mt-1">
-<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
-<button class="btn btn-sm btn-outline-warning" type="submit" title="Remove the authenticator app and passkeys, for a user who lost them">Reset 2FA</button></form>{% endif %}</td>
+<td><div class="d-flex flex-column gap-1 align-items-start">{% if !u.is_self %}<details class="confirm"><summary class="btn btn-sm btn-outline-danger">Delete</summary><div class="confirm-box"><p>Delete {{ u.username }}? This can't be undone.</p><form method="post" action="/admin/users/{{ u.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-danger" type="submit">Delete user</button></form></div></details>{% endif %}
+{% if !u.mfa.is_empty() %}<details class="confirm"><summary class="btn btn-sm btn-outline-warning">Reset 2FA</summary><div class="confirm-box"><p>Remove {{ u.username }}'s authenticator app and passkeys? They sign in with the password alone until they add new ones. This can't be undone.</p><form method="post" action="/admin/users/{{ u.id }}/mfa-reset"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-danger" type="submit">Reset 2FA</button></form></div></details>{% endif %}</div></td>
 </tr>
 {% endfor %}
 </tbody></table>

@@ -250,7 +250,7 @@ impl FromRequestParts<Arc<AppState>> for Principal {
         let session = match cookie(&parts.headers, COOKIE) {
             Some(raw) => st
                 .db
-                .session_user(&raw, st.cfg.session_idle_ms())
+                .session_user(&raw, st.cfg.session_idle_ms(), true)
                 .await
                 .map_err(|_| unavailable())?,
             None => None,

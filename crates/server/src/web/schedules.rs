@@ -70,6 +70,7 @@ pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/admin/schedules", get(page).post(create))
         .route("/admin/schedules/{id}/run", post(run_now))
+        .route("/admin/schedules/{id}/edit", post(edit))
         .route("/admin/schedules/{id}/enabled", post(toggle))
         .route("/admin/schedules/{id}/delete", post(delete))
 }
@@ -81,6 +82,12 @@ pub struct Row {
     next: String,
     paths: Vec<String>,
     endpoint: String,
+    /// The "Run on" value for the edit form: "", an endpoint id, or `a:<id>`.
+    run_on: String,
+    /// The edit form's own zone and window values (empty when unset).
+    time_zone: String,
+    window_start: String,
+    window_end: String,
     enabled: bool,
     eicar: bool,
     control: &'static str,
@@ -104,6 +111,17 @@ struct SchedulesPage {
     default_zone: String,
     draft: Draft,
     preview: Vec<String>,
+}
+
+impl SchedulesPage {
+    /// The "Run on" value an endpoint has in the form.
+    fn endpoint_value(&self, e: &Endpoint) -> String {
+        if e.is_default {
+            String::new()
+        } else {
+            e.id.to_string()
+        }
+    }
 }
 
 async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
@@ -147,6 +165,14 @@ async fn row(st: &AppState, s: Schedule, names: &super::scan::Names) -> Row {
     };
     Row {
         endpoint: names.label(s.endpoint_id, s.agent_id),
+        run_on: match (s.agent_id, s.endpoint_id) {
+            (Some(a), _) => format!("a:{a}"),
+            (None, Some(e)) => e.to_string(),
+            (None, None) => String::new(),
+        },
+        time_zone: s.time_zone.clone().unwrap_or_default(),
+        window_start: s.window.map(|w| hhmm(w.0)).unwrap_or_default(),
+        window_end: s.window.map(|w| hhmm(w.1)).unwrap_or_default(),
         next,
         control: state,
         control_job: cj,
@@ -201,13 +227,13 @@ async fn show(st: &AppState, nav: Nav, draft: Draft, preview: Vec<String>) -> Re
 }
 
 async fn result(
-    st: &AppState,
+    _st: &AppState,
     s: &Session,
-    me: &User,
+    _me: &User,
     error: Option<String>,
     success: Option<String>,
 ) -> Response {
-    with_draft(st, s, me, error, success, fresh(), Vec::new()).await
+    super::ux::back(s, "/admin/schedules", error, success)
 }
 
 async fn with_draft(
@@ -266,6 +292,170 @@ async fn exclusion(st: &AppState, run_on: &RunOn, line: &str) -> Result<String, 
     }
 }
 
+/// A checked schedule form.
+struct Checked {
+    name: String,
+    cron: String,
+    paths: Vec<String>,
+    endpoint_id: Option<i64>,
+    agent_id: Option<i64>,
+    eicar: bool,
+    exclusions: Vec<String>,
+    window: Option<(i64, i64)>,
+    zone_name: String,
+    tz: jiff::tz::TimeZone,
+    upcoming: Vec<i64>,
+}
+
+impl Checked {
+    fn new_schedule(&self) -> NewSchedule<'_> {
+        NewSchedule {
+            name: &self.name,
+            cron: &self.cron,
+            paths: &self.paths,
+            endpoint_id: self.endpoint_id,
+            agent_id: self.agent_id,
+            eicar_check: self.eicar,
+            exclusions: &self.exclusions,
+            window: self.window,
+            time_zone: (!self.zone_name.is_empty()).then_some(self.zone_name.as_str()),
+        }
+    }
+
+    fn audit_line(&self) -> String {
+        format!(
+            "{} [{}{}] {}{}",
+            self.name,
+            self.cron,
+            if self.zone_name.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", self.zone_name)
+            },
+            self.paths.join(", "),
+            if self.exclusions.is_empty() {
+                String::new()
+            } else {
+                format!(" excluding {}", self.exclusions.join(", "))
+            }
+        )
+    }
+}
+
+/// The same checks for a new schedule and an edited one. With `preview_only`
+/// the checks stop once the next run times are known.
+async fn check(st: &AppState, f: &CreateForm, preview_only: bool) -> Result<Checked, String> {
+    let zone_name = f.time_zone.trim();
+    let tz = match zone_name {
+        "" => crate::schedule::default_zone(&st.cfg).1,
+        z => crate::cron::zone(z).map_err(|e| format!("Time zone: {e}."))?,
+    };
+    let window = match (parse_hhmm(&f.window_start), parse_hhmm(&f.window_end)) {
+        (Ok(None), Ok(None)) => None,
+        (Ok(Some(a)), Ok(Some(b))) if a != b => Some((a, b)),
+        (Err(e), _) | (_, Err(e)) => return Err(format!("Scan window: {e}")),
+        _ => {
+            return Err("Scan window: give a start and a different end, or neither.".into());
+        }
+    };
+    let name = f.name.trim();
+    if !preview_only
+        && (name.is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control))
+    {
+        return Err("Names are 1 to 100 characters.".into());
+    }
+    let cron = f.cron.trim();
+    let parsed = cron
+        .parse::<Cron>()
+        .map_err(|e| format!("Schedule: {e}."))?;
+    let upcoming = crate::schedule::next_runs(&parsed, window, &tz, now_ms(), 5);
+    let mut c = Checked {
+        name: name.to_owned(),
+        cron: cron.to_owned(),
+        paths: Vec::new(),
+        endpoint_id: None,
+        agent_id: None,
+        eicar: f.eicar.is_some(),
+        exclusions: Vec::new(),
+        window,
+        zone_name: zone_name.to_owned(),
+        tz,
+        upcoming,
+    };
+    if preview_only {
+        return Ok(c);
+    }
+    if c.upcoming.is_empty() {
+        return Err("That schedule never runs inside its window.".into());
+    }
+    let run_on = super::scan::chosen_target(st, f.endpoint.as_deref())
+        .await
+        .map_err(str::to_owned)?;
+    for line in f.paths.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let p = match &run_on {
+            // The agent checks each path again when it runs.
+            RunOn::Agent(a) => match crate::agent::refuse(a, line) {
+                None => line.to_owned(),
+                Some(m) => return Err(format!("{line}: {m}")),
+            },
+            RunOn::Endpoint(_) => {
+                if st.cfg.scan_roots.is_empty() {
+                    return Err("Set SCAN_ROOTS before adding schedules.".into());
+                }
+                match scan::resolve_path(&st.cfg.scan_roots, line).await {
+                    Ok(p) => match p.to_str() {
+                        Some(p) if st.excluded(p) => {
+                            return Err(format!("{line}: {}", scan::PATH_EXCLUDED));
+                        }
+                        Some(p) => p.to_owned(),
+                        None => return Err(format!("{line}: only UTF-8 paths can be scheduled.")),
+                    },
+                    Err(m) => return Err(format!("{line}: {m}")),
+                }
+            }
+        };
+        if !c.paths.contains(&p) {
+            c.paths.push(p);
+        }
+    }
+    if c.paths.is_empty() || c.paths.len() > MAX_PATHS {
+        return Err(format!("Give 1 to {MAX_PATHS} paths, one per line."));
+    }
+    for line in f
+        .exclusions
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+    {
+        let p = exclusion(st, &run_on, line).await?;
+        if !c.exclusions.contains(&p) {
+            c.exclusions.push(p);
+        }
+    }
+    if c.exclusions.len() > MAX_PATHS {
+        return Err(format!("At most {MAX_PATHS} exclusions."));
+    }
+    if let RunOn::Agent(_) = &run_on {
+        // The agent's folders cannot be listed from here to scan around an inner exclusion.
+        if let Some(e) = c.exclusions.iter().find(|e| {
+            c.paths
+                .iter()
+                .any(|p| std::path::Path::new(e).starts_with(p) && e != &p)
+        }) {
+            return Err(format!(
+                "{e}: on an agent, exclusions can only leave out whole paths; use ExcludePath in that host's clamd.conf for folders inside a path."
+            ));
+        }
+    } else {
+        crate::schedule::expand(&c.paths, &c.exclusions).await?;
+    }
+    (c.endpoint_id, c.agent_id) = match &run_on {
+        RunOn::Agent(a) => (None, Some(a.id)),
+        RunOn::Endpoint(e) => (*e, None),
+    };
+    Ok(c)
+}
+
 async fn create(
     State(st): State<Arc<AppState>>,
     auth: Auth,
@@ -287,37 +477,14 @@ async fn create(
         window_end: f.window_end.clone(),
         exclusions: f.exclusions.clone(),
     };
+    // Errors and the preview show the form again with what was typed.
     let fail = |m: String| with_draft(&st, &s, &me, Some(m), None, draft(), Vec::new());
-    let zone_name = f.time_zone.trim();
-    let tz = match zone_name {
-        "" => crate::schedule::default_zone(&st.cfg).1,
-        z => match crate::cron::zone(z) {
-            Ok(tz) => tz,
-            Err(e) => return fail(format!("Time zone: {e}.")).await,
-        },
-    };
-    let window = match (parse_hhmm(&f.window_start), parse_hhmm(&f.window_end)) {
-        (Ok(None), Ok(None)) => None,
-        (Ok(Some(a)), Ok(Some(b))) if a != b => Some((a, b)),
-        (Err(e), _) | (_, Err(e)) => return fail(format!("Scan window: {e}")).await,
-        _ => {
-            return fail("Scan window: give a start and a different end, or neither.".into()).await;
-        }
-    };
-    let name = f.name.trim();
-    if f.preview.is_none()
-        && (name.is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control))
-    {
-        return fail("Names are 1 to 100 characters.".into()).await;
-    }
-    let cron = f.cron.trim();
-    let parsed = match cron.parse::<Cron>() {
+    let c = match check(&st, &f, f.preview.is_some()).await {
         Ok(c) => c,
-        Err(e) => return fail(format!("Schedule: {e}.")).await,
+        Err(m) => return fail(m).await,
     };
-    let upcoming = crate::schedule::next_runs(&parsed, window, &tz, now_ms(), 5);
     if f.preview.is_some() {
-        let shown: Vec<String> = upcoming.iter().map(|t| fmt_in(&tz, *t)).collect();
+        let shown: Vec<String> = c.upcoming.iter().map(|t| fmt_in(&c.tz, *t)).collect();
         let msg = if shown.is_empty() {
             Some("That schedule never runs inside its window.".to_owned())
         } else {
@@ -325,122 +492,48 @@ async fn create(
         };
         return with_draft(&st, &s, &me, msg, None, draft(), shown).await;
     }
-    if upcoming.is_empty() {
-        return fail("That schedule never runs inside its window.".into()).await;
-    }
-    let run_on = match super::scan::chosen_target(&st, f.endpoint.as_deref()).await {
-        Ok(r) => r,
-        Err(m) => return fail(m.into()).await,
-    };
-    let mut paths = Vec::new();
-    for line in f.paths.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        let p = match &run_on {
-            // The agent checks each path again when it runs.
-            RunOn::Agent(a) => match crate::agent::refuse(a, line) {
-                None => line.to_owned(),
-                Some(m) => return fail(format!("{line}: {m}")).await,
-            },
-            RunOn::Endpoint(_) => {
-                if st.cfg.scan_roots.is_empty() {
-                    return fail("Set SCAN_ROOTS before adding schedules.".into()).await;
-                }
-                match scan::resolve_path(&st.cfg.scan_roots, line).await {
-                    Ok(p) => match p.to_str() {
-                        Some(p) if st.excluded(p) => {
-                            return fail(format!("{line}: {}", scan::PATH_EXCLUDED)).await;
-                        }
-                        Some(p) => p.to_owned(),
-                        None => {
-                            return fail(format!("{line}: only UTF-8 paths can be scheduled."))
-                                .await;
-                        }
-                    },
-                    Err(m) => return fail(format!("{line}: {m}")).await,
-                }
-            }
-        };
-        if !paths.contains(&p) {
-            paths.push(p);
-        }
-    }
-    if paths.is_empty() || paths.len() > MAX_PATHS {
-        return fail(format!("Give 1 to {MAX_PATHS} paths, one per line.")).await;
-    }
-    let mut exclusions = Vec::new();
-    for line in f
-        .exclusions
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-    {
-        match exclusion(&st, &run_on, line).await {
-            Ok(p) if !exclusions.contains(&p) => exclusions.push(p),
-            Ok(_) => {}
-            Err(m) => return fail(m).await,
-        }
-    }
-    if exclusions.len() > MAX_PATHS {
-        return fail(format!("At most {MAX_PATHS} exclusions.")).await;
-    }
-    if let RunOn::Agent(_) = &run_on {
-        // The agent's folders cannot be listed from here to scan around an inner exclusion.
-        if let Some(e) = exclusions.iter().find(|e| {
-            paths
-                .iter()
-                .any(|p| std::path::Path::new(e).starts_with(p) && e != &p)
-        }) {
-            return fail(format!(
-                "{e}: on an agent, exclusions can only leave out whole paths; use ExcludePath in that host's clamd.conf for folders inside a path."
-            ))
-            .await;
-        }
-    } else if let Err(m) = crate::schedule::expand(&paths, &exclusions).await {
-        return fail(m).await;
-    }
-    let (endpoint_id, agent_id) = match &run_on {
-        RunOn::Agent(a) => (None, Some(a.id)),
-        RunOn::Endpoint(e) => (*e, None),
-    };
-    match st
-        .db
-        .create_schedule(NewSchedule {
-            name,
-            cron,
-            paths: &paths,
-            endpoint_id,
-            agent_id,
-            eicar_check: f.eicar.is_some(),
-            exclusions: &exclusions,
-            window,
-            time_zone: (!zone_name.is_empty()).then_some(zone_name),
-        })
-        .await
-    {
+    match st.db.create_schedule(c.new_schedule()).await {
         Ok(_) => {
-            audit(
-                &st,
-                &me,
-                &info,
-                "SCHEDULE_CREATE",
-                format!(
-                    "{name} [{cron}{}] {}{}",
-                    if zone_name.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" {zone_name}")
-                    },
-                    paths.join(", "),
-                    if exclusions.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" excluding {}", exclusions.join(", "))
-                    }
-                ),
-            )
-            .await;
-            result(&st, &s, &me, None, Some(format!("Added {name}."))).await
+            audit(&st, &me, &info, "SCHEDULE_CREATE", c.audit_line()).await;
+            result(&st, &s, &me, None, Some(format!("Added {}.", c.name))).await
         }
         Err(_) => fail("That name is already taken.".into()).await,
+    }
+}
+
+async fn edit(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    info: RequestInfo,
+    Path(id): Path<String>,
+    Form(f): Form<CreateForm>,
+) -> Response {
+    let (s, me) = match admin_post(auth, f.csrf.as_deref()) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    if !matches!(st.db.schedule(&id).await, Ok(Some(_))) {
+        return result(&st, &s, &me, Some("No such schedule.".into()), None).await;
+    }
+    let c = match check(&st, &f, false).await {
+        Ok(c) => c,
+        Err(m) => return result(&st, &s, &me, Some(m), None).await,
+    };
+    match st.db.update_schedule(&id, c.new_schedule()).await {
+        Ok(_) => {
+            audit(&st, &me, &info, "SCHEDULE_UPDATE", c.audit_line()).await;
+            result(&st, &s, &me, None, Some(format!("Saved {}.", c.name))).await
+        }
+        Err(_) => {
+            result(
+                &st,
+                &s,
+                &me,
+                Some("That name is already taken.".into()),
+                None,
+            )
+            .await
+        }
     }
 }
 

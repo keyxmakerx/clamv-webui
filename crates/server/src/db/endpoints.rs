@@ -101,6 +101,22 @@ impl Db {
         Ok(e)
     }
 
+    /// Fails if another endpoint already has the name.
+    pub async fn update_endpoint(
+        &self,
+        id: i64,
+        name: &str,
+        address: &str,
+    ) -> Result<bool, DbError> {
+        let r = sqlx::query(self.sql("UPDATE endpoints SET name = ?, address = ? WHERE id = ?"))
+            .bind(name)
+            .bind(address)
+            .bind(id)
+            .execute(self.pool())
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     pub async fn set_default_endpoint(&self, id: i64) -> Result<(), DbError> {
         let mut tx = self.pool().begin().await?;
         sqlx::query(self.sql("UPDATE endpoints SET is_default = 0"))

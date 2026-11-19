@@ -5,11 +5,12 @@
 <section class="card mt-3"><div class="card-body">
 <h2 class="h5">Upload files</h2>
 <p class="muted small">Files stream straight to clamd and are never stored. Up to {{ max_files }} files, {{ max_mb }} MiB each.</p>
-<form method="post" action="/scan/upload" enctype="multipart/form-data" class="row g-2 align-items-end">
+<form method="post" action="/scan/upload" enctype="multipart/form-data" class="row g-2 align-items-end" data-upload>
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
 <div class="col-md-3"><label class="form-label" for="ue">Endpoint</label><select class="form-select" id="ue" name="endpoint">{% for e in endpoints %}<option value="{% if !e.is_default %}{{ e.id }}{% endif %}"{% if e.is_default %} selected{% endif %}>{{ e.name }}{% if e.is_default %} (default){% endif %}</option>{% endfor %}</select></div>
-<div class="col-md-7"><label class="form-label" for="uf">Files</label><input class="form-control" id="uf" name="files" type="file" multiple required></div>
+<div class="col-md-7"><label class="form-label" for="uf">Files</label><div class="dropzone"><input class="form-control" id="uf" name="files" type="file" multiple required><div class="small mt-2">or drop files here</div></div></div>
 <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">Scan</button></div>
+<div class="col-12"><progress class="upload-progress d-none" max="100" value="0" aria-label="Upload progress"></progress><div class="upload-note small muted" role="status" aria-live="polite"></div></div>
 </form>
 </div></section>
 <section class="card mt-3"><div class="card-body">

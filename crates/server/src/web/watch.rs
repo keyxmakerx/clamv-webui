@@ -26,12 +26,15 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/admin/watch", get(page).post(create))
         .route("/admin/watch/{id}/enabled", post(toggle))
         .route("/admin/watch/{id}/delete", post(delete))
+        .route("/admin/watch/{id}/edit", post(edit))
 }
 
 pub struct Row {
     id: String,
     path: String,
     endpoint: String,
+    /// The endpoint select's value: empty for the default.
+    endpoint_value: String,
     enabled: bool,
     created: String,
 }
@@ -67,6 +70,7 @@ async fn show(st: &AppState, nav: Nav) -> Response {
                 .and_then(|id| endpoints.iter().find(|e| e.id == id))
                 .map_or_else(|| "default".into(), |e| e.name.clone()),
             created: fmt_ts(w.created_at),
+            endpoint_value: w.endpoint_id.map(|i| i.to_string()).unwrap_or_default(),
             id: w.id,
             path: w.path,
             enabled: w.enabled,
@@ -95,16 +99,13 @@ async fn show(st: &AppState, nav: Nav) -> Response {
 }
 
 async fn result(
-    st: &AppState,
+    _st: &AppState,
     s: &Session,
-    me: &User,
+    _me: &User,
     error: Option<String>,
     success: Option<String>,
 ) -> Response {
-    let mut nav = Nav::new("watch", s, me);
-    nav.error = error;
-    nav.success = success;
-    show(st, nav).await
+    super::ux::back(s, "/admin/watch", error, success)
 }
 
 #[derive(Deserialize)]
@@ -267,4 +268,73 @@ async fn delete(
         Some(format!("Stopped watching {}.", w.path)),
     )
     .await
+}
+
+/// Change a watched folder's path or endpoint. A new path is treated like a
+/// new watch: what is there now is recorded and only later changes are scanned.
+async fn edit(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    info: RequestInfo,
+    Path(id): Path<String>,
+    Form(f): Form<CreateForm>,
+) -> Response {
+    let (s, me, w) = match target(&st, auth, f.csrf.as_deref(), &id).await {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let fail = |m: String| result(&st, &s, &me, Some(m), None);
+    let real = match scan::resolve_path(&st.cfg.scan_roots, f.path.trim()).await {
+        Ok(p) if p.is_dir() => p,
+        Ok(_) => return fail("Pick a folder, not a file.".into()).await,
+        Err(m) => return fail(m.into()).await,
+    };
+    let Some(path) = real.to_str().map(str::to_owned) else {
+        return fail("Only UTF-8 paths can be watched.".into()).await;
+    };
+    let others = st.db.list_watches().await.unwrap_or_default();
+    if others.iter().any(|o| o.id != w.id && o.path == path) {
+        return fail("That folder is already watched.".into()).await;
+    }
+    let endpoint_id = match f
+        .endpoint
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        None => None,
+        Some(v) => match v.parse::<i64>() {
+            Ok(id) if matches!(st.db.endpoint(id).await, Ok(Some(_))) => Some(id),
+            _ => return fail("Unknown endpoint.".into()).await,
+        },
+    };
+    let moved = path != w.path;
+    if moved {
+        crate::watch::baseline(&st, real.clone()).await;
+    }
+    match st.db.update_watch(&w.id, &path, endpoint_id).await {
+        Ok(true) => {}
+        Ok(false) => return fail("No such watched folder.".into()).await,
+        Err(_) => return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable."),
+    }
+    if moved {
+        let still = others
+            .iter()
+            .filter(|o| o.id != w.id)
+            .map(|o| o.path.as_str())
+            .chain(std::iter::once(path.as_str()))
+            .any(|p| w.path.starts_with(p) || p.starts_with(&w.path));
+        if !still {
+            let _ = st.db.forget_processed_under(&w.path).await;
+        }
+    }
+    audit(
+        &st,
+        &me,
+        &info,
+        "WATCH_UPDATE",
+        format!("{} -> {path}", w.path),
+    )
+    .await;
+    result(&st, &s, &me, None, Some(format!("Saved {path}."))).await
 }

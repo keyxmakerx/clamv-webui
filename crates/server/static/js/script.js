@@ -1,4 +1,5 @@
-// Theme, local times, remembered filters, search help and display preferences.
+// Theme, local times, remembered filters, search help, display preferences,
+// background refresh, phone tables and upload progress.
 (function () {
   "use strict";
   function get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
@@ -111,11 +112,144 @@
     [tzSel, clockSel, themeSel].forEach(function (el) { el.addEventListener("change", save); });
   }
 
+
+  // ---- phone tables: label each cell with its column so rows can stack ----
+  function stackTables(root) {
+    (root || document).querySelectorAll("table.table").forEach(function (t) {
+      var heads = t.tHead ? t.tHead.rows[0] : null;
+      if (!heads) return;
+      var labels = [];
+      Array.prototype.forEach.call(heads.cells, function (th) {
+        var span = th.colSpan || 1;
+        for (var i = 0; i < span; i++) labels.push(th.textContent.trim());
+      });
+      t.classList.add("table-stack");
+      Array.prototype.forEach.call(t.tBodies, function (tb) {
+        Array.prototype.forEach.call(tb.rows, function (tr) {
+          var col = 0;
+          Array.prototype.forEach.call(tr.cells, function (td) {
+            if (td.colSpan > 1 && td.colSpan >= labels.length) { td.setAttribute("data-label", ""); }
+            else if (!td.hasAttribute("data-label")) td.setAttribute("data-label", labels[col] || "");
+            col += td.colSpan || 1;
+          });
+        });
+      });
+    });
+  }
+
+  // ---- background refresh: swap only the parts marked data-refresh-region ----
+  // Sent with X-Clamv-Refresh so the server does not count it as activity,
+  // and the idle sign-out still happens on an open tab.
+  function initRefresh() {
+    var timer = null;
+    function secs() {
+      var el = document.querySelector("[data-refresh-region][data-refresh]");
+      var n = el ? parseInt(el.getAttribute("data-refresh"), 10) : NaN;
+      return n >= 2 ? n : 0;
+    }
+    function schedule() {
+      clearTimeout(timer);
+      var n = secs();
+      if (n) timer = setTimeout(tick, n * 1000);
+    }
+    function busy(region) {
+      var a = document.activeElement;
+      return a && a !== document.body && region.contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.nodeName);
+    }
+    function tick() {
+      // Pause in a hidden tab, except where a check must keep going
+      // (a firewall apply rolls back unless this page confirms it in time).
+      if (document.hidden && !document.querySelector("[data-refresh-region][data-refresh-hidden]")) return;
+      fetch(location.href, { headers: { "X-Clamv-Refresh": "1" }, credentials: "same-origin", cache: "no-store" })
+        .then(function (r) {
+          // Signed out (idle limit or elsewhere): load the page properly.
+          if (r.redirected && new URL(r.url).pathname !== location.pathname) { location.reload(); return null; }
+          return r.ok ? r.text() : null;
+        })
+        .then(function (html) {
+          if (html === null) { schedule(); return; }
+          var doc = new DOMParser().parseFromString(html, "text/html");
+          document.querySelectorAll("[data-refresh-region]").forEach(function (old) {
+            var fresh = old.id && doc.getElementById(old.id);
+            if (!fresh || busy(old)) return;
+            var open = Array.prototype.map.call(old.querySelectorAll("details[open][id]"), function (d) { return d.id; });
+            var node = document.importNode(fresh, true);
+            old.replaceWith(node);
+            open.forEach(function (id) { var d = document.getElementById(id); if (d) d.open = true; });
+            localizeTimes(node);
+            stackTables(node);
+          });
+          schedule();
+        })
+        .catch(function () { schedule(); });
+    }
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) schedule(); });
+    schedule();
+  }
+
+  // ---- uploads: drag and drop, and a progress bar ----
+  function initUpload() {
+    var form = document.querySelector("form[data-upload]");
+    if (!form || !window.XMLHttpRequest || !window.FormData) return;
+    var input = form.querySelector("input[type=file]");
+    var zone = form.querySelector(".dropzone");
+    var bar = form.querySelector(".upload-progress");
+    var note = form.querySelector(".upload-note");
+    if (zone && input) {
+      ["dragenter", "dragover"].forEach(function (e) {
+        zone.addEventListener(e, function (ev) { ev.preventDefault(); zone.classList.add("drag"); });
+      });
+      ["dragleave", "drop"].forEach(function (e) {
+        zone.addEventListener(e, function (ev) { ev.preventDefault(); zone.classList.remove("drag"); });
+      });
+      zone.addEventListener("drop", function (ev) {
+        if (ev.dataTransfer && ev.dataTransfer.files.length) {
+          input.files = ev.dataTransfer.files;
+          input.dispatchEvent(new Event("change"));
+        }
+      });
+      input.addEventListener("change", function () {
+        var n = input.files ? input.files.length : 0;
+        if (note) note.textContent = n ? n + " file(s) chosen" : "";
+      });
+    }
+    form.addEventListener("submit", function (ev) {
+      if (!input || !input.files || !input.files.length) return;
+      ev.preventDefault();
+      var btn = form.querySelector("button[type=submit]");
+      if (btn) btn.disabled = true;
+      var xhr = new XMLHttpRequest();
+      xhr.open("POST", form.action);
+      if (bar) { bar.classList.remove("d-none"); bar.value = 0; }
+      xhr.upload.addEventListener("progress", function (e) {
+        if (!e.lengthComputable) return;
+        var pct = Math.round((e.loaded / e.total) * 100);
+        if (bar) bar.value = pct;
+        if (note) note.textContent = pct < 100 ? "Uploading " + pct + "%" : "Scanning…";
+      });
+      xhr.addEventListener("load", function () {
+        var to = xhr.responseURL || "";
+        if (xhr.status < 400 && to && new URL(to).pathname !== new URL(form.action, location.href).pathname) {
+          location.assign(to);
+          return;
+        }
+        // An error page: show it as a normal navigation would.
+        document.open(); document.write(xhr.responseText); document.close();
+      });
+      xhr.addEventListener("error", function () {
+        if (btn) btn.disabled = false;
+        if (note) note.textContent = "The upload failed. Check the connection and try again.";
+      });
+      xhr.send(new FormData(form));
+    });
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     rememberFilters();
-    var btn = document.getElementById("theme-toggle");
-    if (btn) btn.addEventListener("click", function () {
-      applyTheme(document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light");
+    document.querySelectorAll("#theme-toggle, [data-theme-toggle]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        applyTheme(document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light");
+      });
     });
     var menu = document.getElementById("nav-toggle");
     var side = document.getElementById("app-sidebar");
@@ -135,6 +269,9 @@
       if (f) set("filters:" + f.getAttribute("data-forget"), null);
     });
     initPrefs();
+    stackTables(document);
+    initRefresh();
+    initUpload();
     var changed = syncTzCookie();
     localizeTimes(document.body);
     // First visit with a non-UTC zone: redraw charts in local time once.
