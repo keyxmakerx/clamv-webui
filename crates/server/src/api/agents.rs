@@ -317,6 +317,9 @@ pub async fn create_schedule(
             endpoint_id: if agent.is_some() { None } else { b.endpoint_id },
             agent_id: agent.as_ref().map(|a| a.id),
             eicar_check: b.eicar_check,
+            exclusions: &[],
+            window: None,
+            time_zone: None,
         })
         .await;
     match created {
