@@ -4,6 +4,7 @@ services:
     image: ghcr.io/keyxmakerx/clamv-webui:latest
     container_name: clamv-webui
     restart: unless-stopped
+    mem_limit: 512m  # caps memory if sign-ins or scans spike
     environment:
       CLAMD_ENDPOINT: tcp://clamav:3310  # existing clamd container on the shared network
       # CLAMD_CONF_FILE: /etc/clamav/clamd.conf  # mount it read-only to view it and apply its ExcludePath

@@ -100,7 +100,7 @@ async fn register_options(
         return jerr(StatusCode::BAD_REQUEST, "At most 10 passkeys per account.");
     }
     // The challenge is only handed out after this, so a stolen session cannot enrol its own key.
-    if let Err(m) = super::mfa::prove(&st, &u, &info, &b.proof).await {
+    if let Err(m) = super::mfa::prove(&st, &s, &u, &info, &b.proof).await {
         return jerr(StatusCode::FORBIDDEN, m);
     }
     let Ok((handle, challenge)) = st.db.create_challenge("register", Some(&u.id)).await else {
@@ -236,7 +236,7 @@ async fn remove(
             "Your session form expired. Reload and try again.",
         );
     }
-    if let Err(m) = super::mfa::prove(&st, &u, &info, &f.proof).await {
+    if let Err(m) = super::mfa::prove(&st, &s, &u, &info, &f.proof).await {
         return super::mfa::security(&st, &s, &u, Some(m.to_owned()), None, None, Vec::new()).await;
     }
     let removed = st.db.delete_passkey(&u.id, &id).await.unwrap_or(false);
@@ -284,7 +284,10 @@ async fn login_options(
     headers: HeaderMap,
     Json(b): Json<LoginOptionsBody>,
 ) -> Response {
-    if !st.passkey_challenges.allow(&info.ip.to_string()) {
+    if !st
+        .passkey_challenges
+        .allow(&crate::auth::lockout::ip_key(info.ip).to_string())
+    {
         return jerr(
             StatusCode::TOO_MANY_REQUESTS,
             "Too many attempts. Try again in a minute.",
@@ -352,7 +355,8 @@ async fn login(
             jerr(StatusCode::UNAUTHORIZED, "That passkey was not accepted.")
         }
     };
-    if st.lockout.check("passkey", info.ip).is_err() {
+    // A passkey sign-in names no account, so failures count against the address only (sa3).
+    if st.lockout.check_ip(info.ip).is_err() {
         return jerr(
             StatusCode::TOO_MANY_REQUESTS,
             "Too many attempts. Try again later.",
@@ -365,13 +369,13 @@ async fn login(
         return jerr(StatusCode::BAD_REQUEST, "Set PUBLIC_URL to use passkeys.");
     };
     let Ok(Some(key)) = st.db.passkey_by_cred(&b.id).await else {
-        let _ = st.lockout.fail("passkey", info.ip);
+        let _ = st.lockout.fail_ip(info.ip);
         return fail("unknown credential").await;
     };
     if let Some(h) = &b.user_handle
         && unb64u(h).ok().as_deref() != Some(key.user_id.as_bytes())
     {
-        let _ = st.lockout.fail("passkey", info.ip);
+        let _ = st.lockout.fail_ip(info.ip);
         return fail("user handle mismatch").await;
     }
     let second = ch.purpose == "second";
@@ -403,7 +407,7 @@ async fn login(
         Ok(c) => c,
         Err(e) => {
             tracing::warn!(event = "auth.passkey_failed", ip = %info.ip, reason = %e, "passkey signature rejected");
-            let _ = st.lockout.fail("passkey", info.ip);
+            let _ = st.lockout.fail_ip(info.ip);
             return jerr(StatusCode::UNAUTHORIZED, "That passkey was not accepted.");
         }
     };

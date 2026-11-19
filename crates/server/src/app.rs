@@ -19,6 +19,14 @@ pub struct AppState {
     pub cfg: Config,
     pub db: Db,
     pub lockout: Lockout,
+    /// Password checks running at once (sa3: each holds 19 MiB).
+    pub hash_slots: Arc<tokio::sync::Semaphore>,
+    /// SSO sign-in starts per address per minute; each one holds a pending entry.
+    pub sso_starts: crate::auth::ratelimit::RateLimit,
+    /// Sessions that recently confirmed it is really their user: session id hash to expiry (ms).
+    pub confirmed: std::sync::Mutex<std::collections::HashMap<String, i64>>,
+    /// SSO confirmations in flight: OIDC state to (session id hash, user id, return path, expiry).
+    pub sso_confirms: std::sync::Mutex<std::collections::HashMap<String, SsoConfirm>>,
     /// Wrong second-factor codes per account, across sign-in attempts.
     pub mfa_lockout: Lockout,
     pub runner: crate::scan::Runner,
@@ -46,8 +54,14 @@ pub struct AppState {
     pub firewalls: crate::firewall::Snapshots,
     /// Passkey confirmations in flight: challenge handle to (user, host, action, expiry).
     pub stepups: std::sync::Mutex<std::collections::HashMap<String, Stepup>>,
-    /// `admin` still has its generated one-time password, so sign-in points to the file.
-    pub first_start: std::sync::atomic::AtomicBool,
+}
+
+#[derive(Debug, Clone)]
+pub struct SsoConfirm {
+    pub session_hash: String,
+    pub user_id: String,
+    pub next: &'static str,
+    pub expires: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -103,6 +117,15 @@ impl AppState {
             cfg,
             db,
             lockout: Lockout::new(LockoutPolicy::default()),
+            hash_slots: Arc::new(tokio::sync::Semaphore::new(
+                crate::auth::login::HASH_SLOTS,
+            )),
+            sso_starts: crate::auth::ratelimit::RateLimit::new(
+                10,
+                std::time::Duration::from_secs(60),
+            ),
+            confirmed: std::sync::Mutex::default(),
+            sso_confirms: std::sync::Mutex::default(),
             mfa_lockout: Lockout::new(LockoutPolicy {
                 per_pair: 10,
                 per_account: 10,
@@ -118,7 +141,6 @@ impl AppState {
             host_units: crate::hostchecks::States::default(),
             firewalls: crate::firewall::Snapshots::default(),
             stepups: std::sync::Mutex::default(),
-            first_start: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -222,6 +244,10 @@ pub fn router(state: Arc<AppState>, cfg: &Config) -> Router {
         .with_state(state.clone())
         .layer(axum::middleware::from_fn(crate::web::csrf::same_origin))
         .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::web::session::check_host,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
             state,
             crate::web::session::resolve_client,
         ));
@@ -276,11 +302,6 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     .await?;
     seed_endpoint(&db, &cfg).await?;
     let state = Arc::new(AppState::new(cfg.clone(), db.clone()));
-    if let Ok(Some(a)) = db.user_by_username("admin").await {
-        state
-            .first_start
-            .store(a.must_change_password, std::sync::atomic::Ordering::Relaxed);
-    }
     spawn_housekeeping(state.clone());
     crate::scan::start(state.clone()).await;
     crate::schedule::spawn(state.clone());
