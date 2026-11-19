@@ -298,12 +298,12 @@ async fn result(
     host: Option<i64>,
     r: Result<String, String>,
 ) -> Response {
-    let mut nav = Nav::new("firewall", s, me);
-    match r {
-        Ok(m) => nav.success = Some(m),
-        Err(m) => nav.error = Some(m),
-    }
-    show(st, nav, host).await
+    let _ = (st, me);
+    let to = host.map_or_else(
+        || "/admin/firewall".to_owned(),
+        |h| format!("/admin/firewall?host={h}"),
+    );
+    super::ux::back_with(s, &to, r)
 }
 
 #[derive(Deserialize)]

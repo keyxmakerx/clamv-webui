@@ -17,14 +17,23 @@
 </div></section>
 <section class="card mt-3"><div class="card-body table-responsive">
 <table class="table table-sm align-middle">
-<thead><tr><th>Folder</th><th>Endpoint</th><th>Added</th><th></th></tr></thead>
+<thead><tr><th>Folder</th><th>Endpoint</th><th>Added</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
 <tbody>
 {% for r in rows %}<tr>
-<td class="text-break"><strong>{{ r.path }}</strong>{% if !r.enabled %} <span class="badge bg-secondary">paused</span>{% endif %}</td>
+<td class="path"><strong>{{ crate::web::wbr(r.path)|safe }}</strong>{% if !r.enabled %} <span class="badge bg-secondary">paused</span>{% endif %}</td>
 <td class="small">{{ r.endpoint }}</td>
 <td class="small">{{ r.created }}</td>
 <td><div class="d-flex gap-2">
 <form method="post" action="/admin/watch/{{ r.id }}/enabled"><input type="hidden" name="_csrf" value="{{ nav.csrf }}">{% if !r.enabled %}<input type="hidden" name="enabled" value="1">{% endif %}<button class="btn btn-sm btn-outline-secondary" type="submit">{% if r.enabled %}Pause{% else %}Resume{% endif %}</button></form>
+<details class="edit"><summary class="btn btn-sm btn-outline-secondary">Edit</summary>
+<form method="post" action="/admin/watch/{{ r.id }}/edit" class="edit-form">
+<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
+<label class="form-label" for="wp-{{ r.id }}">Folder</label><input class="form-control form-control-sm" id="wp-{{ r.id }}" name="path" required maxlength="4096" value="{{ r.path }}" autocomplete="off">
+<label class="form-label mt-2" for="we-{{ r.id }}">Endpoint</label><select class="form-select form-select-sm" id="we-{{ r.id }}" name="endpoint">
+<option value=""{% if r.endpoint_value.is_empty() %} selected{% endif %}>default</option>{% for e in endpoints %}{% if !e.is_default %}{% let v = e.id.to_string() %}<option value="{{ v }}"{% if v == r.endpoint_value %} selected{% endif %}>{{ e.name }}</option>{% endif %}{% endfor %}</select>
+<div class="small muted mt-2">A new folder starts like a new watch: files already there are recorded, not scanned.</div>
+<div class="mt-2"><button class="btn btn-sm btn-primary" type="submit">Save</button></div>
+</form></details>
 <form method="post" action="/admin/watch/{{ r.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Stop watching</button></form>
 </div></td>
 </tr>{% else %}<tr><td colspan="4" class="muted">No watched folders.</td></tr>{% endfor %}

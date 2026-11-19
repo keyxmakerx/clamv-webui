@@ -24,7 +24,7 @@
 </div></section>
 <section class="card mt-3"><div class="card-body table-responsive">
 <table class="table table-sm align-middle">
-<thead><tr><th>Label</th><th>Scopes</th><th>Created</th><th>Expires</th><th>Last used</th><th></th></tr></thead>
+<thead><tr><th>Label</th><th>Scopes</th><th>Created</th><th>Expires</th><th>Last used</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
 <tbody>
 {% for t in tokens %}<tr>
 <td><strong>{{ t.label }}</strong> <code class="small">{{ t.prefix }}…</code>
@@ -34,7 +34,7 @@
 <td class="small">{{ t.created }}</td>
 <td class="small">{{ t.expires }}</td>
 <td class="small">{{ t.last_used }}</td>
-<td>{% if t.state == "active" %}<form method="post" action="/admin/api-tokens/{{ t.id }}/revoke"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Revoke</button></form>{% endif %}</td>
+<td>{% if t.state == "active" %}<details class="confirm"><summary class="btn btn-sm btn-outline-danger">Revoke</summary><div class="confirm-box"><p>Revoke {{ t.label }}? Anything using it stops working at once. This can't be undone.</p><form method="post" action="/admin/api-tokens/{{ t.id }}/revoke"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-danger" type="submit">Revoke token</button></form></div></details>{% endif %}</td>
 </tr>{% else %}<tr><td colspan="6" class="muted">No tokens yet.</td></tr>{% endfor %}
 </tbody></table>
 </div></section>

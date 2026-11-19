@@ -8,10 +8,10 @@
 <div id="stepup-ok" class="alert alert-success py-2 small d-none" role="status"></div>
 <section class="card mt-2"><div class="card-body table-responsive">
 <table class="table table-sm align-middle">
-<thead><tr><th>File</th><th>Host</th><th>Signature</th><th>State</th><th>Changed</th><th></th></tr></thead>
+<thead><tr><th>File</th><th>Host</th><th>Signature</th><th>State</th><th>Changed</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
 <tbody>
 {% for e in entries %}<tr>
-<td class="small text-break">{{ e.path }}{% if !e.sha256.is_empty() %}<div class="muted text-break">sha256 {{ e.sha256 }} · {{ e.size }}</div>{% endif %}</td>
+<td class="small path">{{ crate::web::wbr(e.path)|safe }}{% if !e.sha256.is_empty() %}<div class="muted text-break">sha256 {{ e.sha256 }} · {{ e.size }}</div>{% endif %}</td>
 <td class="small">{{ e.host }}</td>
 <td><span class="badge bg-danger text-wrap">{{ e.signature }}</span></td>
 <td class="small">{% if e.held %}<span class="badge bg-warning text-dark">{{ e.state }}</span>{% else %}{{ e.state }}{% endif %}{% if !e.why.is_empty() %}<div class="muted">{{ e.why }}</div>{% endif %}</td>

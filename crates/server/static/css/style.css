@@ -512,7 +512,7 @@ html[data-theme="light"] .dropdown-item {
 }
 
 .tab-link:hover { border-color: var(--border); background: rgba(255,255,255,0.03); }
-.tab-link:focus { outline: none; box-shadow: none; }
+.tab-link:focus:not(:focus-visible) { outline: none; box-shadow: none; }
 .tab-link.active { border-color: rgba(64,137,255,0.55); background: rgba(64,137,255,0.12); }
 .kpi { font-size: 36px; font-weight: 800; margin-top: 6px; }
 .kpi-sm { font-size: 18px; font-weight: 700; margin-top: 6px; }

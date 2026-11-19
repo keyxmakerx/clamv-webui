@@ -130,6 +130,23 @@ struct StartForm {
     csrf: Option<String>,
     #[serde(default)]
     detection: String,
+    /// A job page to return to instead of the quarantine list.
+    #[serde(default)]
+    back: String,
+}
+
+/// Only a job page is a valid place to return to.
+fn return_to(raw: &str) -> &str {
+    match raw.strip_prefix("/jobs/") {
+        Some(id)
+            if !id.is_empty()
+                && id.len() <= 64
+                && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') =>
+        {
+            raw
+        }
+        _ => "/admin/quarantine",
+    }
 }
 
 async fn start(
@@ -155,5 +172,17 @@ async fn start(
         }
         Err(m) => nav.error = Some(m),
     }
-    show(&st, nav).await
+    super::ux::back(&s, return_to(&f.back), nav.error, nav.success)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn returns_only_to_job_pages() {
+        assert_eq!(super::return_to("/jobs/abc-123"), "/jobs/abc-123");
+        assert_eq!(super::return_to("//evil.example"), "/admin/quarantine");
+        assert_eq!(super::return_to("/jobs/../admin"), "/admin/quarantine");
+        assert_eq!(super::return_to("/jobs/"), "/admin/quarantine");
+        assert_eq!(super::return_to(""), "/admin/quarantine");
+    }
 }

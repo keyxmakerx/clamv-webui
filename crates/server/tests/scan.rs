@@ -230,6 +230,31 @@ fn form(uri: &str, body: &str, cookie: &str) -> Request<Body> {
         .expect("req")
 }
 
+/// Send a form and load the page its 303 points to, as a browser does (u03).
+async fn send(
+    app: Router,
+    req: Request<Body>,
+) -> Result<axum::response::Response, std::convert::Infallible> {
+    let cookie = req
+        .headers()
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned)
+        .unwrap_or_default();
+    let res = app.clone().oneshot(req).await?;
+    if res.status() != StatusCode::SEE_OTHER {
+        return Ok(res);
+    }
+    let to = res.headers()[header::LOCATION]
+        .to_str()
+        .expect("location")
+        .to_owned();
+    if to.starts_with("/login") || to.starts_with("/jobs/") {
+        return Ok(res);
+    }
+    app.oneshot(page_get(&to, &cookie)).await
+}
+
 async fn wait_finished(st: &AppState, id: &str) -> clamv_webui::db::jobs::Job {
     for _ in 0..50 {
         let j = st.db.job(id).await.expect("q").expect("job");
@@ -253,16 +278,12 @@ async fn schedules_run_with_eicar_control() {
         "_csrf={t}&name=n&cron=99+*+*+*+*&paths={}/movies&eicar=1",
         root.display()
     );
-    let res = app
-        .clone()
-        .oneshot(form("/admin/schedules", &bad, &c))
+    let res = send(app.clone(), form("/admin/schedules", &bad, &c))
         .await
         .expect("res");
     assert_eq!(res.status(), StatusCode::BAD_REQUEST, "bad cron");
     let outside = format!("_csrf={t}&name=n&cron=%40daily&paths=/etc&eicar=1");
-    let res = app
-        .clone()
-        .oneshot(form("/admin/schedules", &outside, &c))
+    let res = send(app.clone(), form("/admin/schedules", &outside, &c))
         .await
         .expect("res");
     assert_eq!(res.status(), StatusCode::BAD_REQUEST, "path outside roots");
@@ -270,23 +291,22 @@ async fn schedules_run_with_eicar_control() {
         "_csrf={t}&name=nightly&cron=30+2+*+*+*&paths={}/movies&eicar=1",
         root.display()
     );
-    let res = app
-        .clone()
-        .oneshot(form("/admin/schedules", &good, &c))
+    let res = send(app.clone(), form("/admin/schedules", &good, &c))
         .await
         .expect("res");
     assert_eq!(res.status(), StatusCode::OK);
     let sch = st.db.list_schedules().await.expect("list").remove(0);
     assert!(sch.eicar_check);
-    let res = app
-        .clone()
-        .oneshot(form(
+    let res = send(
+        app.clone(),
+        form(
             &format!("/admin/schedules/{}/run", sch.id),
             &format!("_csrf={t}"),
             &c,
-        ))
-        .await
-        .expect("res");
+        ),
+    )
+    .await
+    .expect("res");
     assert_eq!(res.status(), StatusCode::OK);
     let control = st
         .db
@@ -372,9 +392,7 @@ async fn watcher_queues_new_files_once() {
     let (app, st, c, t) = app(&["--scan-roots", &roots]).await;
     // Baseline: existing files are recorded, not scanned.
     let body = format!("_csrf={t}&path={}", dir.display());
-    let res = app
-        .clone()
-        .oneshot(form("/admin/watch", &body, &c))
+    let res = send(app.clone(), form("/admin/watch", &body, &c))
         .await
         .expect("res");
     assert_eq!(res.status(), StatusCode::OK);
@@ -726,9 +744,7 @@ async fn realtime_scans_files_as_they_are_written() {
     let roots = base.to_str().expect("utf8").to_owned();
     let (app, st, c, t) = app(&["--scan-roots", &roots]).await;
     let body = format!("_csrf={t}&path={}", dir.display());
-    let res = app
-        .clone()
-        .oneshot(form("/admin/watch", &body, &c))
+    let res = send(app.clone(), form("/admin/watch", &body, &c))
         .await
         .expect("res");
     assert_eq!(res.status(), StatusCode::OK);

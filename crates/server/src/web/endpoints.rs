@@ -29,6 +29,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/admin/endpoints/{id}/default", post(make_default))
         .route("/admin/endpoints/{id}/enabled", post(toggle))
         .route("/admin/endpoints/{id}/delete", post(delete))
+        .route("/admin/endpoints/{id}/edit", post(edit))
         .route("/admin/endpoints/{id}/test", post(test))
 }
 
@@ -169,16 +170,13 @@ async fn show(st: &Arc<AppState>, nav: Nav) -> Response {
 }
 
 async fn result(
-    st: &Arc<AppState>,
+    _st: &Arc<AppState>,
     s: &Session,
-    me: &User,
+    _me: &User,
     error: Option<String>,
     success: Option<String>,
 ) -> Response {
-    let mut nav = Nav::new("endpoints", s, me);
-    nav.error = error;
-    nav.success = success;
-    show(st, nav).await
+    super::ux::back(s, "/admin/endpoints", error, success)
 }
 
 fn valid_name(n: &str) -> bool {
@@ -460,6 +458,51 @@ async fn test(
             .await
         }
         Status::Disabled => result(&st, &s, &me, None, None).await,
+    }
+}
+
+async fn edit(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    info: RequestInfo,
+    Path(id): Path<i64>,
+    Form(f): Form<CreateForm>,
+) -> Response {
+    let (s, me) = match admin_post(auth, f.csrf.as_deref()) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let fail = |m: String| result(&st, &s, &me, Some(m), None);
+    let Ok(Some(old)) = st.db.endpoint(id).await else {
+        return fail("No such endpoint.".into()).await;
+    };
+    let name = f.name.trim();
+    if !valid_name(name) {
+        return fail("Names are 1 to 64 characters.".into()).await;
+    }
+    let ep = match parse_address(f.address.trim()) {
+        Ok(ep) => ep,
+        Err(m) => return fail(m.into()).await,
+    };
+    if !st.endpoint_allowed(&ep) {
+        tracing::warn!(event = "clamd.endpoint_denied", endpoint = %ep, user = %me.username, "endpoint not on CLAMD_HOST_ALLOWLIST");
+        return fail("That host is not on CLAMD_HOST_ALLOWLIST (when it is empty, only CLAMD_ENDPOINT's host is allowed).".into()).await;
+    }
+    let address = ep.to_string();
+    match st.db.update_endpoint(id, name, &address).await {
+        Ok(true) => {
+            audit(
+                &st,
+                &me,
+                &info,
+                "ENDPOINT_UPDATE",
+                format!("{} {} -> {name} {address}", old.name, old.address),
+            )
+            .await;
+            result(&st, &s, &me, None, Some(format!("Saved {name}."))).await
+        }
+        Ok(false) => fail("No such endpoint.".into()).await,
+        Err(_) => fail("That name is already taken.".into()).await,
     }
 }
 

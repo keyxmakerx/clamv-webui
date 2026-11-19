@@ -1,10 +1,10 @@
 {% extends "shell.html" %}
-{% block head %}<meta http-equiv="refresh" content="60">{% endblock %}
 {% block title %}Dashboard · ClamAV Web UI{% endblock %}
 {% block content %}
 <div class="page-head"><h1 class="h3">Dashboard</h1>
 <nav class="seg" aria-label="Time range">{% for (v, l) in [("24h", "24 h"), ("7d", "7 days"), ("30d", "30 days")] %}<a class="seg-btn{% if range == *v %} active{% endif %}" href="/dashboard?range={{ v }}"{% if range == *v %} aria-current="page"{% endif %}>{{ l }}</a>{% endfor %}</nav></div>
 {% if let Some(up) = update %}<div class="alert alert-info d-flex align-items-center gap-2"><i class="fa-solid fa-circle-up" aria-hidden="true"></i><span>Version {{ up.version }} is out (running {{ crate::VERSION }}).</span><a href="{{ up.url }}" rel="noopener noreferrer" target="_blank">Release notes</a></div>{% endif %}
+<div id="r-dash" data-refresh-region data-refresh="60">
 <div class="kpi-grid">
 {% for k in kpis %}{% if k.href.is_empty() %}<div class="kpi kpi-{{ k.tone }}">{% else %}<a class="kpi kpi-{{ k.tone }}" href="{{ k.href }}">{% endif %}
 <span class="kpi-label">{{ k.label }}</span><strong class="kpi-value">{{ k.value }}</strong>{% if !k.delta.is_empty() %}<span class="kpi-delta">{{ k.delta }}</span>{% endif %}
@@ -31,7 +31,7 @@
 {% if !recent_hits.is_empty() %}<section class="card mt-3"><div class="card-body table-responsive">
 <h2 class="h5">Latest detections <a class="small" href="/detections">all detections</a></h2>
 <table class="table table-sm align-middle"><thead><tr><th>Found</th><th>File</th><th>Signature</th><th>Host</th></tr></thead><tbody>
-{% for d in recent_hits %}<tr><td class="small text-nowrap"><a href="/jobs/{{ d.job_id }}">{{ d.at }}</a></td><td class="small text-break">{{ d.path }}</td><td><span class="badge bg-danger">{{ d.signature }}</span></td><td class="small">{{ d.host }}</td></tr>{% endfor %}
+{% for d in recent_hits %}<tr><td class="small text-nowrap"><a href="/jobs/{{ d.job_id }}">{{ d.at }}</a></td><td class="small path">{{ crate::web::wbr(d.path)|safe }}</td><td><span class="badge bg-danger">{{ d.signature }}</span></td><td class="small">{{ d.host }}</td></tr>{% endfor %}
 </tbody></table></div></section>{% endif %}
 {% endif %}
 <div class="grid-two mt-3">
@@ -65,9 +65,10 @@
 {% for r in recent %}<tr>
 <td class="small text-nowrap"><a href="/jobs/{{ r.id }}">{{ r.submitted }}</a></td>
 <td>{{ r.kind }}</td>
-<td class="small text-break">{{ r.target }}</td>
+<td class="small path">{{ crate::web::wbr(r.target)|safe }}</td>
 <td>{% if r.verdict.is_empty() %}<span class="badge bg-secondary">{{ r.status }}</span>{% else %}<span class="badge {{ self.badge(r.verdict) }}">{{ r.verdict }}</span>{% endif %}{% if !r.signatures.is_empty() %} <span class="small">{{ r.signatures }}</span>{% endif %}</td>
 </tr>{% else %}<tr><td colspan="4" class="muted">No jobs yet.</td></tr>{% endfor %}
 </tbody></table>
 </div></section>{% endif %}
+</div>
 {% endblock %}

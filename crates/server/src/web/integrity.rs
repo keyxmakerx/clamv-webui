@@ -122,7 +122,6 @@ async fn run(
         Ok(x) => x,
         Err(r) => return r,
     };
-    let mut nav = Nav::new("integrity", &s, &me);
     let r = match (
         crate::hostchecks::check_action(&f.action),
         parse_host(&st, &f.host).await,
@@ -131,11 +130,7 @@ async fn run(
         (_, Err(m)) => Err(m),
         (Some(act), Ok(host)) => dispatch(&st, &me, &info, host, act, false).await,
     };
-    match r {
-        Ok(m) => nav.success = Some(m),
-        Err(m) => nav.error = Some(m),
-    }
-    show(&st, nav).await
+    super::ux::back_with(&s, "/integrity", r)
 }
 
 #[derive(Deserialize)]
@@ -223,7 +218,7 @@ async fn timer(
     if let Err(m) = r {
         nav.error = Some(m);
     }
-    show(&st, nav).await
+    super::ux::back(&s, "/integrity", nav.error, nav.success)
 }
 
 pub struct Managed {

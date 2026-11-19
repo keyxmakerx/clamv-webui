@@ -1,8 +1,7 @@
 {% extends "shell.html" %}
-{% block head %}{% if refresh %}<meta http-equiv="refresh" content="5">{% endif %}{% endblock %}
 {% block title %}Jobs · ClamAV Web UI{% endblock %}
 {% block content %}
-<div class="page-head"><h1 class="h3">Jobs</h1><span class="muted small">{{ total }} job(s){% if refresh %} · refreshing every 5 s{% endif %}</span></div>
+<div class="page-head"><h1 class="h3">Jobs</h1><span class="muted small">{{ total }} job(s){% if refresh %} · updating every 5 s{% endif %}</span></div>
 <form method="get" action="/jobs" class="filter-bar" data-remember="jobs">
 <div class="filter-search"><i class="fas fa-search" aria-hidden="true"></i>
 <input class="form-control" type="search" name="q" value="{{ q }}" maxlength="512" placeholder="Search: eicar  kind=WATCH  -path:/tmp  after:2026-11-01  agent=nas-2" aria-label="Search jobs">
@@ -21,14 +20,14 @@
 </form>
 {% if window.0.is_some() || window.1.is_some() %}<div class="small muted mt-2">Showing a time window from the dashboard chart. <a href="{{ self.unwindowed() }}">Remove it</a></div>{% endif %}
 {% for w in warnings %}<div class="alert alert-warning py-1 small mt-2" role="status">{{ w }}</div>{% endfor %}
-<section class="card mt-3"><div class="card-body table-responsive">
+<section class="card mt-3" id="r-jobs" data-refresh-region{% if refresh %} data-refresh="5"{% endif %}><div class="card-body table-responsive">
 <table class="table table-sm align-middle">
 <thead><tr><th>Submitted</th><th>Type</th><th>Target</th><th>Host</th><th>By</th><th>Result</th><th>Duration</th></tr></thead>
 <tbody>
 {% for r in rows %}<tr>
 <td class="small text-nowrap"><a href="/jobs/{{ r.id }}">{{ r.submitted }}</a></td>
 <td>{{ r.kind }}</td>
-<td class="small text-break"><a href="/jobs/{{ r.id }}">{{ r.target }}</a></td>
+<td class="small path"><a href="/jobs/{{ r.id }}">{{ crate::web::wbr(r.target)|safe }}</a></td>
 <td class="small">{{ r.endpoint }}</td>
 <td class="small">{{ r.submitted_by }}</td>
 <td>{% if r.verdict.is_empty() %}<span class="badge bg-secondary">{{ r.status }}</span>{% else %}<span class="badge {{ self.badge(r.verdict) }}">{{ r.verdict }}</span>{% endif %}

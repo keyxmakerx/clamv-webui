@@ -28,7 +28,7 @@
 </form>
 <section class="card mt-3"><div class="card-body table-responsive">
 <table class="table table-sm align-middle">
-<thead><tr><th>Value</th><th>Type</th><th>Origin</th><th>Reason</th><th>{% if expired %}Ended{% else %}Ends in{% endif %}</th><th></th></tr></thead>
+<thead><tr><th>Value</th><th>Type</th><th>Origin</th><th>Reason</th><th>{% if expired %}Ended{% else %}Ends in{% endif %}</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
 <tbody>
 {% for d in rows %}<tr>
 <td class="small"><code>{{ d.value }}</code> <span class="muted">{{ d.scope }}</span>{% if !d.country.is_empty() %} <span class="badge bg-secondary">{{ d.country }}</span>{% endif %}{% if d.dupes > 0 %} <span class="badge bg-secondary" title="Other decisions on the same value and type">+{{ d.dupes }}</span>{% endif %}</td>
@@ -37,7 +37,7 @@
 <td class="small text-break">{{ d.scenario }}{% if !d.machine.is_empty() %}<div class="muted">seen by {{ d.machine }}</div>{% endif %}</td>
 <td class="small text-nowrap">{{ d.left }}</td>
 <td class="text-nowrap">{% if d.active && writable %}<form class="d-inline" method="post" action="/crowdsec/decisions/{{ d.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form>
-{% if d.dupes > 0 %}<form class="d-inline" method="post" action="/crowdsec/decisions/remove"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="value" value="{{ d.value }}"><button class="btn btn-sm btn-outline-danger" type="submit" title="Remove every decision on {{ d.value }}">Remove all</button></form>{% endif %}{% endif %}</td>
+{% if d.dupes > 0 %}<details class="confirm"><summary class="btn btn-sm btn-outline-danger">Remove all</summary><div class="confirm-box"><p>Remove every decision on {{ d.value }}, from every origin? Bouncers let it through on their next pull.</p><form method="post" action="/crowdsec/decisions/remove"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="value" value="{{ d.value }}"><button class="btn btn-sm btn-danger" type="submit">Remove all</button></form></div></details>{% endif %}{% endif %}</td>
 </tr>{% else %}<tr><td colspan="6" class="muted">{% if expired %}No decisions ended in the look-back window.{% else %}No active decisions.{% endif %}</td></tr>{% endfor %}
 </tbody></table>
 </div></section>

@@ -73,7 +73,7 @@ pub fn activity(
     let mut s = String::new();
     let _ = write!(
         s,
-        r#"<svg class="chart" viewBox="0 0 {W} {H}" role="img" aria-label="Scans over time: clean, detections and failures">"#
+        r#"<svg class="chart" viewBox="0 0 {W} {H}" role="group" aria-label="Scans over time: clean, detections and failures. Each bar links to its jobs.">"#
     );
     let mut v = 0;
     while v <= top {

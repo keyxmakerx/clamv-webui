@@ -88,6 +88,32 @@ async fn body(res: axum::response::Response) -> String {
     String::from_utf8_lossy(&b).into_owned()
 }
 
+/// Send a form and, like a browser, load the page a 303 points to (u03: forms
+/// answer with a redirect back to their list). The flash message and its
+/// status (400 for an error) come from that page.
+async fn send(
+    app: Router,
+    req: Request<Body>,
+) -> Result<axum::response::Response, std::convert::Infallible> {
+    let cookie = req
+        .headers()
+        .get(header::COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let res = app.clone().oneshot(req).await?;
+    if res.status() != StatusCode::SEE_OTHER {
+        return Ok(res);
+    }
+    let to = res.headers()[header::LOCATION]
+        .to_str()
+        .expect("location")
+        .to_owned();
+    if to.starts_with("/login") || to.starts_with("/jobs/") {
+        return Ok(res);
+    }
+    app.oneshot(get(&to, cookie.as_deref())).await
+}
+
 fn csrf_from(html: &str) -> String {
     let i = html.find("name=\"_csrf\" value=\"").expect("csrf field") + 20;
     html[i..i + 43].to_owned()
@@ -423,15 +449,16 @@ async fn last_admin_cannot_be_removed() {
         .await
         .expect("session");
     let c = format!("clamv_session={raw}");
-    let res = app
-        .clone()
-        .oneshot(form(
+    let res = send(
+        app.clone(),
+        form(
             &format!("/admin/users/{}/role", admin.id),
             &format!("_csrf={}&role=VIEWER&enabled=1", s.csrf_token),
             Some(&c),
-        ))
-        .await
-        .expect("res");
+        ),
+    )
+    .await
+    .expect("res");
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     assert!(
         body(res)
@@ -470,7 +497,7 @@ async fn endpoints_are_validated_and_allowlisted() {
         let app = app.clone();
         let c = c.clone();
         async move {
-            app.oneshot(form("/admin/endpoints", &body, Some(&c)))
+            send(app, form("/admin/endpoints", &body, Some(&c)))
                 .await
                 .expect("res")
         }
@@ -490,25 +517,27 @@ async fn endpoints_are_validated_and_allowlisted() {
     let list = st.db.list_endpoints().await.expect("list");
     let def = list.iter().find(|e| e.is_default).expect("default");
     let other = list.iter().find(|e| !e.is_default).expect("other");
-    let res = app
-        .clone()
-        .oneshot(form(
+    let res = send(
+        app.clone(),
+        form(
             &format!("/admin/endpoints/{}/delete", def.id),
             &format!("_csrf={t}"),
             Some(&c),
-        ))
-        .await
-        .expect("res");
+        ),
+    )
+    .await
+    .expect("res");
     assert!(body(res).await.contains("Pick another default"));
-    let res = app
-        .clone()
-        .oneshot(form(
+    let res = send(
+        app.clone(),
+        form(
             &format!("/admin/endpoints/{}/delete", other.id),
             &format!("_csrf={t}"),
             Some(&c),
-        ))
-        .await
-        .expect("res");
+        ),
+    )
+    .await
+    .expect("res");
     assert_eq!(res.status(), StatusCode::OK);
     assert_eq!(st.db.list_endpoints().await.expect("list").len(), 1);
 
@@ -526,15 +555,16 @@ async fn endpoints_are_validated_and_allowlisted() {
 async fn admin_issues_and_revokes_tokens() {
     let (app, st) = app().await;
     let (c, t) = admin_cookie(&st).await;
-    let res = app
-        .clone()
-        .oneshot(form(
+    let res = send(
+        app.clone(),
+        form(
             "/admin/api-tokens",
             &format!("_csrf={t}&label=ci&scope=jobs%3Aread&scope=health%3Aread&days=30"),
             Some(&c),
-        ))
-        .await
-        .expect("res");
+        ),
+    )
+    .await
+    .expect("res");
     assert_eq!(res.status(), StatusCode::OK);
     let html = body(res).await;
     assert!(html.contains("New token secret") && html.contains("cvw_"));
@@ -550,25 +580,27 @@ async fn admin_issues_and_revokes_tokens() {
         .await
         .expect("res");
     assert!(!body(res).await.contains("New token secret"), "shown once");
-    let res = app
-        .clone()
-        .oneshot(form(
+    let res = send(
+        app.clone(),
+        form(
             "/admin/api-tokens",
             &format!("_csrf={t}&label=bad&scope=root"),
             Some(&c),
-        ))
-        .await
-        .expect("res");
+        ),
+    )
+    .await
+    .expect("res");
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
-    let res = app
-        .clone()
-        .oneshot(form(
+    let res = send(
+        app.clone(),
+        form(
             &format!("/admin/api-tokens/{}/revoke", list[0].id),
             &format!("_csrf={t}"),
             Some(&c),
-        ))
-        .await
-        .expect("res");
+        ),
+    )
+    .await
+    .expect("res");
     assert!(body(res).await.contains("Token revoked."));
 }
 
@@ -579,7 +611,7 @@ async fn admin_adds_an_agent_and_targets_it() {
     let post = |uri: String, b: String| {
         let app = app.clone();
         let c = c.clone();
-        async move { app.oneshot(form(&uri, &b, Some(&c))).await.expect("res") }
+        async move { send(app, form(&uri, &b, Some(&c))).await.expect("res") }
     };
     let res = post("/admin/agents".into(), format!("_csrf={t}&name=bad%20name")).await;
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
@@ -873,7 +905,7 @@ async fn admin_manages_canaries_per_host() {
         let app = app.clone();
         let c = c.clone();
         async move {
-            app.oneshot(form("/admin/canaries", &body, Some(&c)))
+            send(app, form("/admin/canaries", &body, Some(&c)))
                 .await
                 .expect("res")
         }
@@ -914,15 +946,16 @@ async fn admin_manages_canaries_per_host() {
     let list = st.db.list_canaries().await.expect("q");
     assert_eq!(list.len(), 2);
     let central = list.iter().find(|c| c.agent_id.is_none()).expect("central");
-    let res = app
-        .clone()
-        .oneshot(form(
+    let res = send(
+        app.clone(),
+        form(
             &format!("/admin/canaries/{}/delete", central.id),
             &format!("_csrf={t}"),
             Some(&c),
-        ))
-        .await
-        .expect("res");
+        ),
+    )
+    .await
+    .expect("res");
     assert!(body(res).await.contains("left in place"));
     assert_eq!(st.db.list_canaries().await.expect("q").len(), 1);
     // Coverage lists this server and the agent, with the agent's canary waiting for it.
@@ -985,7 +1018,7 @@ async fn firewall_plan_is_checked_and_previewed() {
     let post = |uri: &'static str, body: String| {
         let app = app.clone();
         let c = c.clone();
-        async move { app.oneshot(form(uri, &body, Some(&c))).await.expect("res") }
+        async move { send(app, form(uri, &body, Some(&c))).await.expect("res") }
     };
     let res = post(
         "/admin/firewall/rules",
@@ -1068,15 +1101,16 @@ async fn quarantine_is_off_until_configured_and_needs_a_real_detection() {
     assert_eq!(res.status(), StatusCode::OK);
     assert!(body(res).await.contains("QUARANTINE_DIR"));
     for d in ["999999", "x", ""] {
-        let res = app
-            .clone()
-            .oneshot(form(
+        let res = send(
+            app.clone(),
+            form(
                 "/admin/quarantine",
                 &format!("_csrf={t}&detection={d}"),
                 Some(&c),
-            ))
-            .await
-            .expect("res");
+            ),
+        )
+        .await
+        .expect("res");
         assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{d}");
     }
 }
@@ -1090,7 +1124,7 @@ async fn empty_clamd_allowlist_allows_only_the_install_endpoint() {
         let c = c.clone();
         let body = format!("_csrf={t}&name=x{}&address={addr}", addr.len());
         async move {
-            app.oneshot(form("/admin/endpoints", &body, Some(&c)))
+            send(app, form("/admin/endpoints", &body, Some(&c)))
                 .await
                 .expect("res")
         }
@@ -1100,4 +1134,191 @@ async fn empty_clamd_allowlist_allows_only_the_install_endpoint() {
     assert!(body(res).await.contains("CLAMD_HOST_ALLOWLIST"));
     let res = post("tcp://127.0.0.1:3311").await;
     assert_ne!(res.status(), StatusCode::BAD_REQUEST);
+}
+
+// ---- UI audit round (u02, u03, u06) ----
+
+async fn last_seen(st: &AppState) -> i64 {
+    sqlx::query_scalar::<_, i64>("SELECT last_seen_at FROM sessions")
+        .fetch_one(st.db.pool())
+        .await
+        .expect("last seen")
+}
+
+#[tokio::test]
+async fn background_refresh_does_not_extend_the_session() {
+    let (app, st) = app().await;
+    let (c, _) = admin_cookie(&st).await;
+    let old = clamv_webui::db::now_ms() - 5 * 60_000;
+    sqlx::query("UPDATE sessions SET last_seen_at = ?")
+        .bind(old)
+        .execute(st.db.pool())
+        .await
+        .expect("age the session");
+    let req = Request::get("/dashboard")
+        .header(header::COOKIE, &c)
+        .header("x-clamv-refresh", "1")
+        .body(Body::empty())
+        .expect("req");
+    let res = app.clone().oneshot(req).await.expect("res");
+    assert_eq!(res.status(), StatusCode::OK);
+    let html = body(res).await;
+    assert!(html.contains("data-refresh-region") && !html.contains("http-equiv=\"refresh\""));
+    assert_eq!(last_seen(&st).await, old, "a refresh is not activity");
+    let res = app.oneshot(get("/dashboard", Some(&c))).await.expect("res");
+    assert_eq!(res.status(), StatusCode::OK);
+    assert!(last_seen(&st).await > old, "a real page load is");
+}
+
+#[tokio::test]
+async fn forms_go_back_to_their_list_and_risky_actions_ask_first() {
+    let (app, st) = app().await;
+    let (c, t) = admin_cookie(&st).await;
+    let res = app
+        .clone()
+        .oneshot(form(
+            "/admin/users",
+            &format!("_csrf={t}&username=jane&role=VIEWER&password={}", pw()),
+            Some(&c),
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    assert_eq!(res.headers()[header::LOCATION], "/admin/users");
+    let page = body(
+        app.clone()
+            .oneshot(get("/admin/users", Some(&c)))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(
+        page.contains("Created jane."),
+        "message shown once after the redirect"
+    );
+    assert!(
+        page.contains("<details class=\"confirm\">"),
+        "delete asks first"
+    );
+    assert!(
+        page.contains("can&#39;t be undone")
+            || page.contains("can&#x27;t be undone")
+            || page.contains("can't be undone")
+    );
+    let again = body(
+        app.oneshot(get("/admin/users", Some(&c)))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(!again.contains("Created jane."), "and not again");
+}
+
+#[tokio::test]
+async fn admin_edits_agents_and_endpoints_in_place() {
+    let (app, st) = app().await;
+    let (c, t) = admin_cookie(&st).await;
+    let (a, _) = st.db.create_agent("nas-2", "admin").await.expect("agent");
+    st.db.create_agent("nas-3", "admin").await.expect("agent");
+    let post = |uri: String, b: String| {
+        let app = app.clone();
+        let c = c.clone();
+        async move { send(app, form(&uri, &b, Some(&c))).await.expect("res") }
+    };
+    let res = post(
+        format!("/admin/agents/{}/rename", a.id),
+        format!("_csrf={t}&name=nas-3"),
+    )
+    .await;
+    assert!(body(res).await.contains("That name is already taken."));
+    let res = post(
+        format!("/admin/agents/{}/rename", a.id),
+        format!("_csrf={t}&name=bad%20name"),
+    )
+    .await;
+    assert_eq!(
+        res.status(),
+        StatusCode::BAD_REQUEST,
+        "the list shows the error"
+    );
+    assert!(body(res).await.contains("Names are 1 to 64"));
+    let res = post(
+        format!("/admin/agents/{}/rename", a.id),
+        format!("_csrf={t}&name=backup-nas"),
+    )
+    .await;
+    assert!(body(res).await.contains("Renamed nas-2 to backup-nas."));
+    assert_eq!(
+        st.db.agent(a.id).await.expect("q").expect("a").name,
+        "backup-nas"
+    );
+
+    let ep = st.db.list_endpoints().await.expect("list").remove(0);
+    let res = post(
+        format!("/admin/endpoints/{}/edit", ep.id),
+        format!("_csrf={t}&name=main&address=tcp://evil.example:3310"),
+    )
+    .await;
+    assert!(body(res).await.contains("CLAMD_HOST_ALLOWLIST"));
+    let res = post(
+        format!("/admin/endpoints/{}/edit", ep.id),
+        format!("_csrf={t}&name=main&address={}", ep.address),
+    )
+    .await;
+    assert!(body(res).await.contains("Saved main."));
+    assert_eq!(
+        st.db.endpoint(ep.id).await.expect("q").expect("e").name,
+        "main"
+    );
+}
+
+#[tokio::test]
+async fn audit_log_filters_pages_and_exports() {
+    let (app, st) = app().await;
+    let (c, _) = admin_cookie(&st).await;
+    for i in 0..60 {
+        st.db
+            .audit(clamv_webui::db::audit::AuditEntry {
+                username: Some("ops".into()),
+                action: if i % 2 == 0 { "TEST_EVEN" } else { "TEST_ODD" },
+                outcome: "OK",
+                details: Some(format!("=item {i}")),
+                ..Default::default()
+            })
+            .await;
+    }
+    let page = body(
+        app.clone()
+            .oneshot(get("/admin/audit?action=TEST_ODD&q=item+59", Some(&c)))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(
+        page.contains("=item 59")
+            && !page.contains("=item 57")
+            && !page.contains("TEST_EVEN</code>")
+    );
+    let page = body(
+        app.clone()
+            .oneshot(get("/admin/audit?user=ops", Some(&c)))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(
+        page.contains("60 event(s)") && page.contains("Page 1 of 2") && page.contains("page=1")
+    );
+    let res = app
+        .oneshot(get("/admin/audit.csv?action=TEST_EVEN", Some(&c)))
+        .await
+        .expect("res");
+    assert_eq!(
+        res.headers()[header::CONTENT_TYPE],
+        "text/csv; charset=utf-8"
+    );
+    let csv = body(res).await;
+    assert!(csv.starts_with("at,user,action,outcome,details,job_id,ip\n"));
+    assert_eq!(csv.matches("TEST_EVEN").count(), 30);
+    assert!(csv.contains("\"'=item 0\""), "cells cannot become formulas");
 }

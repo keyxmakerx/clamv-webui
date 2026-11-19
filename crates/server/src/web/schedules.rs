@@ -30,6 +30,7 @@ pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/admin/schedules", get(page).post(create))
         .route("/admin/schedules/{id}/run", post(run_now))
+        .route("/admin/schedules/{id}/edit", post(edit))
         .route("/admin/schedules/{id}/enabled", post(toggle))
         .route("/admin/schedules/{id}/delete", post(delete))
 }
@@ -41,6 +42,8 @@ pub struct Row {
     next: String,
     paths: Vec<String>,
     endpoint: String,
+    /// The "Run on" value for the edit form: "", an endpoint id, or `a:<id>`.
+    run_on: String,
     enabled: bool,
     eicar: bool,
     control: &'static str,
@@ -57,6 +60,17 @@ struct SchedulesPage {
     endpoints: Vec<Endpoint>,
     agents: Vec<super::scan::AgentChoice>,
     roots: Vec<String>,
+}
+
+impl SchedulesPage {
+    /// The "Run on" value an endpoint has in the form.
+    fn endpoint_value(&self, e: &Endpoint) -> String {
+        if e.is_default {
+            String::new()
+        } else {
+            e.id.to_string()
+        }
+    }
 }
 
 async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
@@ -84,6 +98,11 @@ async fn row(st: &AppState, s: Schedule, names: &super::scan::Names) -> Row {
     };
     Row {
         endpoint: names.label(s.endpoint_id, s.agent_id),
+        run_on: match (s.agent_id, s.endpoint_id) {
+            (Some(a), _) => format!("a:{a}"),
+            (None, Some(e)) => e.to_string(),
+            (None, None) => String::new(),
+        },
         next,
         control: state,
         control_job: cj,
@@ -131,16 +150,13 @@ async fn show(st: &AppState, nav: Nav) -> Response {
 }
 
 async fn result(
-    st: &AppState,
+    _st: &AppState,
     s: &Session,
-    me: &User,
+    _me: &User,
     error: Option<String>,
     success: Option<String>,
 ) -> Response {
-    let mut nav = Nav::new("schedules", s, me);
-    nav.error = error;
-    nav.success = success;
-    show(st, nav).await
+    super::ux::back(s, "/admin/schedules", error, success)
 }
 
 #[derive(Deserialize)]
@@ -157,6 +173,74 @@ struct CreateForm {
     eicar: Option<String>,
 }
 
+/// A checked schedule form.
+struct Checked {
+    name: String,
+    cron: String,
+    paths: Vec<String>,
+    endpoint_id: Option<i64>,
+    agent_id: Option<i64>,
+    eicar: bool,
+}
+
+/// The same checks for a new schedule and an edited one.
+async fn check(st: &AppState, f: &CreateForm) -> Result<Checked, String> {
+    let name = f.name.trim();
+    if name.is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control) {
+        return Err("Names are 1 to 100 characters.".into());
+    }
+    let cron = f.cron.trim();
+    if let Err(e) = cron.parse::<Cron>() {
+        return Err(format!("Schedule: {e}."));
+    }
+    let run_on = super::scan::chosen_target(st, f.endpoint.as_deref())
+        .await
+        .map_err(str::to_owned)?;
+    let mut paths = Vec::new();
+    for line in f.paths.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let p = match &run_on {
+            // The agent checks each path again when it runs.
+            RunOn::Agent(a) => match crate::agent::refuse(a, line) {
+                None => line.to_owned(),
+                Some(m) => return Err(format!("{line}: {m}")),
+            },
+            RunOn::Endpoint(_) => {
+                if st.cfg.scan_roots.is_empty() {
+                    return Err("Set SCAN_ROOTS before adding schedules.".into());
+                }
+                match scan::resolve_path(&st.cfg.scan_roots, line).await {
+                    Ok(p) => match p.to_str() {
+                        Some(p) if st.excluded(p) => {
+                            return Err(format!("{line}: {}", scan::PATH_EXCLUDED));
+                        }
+                        Some(p) => p.to_owned(),
+                        None => return Err(format!("{line}: only UTF-8 paths can be scheduled.")),
+                    },
+                    Err(m) => return Err(format!("{line}: {m}")),
+                }
+            }
+        };
+        if !paths.contains(&p) {
+            paths.push(p);
+        }
+    }
+    if paths.is_empty() || paths.len() > MAX_PATHS {
+        return Err(format!("Give 1 to {MAX_PATHS} paths, one per line."));
+    }
+    let (endpoint_id, agent_id) = match &run_on {
+        RunOn::Agent(a) => (None, Some(a.id)),
+        RunOn::Endpoint(e) => (*e, None),
+    };
+    Ok(Checked {
+        name: name.to_owned(),
+        cron: cron.to_owned(),
+        paths,
+        endpoint_id,
+        agent_id,
+        eicar: f.eicar.is_some(),
+    })
+}
+
 async fn create(
     State(st): State<Arc<AppState>>,
     auth: Auth,
@@ -167,66 +251,19 @@ async fn create(
         Ok(x) => x,
         Err(r) => return r,
     };
-    let fail = |m: String| result(&st, &s, &me, Some(m), None);
-    let name = f.name.trim();
-    if name.is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control) {
-        return fail("Names are 1 to 100 characters.".into()).await;
-    }
-    let cron = f.cron.trim();
-    if let Err(e) = cron.parse::<Cron>() {
-        return fail(format!("Schedule: {e}.")).await;
-    }
-    let run_on = match super::scan::chosen_target(&st, f.endpoint.as_deref()).await {
-        Ok(r) => r,
-        Err(m) => return fail(m.into()).await,
-    };
-    let mut paths = Vec::new();
-    for line in f.paths.lines().map(str::trim).filter(|l| !l.is_empty()) {
-        let p = match &run_on {
-            // The agent checks each path again when it runs.
-            RunOn::Agent(a) => match crate::agent::refuse(a, line) {
-                None => line.to_owned(),
-                Some(m) => return fail(format!("{line}: {m}")).await,
-            },
-            RunOn::Endpoint(_) => {
-                if st.cfg.scan_roots.is_empty() {
-                    return fail("Set SCAN_ROOTS before adding schedules.".into()).await;
-                }
-                match scan::resolve_path(&st.cfg.scan_roots, line).await {
-                    Ok(p) => match p.to_str() {
-                        Some(p) if st.excluded(p) => {
-                            return fail(format!("{line}: {}", scan::PATH_EXCLUDED)).await;
-                        }
-                        Some(p) => p.to_owned(),
-                        None => {
-                            return fail(format!("{line}: only UTF-8 paths can be scheduled."))
-                                .await;
-                        }
-                    },
-                    Err(m) => return fail(format!("{line}: {m}")).await,
-                }
-            }
-        };
-        if !paths.contains(&p) {
-            paths.push(p);
-        }
-    }
-    if paths.is_empty() || paths.len() > MAX_PATHS {
-        return fail(format!("Give 1 to {MAX_PATHS} paths, one per line.")).await;
-    }
-    let (endpoint_id, agent_id) = match &run_on {
-        RunOn::Agent(a) => (None, Some(a.id)),
-        RunOn::Endpoint(e) => (*e, None),
+    let c = match check(&st, &f).await {
+        Ok(c) => c,
+        Err(m) => return result(&st, &s, &me, Some(m), None).await,
     };
     match st
         .db
         .create_schedule(NewSchedule {
-            name,
-            cron,
-            paths: &paths,
-            endpoint_id,
-            agent_id,
-            eicar_check: f.eicar.is_some(),
+            name: &c.name,
+            cron: &c.cron,
+            paths: &c.paths,
+            endpoint_id: c.endpoint_id,
+            agent_id: c.agent_id,
+            eicar_check: c.eicar,
         })
         .await
     {
@@ -236,12 +273,78 @@ async fn create(
                 &me,
                 &info,
                 "SCHEDULE_CREATE",
-                format!("{name} [{cron}] {}", paths.join(", ")),
+                format!("{} [{}] {}", c.name, c.cron, c.paths.join(", ")),
             )
             .await;
-            result(&st, &s, &me, None, Some(format!("Added {name}."))).await
+            result(&st, &s, &me, None, Some(format!("Added {}.", c.name))).await
         }
-        Err(_) => fail("That name is already taken.".into()).await,
+        Err(_) => {
+            result(
+                &st,
+                &s,
+                &me,
+                Some("That name is already taken.".into()),
+                None,
+            )
+            .await
+        }
+    }
+}
+
+async fn edit(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    info: RequestInfo,
+    Path(id): Path<String>,
+    Form(f): Form<CreateForm>,
+) -> Response {
+    let (s, me) = match admin_post(auth, f.csrf.as_deref()) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    if !matches!(st.db.schedule(&id).await, Ok(Some(_))) {
+        return result(&st, &s, &me, Some("No such schedule.".into()), None).await;
+    }
+    let c = match check(&st, &f).await {
+        Ok(c) => c,
+        Err(m) => return result(&st, &s, &me, Some(m), None).await,
+    };
+    match st
+        .db
+        .update_schedule(
+            &id,
+            NewSchedule {
+                name: &c.name,
+                cron: &c.cron,
+                paths: &c.paths,
+                endpoint_id: c.endpoint_id,
+                agent_id: c.agent_id,
+                eicar_check: c.eicar,
+            },
+        )
+        .await
+    {
+        Ok(_) => {
+            audit(
+                &st,
+                &me,
+                &info,
+                "SCHEDULE_UPDATE",
+                format!("{} [{}] {}", c.name, c.cron, c.paths.join(", ")),
+            )
+            .await;
+            result(&st, &s, &me, None, Some(format!("Saved {}.", c.name))).await
+        }
+        Err(_) => {
+            result(
+                &st,
+                &s,
+                &me,
+                Some("That name is already taken.".into()),
+                None,
+            )
+            .await
+        }
     }
 }
 

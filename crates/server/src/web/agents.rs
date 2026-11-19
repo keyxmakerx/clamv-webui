@@ -27,6 +27,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/admin/agents/{id}/enabled", post(toggle))
         .route("/admin/agents/{id}/rotate", post(rotate))
         .route("/admin/agents/{id}/delete", post(delete))
+        .route("/admin/agents/{id}/rename", post(rename))
 }
 
 pub struct AgentRow {
@@ -127,6 +128,10 @@ async fn result(
     success: Option<String>,
     enroll: Option<Enroll>,
 ) -> Response {
+    // A new token is shown once, on this response; it is never kept for a redirect.
+    if enroll.is_none() {
+        return super::ux::back(s, "/admin/agents", error, success);
+    }
     let mut nav = Nav::new("agents", s, me);
     nav.error = error;
     nav.success = success;
@@ -188,12 +193,7 @@ async fn create(
         Err(r) => return r,
     };
     let name = f.name.trim();
-    if name.is_empty()
-        || name.len() > 64
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
-    {
+    if !valid_agent_name(name) {
         return result(
             &st,
             &s,
@@ -362,5 +362,64 @@ async fn delete(
             .await
         }
         _ => error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable."),
+    }
+}
+
+/// Agent names: letters, digits, dots, dashes and underscores, as in compose.
+fn valid_agent_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+}
+
+async fn rename(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    info: RequestInfo,
+    Path(id): Path<i64>,
+    Form(f): Form<CreateForm>,
+) -> Response {
+    let (s, me) = match admin_post(auth, f.csrf.as_deref()) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let name = f.name.trim();
+    if !valid_agent_name(name) {
+        return super::ux::back(
+            &s,
+            "/admin/agents",
+            Some("Names are 1 to 64 letters, digits, dots, dashes or underscores.".into()),
+            None,
+        );
+    }
+    let Ok(Some(old)) = st.db.agent(id).await else {
+        return super::ux::back(&s, "/admin/agents", Some("No such agent.".into()), None);
+    };
+    match st.db.rename_agent(id, name).await {
+        Ok(true) => {
+            audit(
+                &st,
+                &me,
+                &info,
+                "AGENT_RENAME",
+                format!("{} -> {name}", old.name),
+            )
+            .await;
+            super::ux::back(
+                &s,
+                "/admin/agents",
+                None,
+                Some(format!("Renamed {} to {name}.", old.name)),
+            )
+        }
+        Ok(false) => super::ux::back(&s, "/admin/agents", Some("No such agent.".into()), None),
+        Err(_) => super::ux::back(
+            &s,
+            "/admin/agents",
+            Some("That name is already taken.".into()),
+            None,
+        ),
     }
 }

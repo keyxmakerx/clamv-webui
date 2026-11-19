@@ -131,6 +131,16 @@ impl Db {
         Ok((r.rows_affected() == 1).then_some(secret))
     }
 
+    /// Fails if another agent already has the name.
+    pub async fn rename_agent(&self, id: i64, name: &str) -> Result<bool, DbError> {
+        let r = sqlx::query(self.sql("UPDATE agents SET name = ? WHERE id = ?"))
+            .bind(name)
+            .bind(id)
+            .execute(self.pool())
+            .await?;
+        Ok(r.rows_affected() > 0)
+    }
+
     pub async fn set_agent_enabled(&self, id: i64, enabled: bool) -> Result<bool, DbError> {
         let r = sqlx::query(self.sql("UPDATE agents SET enabled = ? WHERE id = ?"))
             .bind(i64::from(enabled))

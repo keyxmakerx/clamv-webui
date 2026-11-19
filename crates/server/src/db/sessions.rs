@@ -61,6 +61,7 @@ impl Db {
         &self,
         raw: &str,
         idle_ms: i64,
+        touch: bool,
     ) -> Result<Option<(Session, User)>, DbError> {
         let now = now_ms();
         let id_hash = hash_secret(raw);
@@ -92,8 +93,9 @@ impl Db {
             self.delete_session_by_hash(&s.id_hash).await?;
             return Ok(None);
         }
-        // At most one write a minute per session.
-        if now - s.last_seen_at > 60_000 {
+        // At most one write a minute per session. Background refreshes pass
+        // `touch = false` so an open tab still reaches the idle limit.
+        if touch && now - s.last_seen_at > 60_000 {
             sqlx::query(self.sql("UPDATE sessions SET last_seen_at = ? WHERE id_hash = ?"))
                 .bind(now)
                 .bind(&s.id_hash)

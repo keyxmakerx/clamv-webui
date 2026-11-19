@@ -20,17 +20,28 @@
 </div></section>
 <section class="card mt-3"><div class="card-body table-responsive">
 <table class="table table-sm align-middle">
-<thead><tr><th>Schedule</th><th>Paths</th><th>Next run</th><th>Last run</th><th>EICAR control</th><th></th></tr></thead>
+<thead><tr><th>Schedule</th><th>Paths</th><th>Next run</th><th>Last run</th><th>EICAR control</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
 <tbody>
 {% for r in rows %}<tr>
 <td><strong>{{ r.name }}</strong>{% if !r.enabled %} <span class="badge bg-secondary">paused</span>{% endif %}<div class="small"><code>{{ r.cron }}</code> · {{ r.endpoint }}</div></td>
-<td class="small text-break">{% for p in r.paths %}<div>{{ p }}</div>{% endfor %}</td>
+<td class="small path">{% for p in r.paths %}<div>{{ crate::web::wbr(p)|safe }}</div>{% endfor %}</td>
 <td class="small text-nowrap">{{ r.next }}</td>
 <td class="small text-nowrap">{% if r.last_job.is_empty() %}{{ r.last_run }}{% else %}<a href="/jobs/{{ r.last_job }}">{{ r.last_run }}</a>{% endif %}</td>
 <td>{% if !r.eicar %}<span class="muted small">off</span>{% else if r.control == "passed" %}<a href="/jobs/{{ r.control_job }}"><span class="badge bg-success">passed</span></a>{% else if r.control == "failed" %}<a href="/jobs/{{ r.control_job }}"><span class="badge bg-danger">failed</span></a>{% else %}<span class="muted small">{{ r.control }}</span>{% endif %}</td>
 <td><div class="d-flex gap-2">
 <form method="post" action="/admin/schedules/{{ r.id }}/run"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-primary" type="submit">Run now</button></form>
 <form method="post" action="/admin/schedules/{{ r.id }}/enabled"><input type="hidden" name="_csrf" value="{{ nav.csrf }}">{% if !r.enabled %}<input type="hidden" name="enabled" value="1">{% endif %}<button class="btn btn-sm btn-outline-secondary" type="submit">{% if r.enabled %}Pause{% else %}Resume{% endif %}</button></form>
+<details class="edit"><summary class="btn btn-sm btn-outline-secondary">Edit</summary>
+<form method="post" action="/admin/schedules/{{ r.id }}/edit" class="edit-form">
+<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
+<label class="form-label" for="sn-{{ r.id }}">Name</label><input class="form-control form-control-sm" id="sn-{{ r.id }}" name="name" required maxlength="100" value="{{ r.name }}" autocomplete="off">
+<label class="form-label mt-2" for="sc-{{ r.id }}">When (cron, UTC)</label><input class="form-control form-control-sm" id="sc-{{ r.id }}" name="cron" required maxlength="128" value="{{ r.cron }}" autocomplete="off">
+<label class="form-label mt-2" for="se-{{ r.id }}">Run on</label><select class="form-select form-select-sm" id="se-{{ r.id }}" name="endpoint">
+{% if !roots.is_empty() %}<optgroup label="This server">{% for e in endpoints %}{% let v = self.endpoint_value(e) %}<option value="{{ v }}"{% if v == r.run_on %} selected{% endif %}>{{ e.name }}{% if e.is_default %} (default){% endif %}</option>{% endfor %}</optgroup>{% endif %}{% if !agents.is_empty() %}<optgroup label="Agents">{% for a in agents %}{% let v = format!("a:{}", a.id) %}<option value="{{ v }}"{% if v == r.run_on %} selected{% endif %}>{{ a.name }}{% if !a.online %} (offline){% endif %}</option>{% endfor %}</optgroup>{% endif %}</select>
+<label class="form-label mt-2" for="sp-{{ r.id }}">Paths, one per line</label><textarea class="form-control form-control-sm" id="sp-{{ r.id }}" name="paths" rows="3" required>{{ r.paths.join("\n") }}</textarea>
+<label class="form-check-label small mt-2"><input class="form-check-input" type="checkbox" name="eicar" value="1"{% if r.eicar %} checked{% endif %}> EICAR control on every run</label>
+<div class="mt-2"><button class="btn btn-sm btn-primary" type="submit">Save</button></div>
+</form></details>
 <form method="post" action="/admin/schedules/{{ r.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Delete</button></form>
 </div></td>
 </tr>{% else %}<tr><td colspan="6" class="muted">No schedules yet.</td></tr>{% endfor %}

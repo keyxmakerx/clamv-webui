@@ -16,15 +16,23 @@
 </div></section>
 <section class="card mt-3"><div class="card-body table-responsive">
 <table class="table table-sm align-middle">
-<thead><tr><th>Host</th><th>File</th><th>State</th><th>Last touched</th><th></th></tr></thead>
+<thead><tr><th>Host</th><th>File</th><th>State</th><th>Last touched</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
 <tbody>
 {% for r in rows %}<tr>
 <td class="small">{{ r.host }}</td>
-<td class="text-break"><strong>{{ r.path }}</strong>{% if r.fixed %} <span class="badge bg-secondary">CANARY_FILES</span>{% endif %}{% if r.created %} <span class="badge bg-secondary">decoy written</span>{% endif %}
+<td class="path"><strong>{{ crate::web::wbr(r.path)|safe }}</strong>{% if r.fixed %} <span class="badge bg-secondary">CANARY_FILES</span>{% endif %}{% if r.created %} <span class="badge bg-secondary">decoy written</span>{% endif %}
 <details class="small mt-1"><summary class="muted">Name who touched it (auditd)</summary><p class="mb-1">On the host, add this rule and mount <code>/var/log/audit</code> read-only into the container:</p><code class="d-block text-break">{{ r.rule }}</code></details></td>
 <td>{% if r.state == "armed" %}<span class="badge bg-success">armed</span>{% else if r.state == "missing" %}<span class="badge bg-danger">missing</span>{% else %}<span class="badge bg-secondary">waiting for host</span>{% endif %}</td>
 <td class="small">{% if r.tripped.is_empty() %}<span class="muted">never</span>{% else %}<span class="text-danger">{{ r.tripped }}</span>{% endif %}</td>
-<td>{% if !r.fixed %}<form method="post" action="/admin/canaries/{{ r.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form>{% endif %}</td>
+<td>{% if !r.fixed %}<div class="d-flex gap-2"><details class="edit"><summary class="btn btn-sm btn-outline-secondary">Edit</summary>
+<form method="post" action="/admin/canaries/{{ r.id }}/edit" class="edit-form">
+<input type="hidden" name="_csrf" value="{{ nav.csrf }}">
+<label class="form-label" for="cp-{{ r.id }}">File on {{ r.host }}</label><input class="form-control form-control-sm" id="cp-{{ r.id }}" name="path" required maxlength="1024" value="{{ r.path }}" autocomplete="off">
+<label class="form-check-label small mt-2"><input class="form-check-input" type="checkbox" name="create" value="1"{% if r.created %} checked{% endif %}> write a decoy if missing</label>
+<div class="small muted mt-1">The old file stays where it is.</div>
+<div class="mt-2"><button class="btn btn-sm btn-primary" type="submit">Save</button></div>
+</form></details>
+<form method="post" action="/admin/canaries/{{ r.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form></div>{% endif %}</td>
 </tr>{% else %}<tr><td colspan="5" class="muted">No canaries yet. {{ server }} and every agent can have up to 50.</td></tr>{% endfor %}
 </tbody></table>
 </div></section>

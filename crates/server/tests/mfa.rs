@@ -645,7 +645,12 @@ async fn host_check_baselines_need_a_fresh_passkey() {
         ))
         .await
         .expect("res");
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let res = app
+        .clone()
+        .oneshot(get("/integrity", &session))
+        .await
+        .expect("res");
     assert!(text(res).await.contains("needs your passkey"));
     let res = app
         .clone()
@@ -656,7 +661,13 @@ async fn host_check_baselines_need_a_fresh_passkey() {
         ))
         .await
         .expect("res");
-    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let res = app
+        .clone()
+        .oneshot(get("/integrity", &session))
+        .await
+        .expect("res");
+    assert!(text(res).await.contains("Unknown action."));
     let res = app
         .clone()
         .oneshot(form(
@@ -666,7 +677,12 @@ async fn host_check_baselines_need_a_fresh_passkey() {
         ))
         .await
         .expect("res");
-    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let res = app
+        .clone()
+        .oneshot(get("/integrity", &session))
+        .await
+        .expect("res");
     assert!(text(res).await.contains("Run AIDE now sent to"));
     let (code, _) = json_of(
         &app,
@@ -867,7 +883,11 @@ async fn language_is_picked_from_the_cookie_or_the_browser() {
     )
     .await;
     assert!(page.contains("<html lang=\"en\">"));
-    assert!(page.contains("name=\"lang\""), "picker on the account page");
+    // u05: with English the only language, the picker stays hidden.
+    assert!(
+        !page.contains("name=\"lang\""),
+        "no picker with one language"
+    );
     let csrf = csrf_of(&page);
 
     let res = app

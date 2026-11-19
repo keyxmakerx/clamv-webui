@@ -355,7 +355,7 @@ fn view(d: DetectionRow, names: &Names) -> Row {
 }
 
 /// Spreadsheet-safe CSV cell: quoted, and formulas neutralised.
-fn cell(v: &str) -> String {
+pub(super) fn cell(v: &str) -> String {
     let v = if v.starts_with(['=', '+', '-', '@', '\t', '\r']) {
         format!("'{v}")
     } else {

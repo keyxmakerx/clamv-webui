@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use askama::Template;
 use axum::Router;
-use axum::extract::{Form, Path, State};
-use axum::http::StatusCode;
+use axum::extract::{Form, Path, Query, State};
+use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use serde::Deserialize;
@@ -25,6 +25,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/admin/users/{id}/password", post(reset_password))
         .route("/admin/users/{id}/delete", post(delete_user))
         .route("/admin/audit", get(audit_page))
+        .route("/admin/audit.csv", get(audit_csv))
 }
 
 /// Admin + valid CSRF token, or an error response.
@@ -118,16 +119,13 @@ async fn show_users(st: &AppState, nav: Nav, me: &User) -> Response {
 }
 
 async fn users_result(
-    st: &AppState,
+    _st: &AppState,
     s: &Session,
-    me: &User,
+    _me: &User,
     error: Option<String>,
     success: Option<String>,
 ) -> Response {
-    let mut nav = Nav::new("users", s, me);
-    nav.error = error;
-    nav.success = success;
-    show_users(st, nav, me).await
+    super::ux::back(s, "/admin/users", error, success)
 }
 
 fn valid_username(name: &str) -> bool {
@@ -419,42 +417,176 @@ struct AuditView {
 struct AuditPage {
     nav: Nav,
     rows: Vec<AuditView>,
+    q: AuditQuery,
+    actions: Vec<String>,
+    total: i64,
+    page: i64,
+    pages: i64,
 }
 
-async fn audit_page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
+const AUDIT_PAGE: i64 = 50;
+const AUDIT_CSV_MAX: i64 = 10_000;
+
+/// The audit log filters, as they appear in the address.
+#[derive(Deserialize, Default, Clone)]
+#[serde(default)]
+pub(super) struct AuditQuery {
+    q: String,
+    user: String,
+    action: String,
+    outcome: String,
+    range: String,
+    page: i64,
+}
+
+impl AuditQuery {
+    fn filter(&self, now: i64) -> crate::db::audit::AuditFilter {
+        fn some(v: &str) -> Option<String> {
+            let v: String = v.trim().chars().take(256).collect();
+            (!v.is_empty()).then_some(v)
+        }
+        let since = match self.range.as_str() {
+            "1h" => Some(3_600_000),
+            "24h" => Some(86_400_000),
+            "7d" => Some(7 * 86_400_000),
+            "30d" => Some(30 * 86_400_000),
+            _ => None,
+        }
+        .map(|d: i64| now - d);
+        crate::db::audit::AuditFilter {
+            text: some(&self.q),
+            user: some(&self.user),
+            action: some(&self.action),
+            outcome: some(&self.outcome),
+            since,
+        }
+    }
+
+    /// The query string for `page`, keeping the filters.
+    fn link(&self, page: i64) -> String {
+        let mut p = url::form_urlencoded::Serializer::new(String::new());
+        for (k, v) in [
+            ("q", &self.q),
+            ("user", &self.user),
+            ("action", &self.action),
+            ("outcome", &self.outcome),
+            ("range", &self.range),
+        ] {
+            if !v.is_empty() {
+                p.append_pair(k, v);
+            }
+        }
+        if page > 0 {
+            p.append_pair("page", &page.to_string());
+        }
+        p.finish()
+    }
+}
+
+impl AuditPage {
+    fn link(&self, page: i64) -> String {
+        format!("/admin/audit?{}", self.q.link(page))
+    }
+    fn csv_link(&self) -> String {
+        format!("/admin/audit.csv?{}", self.q.link(0))
+    }
+}
+
+fn audit_view(r: crate::db::audit::AuditRow) -> AuditView {
+    AuditView {
+        at: fmt_ts(r.at),
+        user: r.username.unwrap_or_default(),
+        action: r.action,
+        outcome: r.outcome.unwrap_or_default(),
+        details: [r.details, r.job_id.map(|j| format!("job {j}"))]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · "),
+        ip: r.ip.unwrap_or_default(),
+    }
+}
+
+async fn audit_page(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    Query(q): Query<AuditQuery>,
+) -> Response {
     let (s, u) = match auth.require(Role::Admin) {
         Ok(x) => x,
         Err(r) => return r,
     };
-    let rows = match st.db.recent_audit(200).await {
+    let f = q.filter(crate::db::now_ms());
+    let page = q.page.clamp(0, 100_000);
+    let (rows, total) = match st.db.search_audit(&f, page * AUDIT_PAGE, AUDIT_PAGE).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = %e, "audit list failed");
             return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
         }
     };
-    let rows = rows
-        .into_iter()
-        .map(|r| AuditView {
-            at: fmt_ts(r.at),
-            user: r.username.unwrap_or_default(),
-            action: r.action,
-            outcome: r.outcome.unwrap_or_default(),
-            details: [r.details, r.job_id.map(|j| format!("job {j}"))]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join(" · "),
-            ip: r.ip.unwrap_or_default(),
-        })
-        .collect();
     render(
         StatusCode::OK,
         &AuditPage {
             nav: Nav::new("audit", &s, &u),
-            rows,
+            rows: rows.into_iter().map(audit_view).collect(),
+            actions: st.db.audit_actions().await.unwrap_or_default(),
+            pages: ((total + AUDIT_PAGE - 1) / AUDIT_PAGE).max(1),
+            total,
+            page,
+            q,
         },
     )
+}
+
+async fn audit_csv(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    info: RequestInfo,
+    Query(q): Query<AuditQuery>,
+) -> Response {
+    let (_s, u) = match auth.require(Role::Admin) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let f = q.filter(crate::db::now_ms());
+    let Ok((rows, _)) = st.db.search_audit(&f, 0, AUDIT_CSV_MAX).await else {
+        return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+    };
+    audit(
+        &st,
+        &u,
+        &info,
+        "AUDIT_EXPORT",
+        format!("{} event(s)", rows.len()),
+    )
+    .await;
+    let cell = super::detections::cell;
+    let mut out = String::from("at,user,action,outcome,details,job_id,ip\n");
+    for r in rows {
+        out.push_str(&format!(
+            "{},{},{},{},{},{},{}\n",
+            cell(&crate::timefmt::rfc3339(r.at)),
+            cell(r.username.as_deref().unwrap_or("")),
+            cell(&r.action),
+            cell(r.outcome.as_deref().unwrap_or("")),
+            cell(r.details.as_deref().unwrap_or("")),
+            cell(r.job_id.as_deref().unwrap_or("")),
+            cell(r.ip.as_deref().unwrap_or(""))
+        ));
+    }
+    (
+        [
+            (header::CONTENT_TYPE, "text/csv; charset=utf-8"),
+            (
+                header::CONTENT_DISPOSITION,
+                "attachment; filename=\"audit.csv\"",
+            ),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        out,
+    )
+        .into_response()
 }
 
 #[cfg(test)]

@@ -33,6 +33,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/scan/path", post(scan_path))
         .route("/jobs", get(jobs_page))
         .route("/jobs/{id}", get(job_page))
+        .route("/jobs/{id}/rescan", post(rescan))
 }
 
 /// The upload route; the caller gives it its own body limit and no request timeout.
@@ -190,49 +191,71 @@ async fn scan_path(
         return r;
     }
     let input = f.path.trim().to_owned();
-    let (target, endpoint_id, agent_id) = match chosen_target(&st, f.endpoint.as_deref()).await {
-        Err(m) => return scan_error(&st, &s, &u, m, input).await,
+    let job = match queue_path(&st, &u, &info, &input, f.endpoint.as_deref()).await {
+        Ok(j) => j,
+        Err(Queue::Refused(m)) => return scan_error(&st, &s, &u, m, input).await,
+        Err(Queue::Unavailable) => {
+            return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+        }
+    };
+    audit_scan(&st, &u, &info, &job, "SCAN_PATH").await;
+    st.runner.poke();
+    st.agents.poke();
+    Redirect::to(&format!("/jobs/{}", job.id)).into_response()
+}
+
+/// Why a path scan was not queued.
+enum Queue {
+    /// Shown to the user as is.
+    Refused(&'static str),
+    Unavailable,
+}
+
+/// Check and queue one path scan, on this server or an agent, the same way
+/// for a new scan and a re-scan.
+async fn queue_path(
+    st: &AppState,
+    u: &User,
+    info: &RequestInfo,
+    input: &str,
+    run_on: Option<&str>,
+) -> Result<Job, Queue> {
+    let (target, endpoint_id, agent_id) = match chosen_target(st, run_on).await {
+        Err(m) => return Err(Queue::Refused(m)),
         Ok(RunOn::Agent(a)) => {
-            if let Some(m) = crate::agent::refuse(&a, &input) {
+            if let Some(m) = crate::agent::refuse(&a, input) {
                 tracing::warn!(event = "scan.path_rejected", user = %u.username, ip = %info.ip, path = %input, agent = %a.name, "path outside the agent's SCAN_ROOTS");
-                return scan_error(&st, &s, &u, m, input).await;
+                return Err(Queue::Refused(m));
             }
             // The agent resolves and checks the path again when it runs.
-            (input.clone(), None, Some(a.id))
+            (input.to_owned(), None, Some(a.id))
         }
         Ok(RunOn::Endpoint(endpoint_id)) => {
             if st.cfg.scan_roots.is_empty() {
-                return scan_error(
-                    &st,
-                    &s,
-                    &u,
-                    "Path scans are off: SCAN_ROOTS is not set.",
-                    input,
-                )
-                .await;
+                return Err(Queue::Refused("Path scans are off: SCAN_ROOTS is not set."));
             }
             // Pin the endpoint now so the job and its filters name a real one.
-            let Some(ep) = scan::pick_endpoint(&st, endpoint_id).await else {
-                return scan_error(&st, &s, &u, "No enabled clamd endpoint.", input).await;
+            let Some(ep) = scan::pick_endpoint(st, endpoint_id).await else {
+                return Err(Queue::Refused("No enabled clamd endpoint."));
             };
-            let real = match scan::resolve_path(&st.cfg.scan_roots, &input).await {
+            let real = match scan::resolve_path(&st.cfg.scan_roots, input).await {
                 Ok(p) => p,
                 Err(m) => {
                     tracing::warn!(event = "scan.path_rejected", user = %u.username, ip = %info.ip, path = %input, "path outside SCAN_ROOTS or missing");
-                    return scan_error(&st, &s, &u, m, input).await;
+                    return Err(Queue::Refused(m));
                 }
             };
             // Store the resolved path; it is checked again when the job runs.
             let Some(target) = real.to_str() else {
-                return scan_error(&st, &s, &u, "Only UTF-8 paths can be queued.", input).await;
+                return Err(Queue::Refused("Only UTF-8 paths can be queued."));
             };
             if st.excluded(target) {
-                return scan_error(&st, &s, &u, scan::PATH_EXCLUDED, input).await;
+                return Err(Queue::Refused(scan::PATH_EXCLUDED));
             }
             (target.to_owned(), Some(ep.id), None)
         }
     };
-    let job = match st
+    match st
         .db
         .create_job(NewJob {
             kind: scan::KIND_PATH,
@@ -246,16 +269,84 @@ async fn scan_path(
         })
         .await
     {
-        Ok(j) => j,
+        Ok(j) => Ok(j),
         Err(e) => {
             tracing::error!(error = %e, "create job failed");
+            Err(Queue::Unavailable)
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct CsrfOnly {
+    #[serde(rename = "_csrf")]
+    csrf: Option<String>,
+}
+
+/// Queue the same path again, on the same endpoint or agent.
+async fn rescan(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    info: RequestInfo,
+    Path(id): Path<String>,
+    Form(f): Form<CsrfOnly>,
+) -> Response {
+    let (s, u) = match auth.require(Role::Operator) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    if !csrf::token_ok(&s.csrf_token, f.csrf.as_deref()) {
+        return error_page(
+            StatusCode::FORBIDDEN,
+            "Your session form expired. Reload and try again.",
+        );
+    }
+    let job = match st.db.job(&id).await {
+        Ok(Some(j)) => j,
+        Ok(None) => return error_page(StatusCode::NOT_FOUND, "No such job."),
+        Err(e) => {
+            tracing::error!(error = %e, "load job failed");
             return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
         }
     };
-    audit_scan(&st, &u, &info, &job, "SCAN_PATH").await;
-    st.runner.poke();
-    st.agents.poke();
-    Redirect::to(&format!("/jobs/{}", job.id)).into_response()
+    let back = format!("/jobs/{}", job.id);
+    if !can_rescan(&job) {
+        return super::ux::back(
+            &s,
+            &back,
+            Some("Only path scans can run again; an upload is not kept.".into()),
+            None,
+        );
+    }
+    if let Some(r) = rate_limited(&st, &u, &info) {
+        return r;
+    }
+    let run_on = match (job.agent_id, job.endpoint_id) {
+        (Some(a), _) => format!("a:{a}"),
+        (None, Some(e)) => e.to_string(),
+        (None, None) => String::new(),
+    };
+    match queue_path(&st, &u, &info, &job.target, Some(&run_on)).await {
+        Ok(new) => {
+            audit_scan(&st, &u, &info, &new, "SCAN_PATH").await;
+            st.runner.poke();
+            st.agents.poke();
+            super::ux::back(
+                &s,
+                &format!("/jobs/{}", new.id),
+                None,
+                Some(format!("Queued again from job {}.", job.id)),
+            )
+        }
+        Err(Queue::Refused(m)) => super::ux::back(&s, &back, Some(m.to_owned()), None),
+        Err(Queue::Unavailable) => {
+            error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.")
+        }
+    }
+}
+
+fn can_rescan(j: &Job) -> bool {
+    (j.kind == scan::KIND_PATH || j.kind == scan::KIND_WATCH) && j.status == jobs::FINISHED
 }
 
 /// The same per-user scan budget the API uses, so a stolen session cannot flood clamd.
@@ -825,9 +916,11 @@ struct JobDetail {
     size: String,
     started: String,
     finished: String,
-    detections: Vec<(String, String)>,
+    /// Path, signature and, for admins, the detection id to quarantine.
+    detections: Vec<(String, String, Option<i64>)>,
     errors: Vec<(String, String)>,
     more_errors: usize,
+    can_rescan: bool,
     error_code: String,
     error_message: String,
     refresh: bool,
@@ -854,11 +947,27 @@ async fn job_page(State(st): State<Arc<AppState>>, auth: Auth, Path(id): Path<St
     };
     let names = endpoint_names(&st).await;
     const SHOW: usize = 1000;
+    // Detection ids, so an admin can quarantine a file from here.
+    let ids: std::collections::HashMap<(String, String), i64> = if u.role.allows(Role::Admin) {
+        st.db
+            .detections_for_job(&job.id)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|d| ((d.path, d.signature), d.id))
+            .collect()
+    } else {
+        std::collections::HashMap::new()
+    };
     let detections = job
         .detections
         .iter()
         .flat_map(|(p, sigs)| sigs.iter().map(move |s| (p.clone(), s.clone())))
         .take(SHOW)
+        .map(|(p, s)| {
+            let id = ids.get(&(p.clone(), s.clone())).copied();
+            (p, s, id)
+        })
         .collect();
     let errors = job
         .errors
@@ -881,6 +990,7 @@ async fn job_page(State(st): State<Arc<AppState>>, auth: Auth, Path(id): Path<St
             error_code: job.error_code.clone().unwrap_or_default(),
             error_message: job.error_message.clone().unwrap_or_default(),
             refresh: job.status != jobs::FINISHED,
+            can_rescan: can_rescan(&job),
         },
     )
 }
