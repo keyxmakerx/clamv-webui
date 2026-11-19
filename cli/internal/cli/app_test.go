@@ -522,3 +522,57 @@ func TestCredentialInputIsCancellable(t *testing.T) {
 		t.Fatal("credential input ignored cancellation")
 	}
 }
+
+func TestAgentsSchedulesAndCancel(t *testing.T) {
+	var deleted, paused atomic.Bool
+	h := testCLI(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case "GET /api/v1/agents":
+			writeJSON(w, []map[string]any{{"id": 3, "name": "nas", "enabled": true, "online": true, "roots": []string{"/data"}}})
+		case "POST /api/v1/scans/paths":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["agent"] != "nas" || body["endpointId"] != nil {
+				t.Error("agent not sent", body)
+			}
+			w.WriteHeader(202)
+			writeJSON(w, map[string]any{"jobId": "job-7"})
+		case "POST /api/v1/jobs/job-7/cancel":
+			writeJSON(w, map[string]any{"id": "job-7", "status": "FINISHED", "verdict": "ERROR", "error": map[string]string{"code": "CANCELLED", "message": "Cancelled by token:t."}})
+		case "POST /api/v1/schedules":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["agent"] != "nas" || body["cron"] != "0 3 * * *" || len(body["paths"].([]any)) != 2 {
+				t.Error("schedule body", body)
+			}
+			w.WriteHeader(201)
+			writeJSON(w, map[string]any{"id": "s1", "name": "nightly", "cron": "0 3 * * *", "agent": "nas", "enabled": true, "paths": body["paths"]})
+		case "GET /api/v1/schedules":
+			writeJSON(w, []map[string]any{{"id": "s1", "name": "nightly", "cron": "0 3 * * *", "agent": "nas", "enabled": true, "paths": []string{"/data"}}})
+		case "POST /api/v1/schedules/s1/run":
+			w.WriteHeader(202)
+			writeJSON(w, map[string]any{"created": 2})
+		case "PATCH /api/v1/schedules/s1":
+			paused.Store(true)
+			writeJSON(w, map[string]any{"id": "s1", "name": "nightly", "enabled": false})
+		case "DELETE /api/v1/schedules/s1":
+			deleted.Store(true)
+			w.WriteHeader(204)
+		default:
+			t.Error("unexpected route", r.Method, r.URL.Path)
+			w.WriteHeader(404)
+		}
+	})
+	check(t, h.run("agents", "list"), 0, "nas", "online", "/data")
+	check(t, h.run("scan", "path", "/data/x", "--agent", "nas"), 0, "job-7")
+	check(t, h.run("jobs", "cancel", "job-7"), 0, "FINISHED", "ERROR")
+	check(t, h.run("schedules", "add", "nightly", "--cron", "0 3 * * *", "--path", "/data", "--path", "/srv", "--agent", "nas"), 0, "agent:nas")
+	check(t, h.run("schedules", "list"), 0, "nightly", "agent:nas")
+	check(t, h.run("schedules", "run", "s1"), 0, "2")
+	check(t, h.run("schedules", "pause", "s1"), 0, "false")
+	check(t, h.run("schedules", "delete", "s1"), 0, "s1")
+	if !deleted.Load() || !paused.Load() {
+		t.Error("schedule changes not sent")
+	}
+	check(t, h.run("schedules", "add", "x"), 2)
+}

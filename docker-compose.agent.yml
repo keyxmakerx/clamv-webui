@@ -6,13 +6,16 @@ services:
     command: agent
     restart: unless-stopped
     environment:
-      AGENT_SERVER_URL: http://100.82.0.5:8080  # the server as this host reaches it
+      AGENT_SERVER_URL: https://100.82.0.5:8080  # the server as this host reaches it; http:// is refused
       AGENT_TOKEN_FILE: /run/secrets/agent_token  # token from Admin > Agents
-      # AGENT_SERVER_FINGERPRINT: AB:CD:...  # pin the server certificate when it uses HTTPS
+      AGENT_SERVER_FINGERPRINT: AB:CD:EF:...  # server certificate SHA-256 from Admin > Agents; or AGENT_CA_FILE for a private CA
+      # AGENT_ALLOW_PLAINTEXT: "true"  # accept http:// (token unencrypted); only on a private VPN or mesh
+      # AGENT_QUEUE_DIR: /queue  # keep unsent results across agent restarts; mount a writable volume
       CLAMD_ENDPOINT: tcp://clamav:3310  # this host's clamd
       SCAN_ROOTS: /data  # folders this agent may scan; clamd must see the same paths
       # REALTIME_PATHS: /data/downloads  # scan files here as soon as they are written
       # CANARY_FILES: /srv/secrets/passwords.kdbx  # decoy; any access alerts (mount it read-only)
+      # CANARY_DIRS: /srv/secrets  # folders where the server may write decoys; elsewhere it can only watch
       # AGENT_ALLOW: scan,canaries,checks  # what this host lets the server ask for; add firewall, baseline, timers, quarantine
       # QUARANTINE_DIR: /quarantine  # opt-in; needs a writable volume and read-write scan roots
       LOG_FORMAT: json  # one JSON object per line for log shippers
@@ -27,6 +30,7 @@ services:
       - no-new-privileges:true
     volumes:
       - /data:/data:ro
+      # - ./queue:/queue  # for AGENT_QUEUE_DIR; chown 10001
       # - /var/log/aide:/var/log/aide:ro  # AIDE reports, read every 5 min
       # - /var/log/rkhunter.log:/var/log/rkhunter.log:ro  # rkhunter report
       # - /var/log/audit:/var/log/audit:ro  # lets canary alerts name who touched them

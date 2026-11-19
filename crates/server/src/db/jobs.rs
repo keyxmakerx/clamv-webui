@@ -362,6 +362,20 @@ impl Db {
         Ok(self.write_outcome(id, o, Some(status)).await? == 1)
     }
 
+    /// Put a job given up on as lost back to RUNNING, so its agent's late result can finish it.
+    pub async fn reopen_lost_job(&self, id: &str, agent_id: i64) -> Result<bool, DbError> {
+        let r = sqlx::query(self.sql(
+            "UPDATE scan_jobs SET status = 'RUNNING', verdict = NULL, finished_at = NULL, \
+             error_code = NULL, error_message = NULL \
+             WHERE id = ? AND agent_id = ? AND status = 'FINISHED' AND error_code = 'AGENT_LOST'",
+        ))
+        .bind(id)
+        .bind(agent_id)
+        .execute(self.pool())
+        .await?;
+        Ok(r.rows_affected() == 1)
+    }
+
     /// After a restart, RUNNING jobs did not finish. Mark them failed instead
     /// of re-running hours of work blindly (N5). Returns how many.
     pub async fn interrupt_running_jobs(&self) -> Result<u64, DbError> {

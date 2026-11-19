@@ -166,6 +166,10 @@ pub struct Config {
     #[arg(long, env = "CANARY_FILES", value_delimiter = ',', global = true)]
     pub canary_files: Vec<std::path::PathBuf>,
 
+    /// Agent mode: folders where the server may have this agent write decoy files; elsewhere canaries are only watched.
+    #[arg(long, env = "CANARY_DIRS", value_delimiter = ',', global = true)]
+    pub canary_dirs: Vec<std::path::PathBuf>,
+
     /// Up to 5 comma-separated alert URLs; Discord is detected, prefix ntfy+, gotify+ or slack+ for those.
     #[arg(long, env = "WEBHOOK_URL", hide_env_values = true, global = true)]
     pub webhook_url: Option<String>,
@@ -591,6 +595,20 @@ pub struct Config {
     /// Agent mode: pin the server certificate by SHA-256 (as logged at server start); no CA needed.
     #[arg(long, env = "AGENT_SERVER_FINGERPRINT", global = true)]
     pub agent_server_fingerprint: Option<String>,
+
+    /// Agent mode: accept a plain http:// AGENT_SERVER_URL (token and results unencrypted). Off: HTTPS only.
+    #[arg(
+        long,
+        env = "AGENT_ALLOW_PLAINTEXT",
+        default_value_t = false,
+        action = clap::ArgAction::Set,
+        global = true
+    )]
+    pub agent_allow_plaintext: bool,
+
+    /// Agent mode: folder that keeps unsent results across agent restarts; without it they are held in memory.
+    #[arg(long, env = "AGENT_QUEUE_DIR", global = true)]
+    pub agent_queue_dir: Option<std::path::PathBuf>,
 }
 
 impl Config {

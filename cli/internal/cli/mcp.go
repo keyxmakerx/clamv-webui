@@ -142,6 +142,10 @@ type mcpFileArgs struct {
 type mcpPathArgs struct {
 	Path       string `json:"path" jsonschema:"Path on the Web UI/ClamD host, subject to server allowed scan roots and policy"`
 	EndpointID *int64 `json:"endpoint_id,omitempty" jsonschema:"Optional positive ClamD endpoint ID"`
+	Agent      string `json:"agent,omitempty" jsonschema:"Optional remote agent name; the path is then on that agent's host and checked against its roots"`
+}
+type mcpAgentsResult struct {
+	Agents []agent `json:"agents"`
 }
 type mcpJobArgs struct {
 	JobID string `json:"job_id" jsonschema:"Scan job ID returned by the Web UI API"`
@@ -186,6 +190,8 @@ func (b *mcpBridge) server(version string) *mcp.Server {
 	mcp.AddTool(s, &mcp.Tool{Name: "clamav_scan_path", Description: "Submit a server-side path scan under the API identity's allowed roots. Returns the job ID and accepted initial state. The server may quarantine detected files according to its policy.", Annotations: scan()}, b.scanPath)
 	mcp.AddTool(s, &mcp.Tool{Name: "clamav_get_job", Description: "Get a scan job's verdict, signatures, duration, recorded quarantine status and safe error details. UNKNOWN quarantine status is not evidence that no file was quarantined.", Annotations: read()}, b.getJob)
 	mcp.AddTool(s, &mcp.Tool{Name: "clamav_check_health", Description: "Check the configured/default ClamD endpoint, signature database version and timestamp, thread counts and queue depth. DOWN, STALE and unknown values are returned as observations.", Annotations: read()}, b.checkHealth)
+	mcp.AddTool(s, &mcp.Tool{Name: "clamav_list_agents", Description: "List remote agents (other hosts that scan with their own clamd) visible to the configured API identity, with online state and scan roots.", Annotations: read()}, b.listAgents)
+	mcp.AddTool(s, &mcp.Tool{Name: "clamav_cancel_job", Description: "Cancel a queued scan job or a running path scan, on the server or an agent. A finished job cannot be cancelled.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPtr(false), IdempotentHint: false, OpenWorldHint: boolPtr(false)}}, b.cancelJob)
 	mcp.AddTool(s, &mcp.Tool{Name: "clamav_list_endpoints", Description: "List ClamD endpoints accessible to the configured API identity, including enabled state.", Annotations: read()}, b.listEndpoints)
 	b.resource(s, "clamav://stats", "ClamD statistics", "Latest safe STATS thread, queue and memory pool snapshot for the configured/default endpoint.", func(ctx context.Context) (any, error) {
 		var result metrics
@@ -290,7 +296,12 @@ func (b *mcpBridge) scanPath(ctx context.Context, _ *mcp.CallToolRequest, args m
 		return nil, mcpPathResult{}, err
 	}
 	body := map[string]any{"path": args.Path}
-	if id > 0 {
+	if args.Agent != "" {
+		if len(args.Agent) > 64 || strings.ContainsAny(args.Agent, "\x00\r\n") {
+			return nil, mcpPathResult{}, usage("agent must be an agent name")
+		}
+		body["agent"] = args.Agent
+	} else if id > 0 {
 		body["endpointId"] = id
 	}
 	data, _ := json.Marshal(body)
@@ -343,6 +354,34 @@ func (b *mcpBridge) listEndpoints(ctx context.Context, _ *mcp.CallToolRequest, _
 	result := mcpEndpointsResult{Endpoints: []endpoint{}}
 	err = b.client.request(ctx, "GET", "/endpoints", nil, nil, "", &result.Endpoints, false)
 	return nil, result, mcpAPIError(err)
+}
+
+func (b *mcpBridge) listAgents(ctx context.Context, _ *mcp.CallToolRequest, _ mcpEmptyArgs) (*mcp.CallToolResult, mcpAgentsResult, error) {
+	done, err := b.enter()
+	if err != nil {
+		return nil, mcpAgentsResult{}, err
+	}
+	defer done()
+	result := mcpAgentsResult{Agents: []agent{}}
+	err = b.client.request(ctx, "GET", "/agents", nil, nil, "", &result.Agents, false)
+	return nil, result, mcpAPIError(err)
+}
+
+func (b *mcpBridge) cancelJob(ctx context.Context, _ *mcp.CallToolRequest, args mcpJobArgs) (*mcp.CallToolResult, job, error) {
+	done, err := b.enter()
+	if err != nil {
+		return nil, job{}, err
+	}
+	defer done()
+	if validJobID(args.JobID) != nil {
+		return nil, job{}, usage("job_id is invalid")
+	}
+	var value job
+	err = b.client.request(ctx, "POST", "/jobs/"+args.JobID+"/cancel", nil, bytes.NewReader([]byte("{}")), "application/json", &value, false)
+	if value.Signatures == nil {
+		value.Signatures = []string{}
+	}
+	return nil, value, mcpAPIError(err)
 }
 
 func mcpAPIError(err error) error {

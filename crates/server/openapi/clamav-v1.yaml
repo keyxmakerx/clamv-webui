@@ -119,6 +119,72 @@ paths:
       responses:
         '200': {description: Safe job DTO, content: {application/json: {schema: {$ref: '#/components/schemas/Job'}}}}
         '404': {description: No such job}
+  /jobs/{id}/cancel:
+    post:
+      tags: [Jobs]
+      summary: Cancel a queued job, or a running path scan (local or on an agent); needs scan:path
+      parameters: [{$ref: '#/components/parameters/jobId'}]
+      responses:
+        '200': {description: The cancelled job, error code CANCELLED, content: {application/json: {schema: {$ref: '#/components/schemas/Job'}}}}
+        '404': {description: No such job}
+        '409': {description: Already finished, or a kind that cannot be stopped while it runs}
+  /agents:
+    get:
+      tags: [Agents]
+      summary: Remote agents (endpoints:read); empty for tokens limited to endpoints or path roots
+      responses:
+        '200': {description: Agent list, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Agent'}}}}}
+  /schedules:
+    get:
+      tags: [Schedules]
+      summary: Scheduled scans (schedules:read, or an admin)
+      responses:
+        '200': {description: Schedule list, content: {application/json: {schema: {type: array, items: {$ref: '#/components/schemas/Schedule'}}}}}
+    post:
+      tags: [Schedules]
+      summary: Add a scheduled scan on this server or an agent (schedules:write, or an admin)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, cron, paths]
+              properties:
+                name: {type: string, maxLength: 100}
+                cron: {type: string, example: '0 3 * * *'}
+                paths: {type: array, maxItems: 50, items: {type: string}}
+                endpointId: {type: integer, format: int64}
+                agentId: {type: integer, format: int64}
+                agent: {type: string, description: Agent name; instead of agentId}
+                eicarCheck: {type: boolean, default: false}
+      responses:
+        '201': {description: Created, content: {application/json: {schema: {$ref: '#/components/schemas/Schedule'}}}}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '409': {description: Name taken}
+  /schedules/{id}:
+    patch:
+      tags: [Schedules]
+      summary: Pause or resume
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      requestBody:
+        required: true
+        content: {application/json: {schema: {type: object, required: [enabled], properties: {enabled: {type: boolean}}}}}
+      responses:
+        '200': {description: Updated, content: {application/json: {schema: {$ref: '#/components/schemas/Schedule'}}}}
+    delete:
+      tags: [Schedules]
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      responses:
+        '204': {description: Deleted; past jobs stay}
+  /schedules/{id}/run:
+    post:
+      tags: [Schedules]
+      summary: Start a run now
+      parameters: [{name: id, in: path, required: true, schema: {type: string}}]
+      responses:
+        '202': {description: Run started; created is the number of jobs queued}
+        '409': {description: Previous run still going}
   /jobs/{id}/progress:
     get:
       tags: [Jobs]
@@ -149,7 +215,7 @@ paths:
   /scans/paths:
     post:
       tags: [Scanning]
-      summary: Enqueue allowed server path scan (token needs explicit pathRoots)
+      summary: Enqueue a path scan on this server or an agent (agentId or agent; tokens limited to endpoints or path roots cannot use agents)
       requestBody:
         required: true
         content:
@@ -159,6 +225,8 @@ paths:
               required: [path]
               properties:
                 endpointId: {type: integer, format: int64}
+                agentId: {type: integer, format: int64, description: Run on this agent instead of the server}
+                agent: {type: string, description: Agent name; instead of agentId}
                 path: {type: string, example: /scandir/sample.bin}
       responses:
         '202': {description: Accepted, body includes jobId}
@@ -192,7 +260,7 @@ paths:
               required: [label, scopes]
               properties:
                 label: {type: string}
-                scopes: {type: array, items: {type: string, enum: [scan:upload, scan:path, jobs:read, endpoints:read, health:read, audit:read]}}
+                scopes: {type: array, items: {type: string, enum: [scan:upload, scan:path, jobs:read, endpoints:read, health:read, audit:read, schedules:read, schedules:write]}}
                 endpointIds: {type: array, items: {type: integer, format: int64}}
                 pathRoots: {type: array, items: {type: string}}
                 expiresAt: {type: string, format: date-time}
@@ -252,6 +320,7 @@ components:
         status: {type: string}
         verdict: {type: string, nullable: true}
         endpointId: {type: integer, nullable: true}
+        agentId: {type: integer, nullable: true, description: Set when an agent runs the job}
         filename: {type: string, nullable: true, description: Only safe upload display name; no path scans targets}
         sizeBytes: {type: integer, format: int64, nullable: true}
         submittedAt: {type: string, format: date-time}
@@ -266,8 +335,37 @@ components:
       nullable: true
       required: [code, message]
       properties:
-        code: {type: string, enum: [POLICY_REJECTED, NO_ELIGIBLE_FILES, CONFIGURATION_UNAVAILABLE, LIMIT_EXCEEDED, SCAN_FAILED]}
+        code: {type: string, description: 'Includes POLICY_REJECTED, NO_ELIGIBLE_FILES, CONFIGURATION_UNAVAILABLE, LIMIT_EXCEEDED, SCAN_FAILED, CANCELLED, AGENT_LOST, AGENT_UNSUPPORTED, AGENT_REFUSED, AGENT_RATE_LIMITED'}
         message: {type: string, description: Fixed public summary; raw daemon and exception messages are never returned}
+    Agent:
+      type: object
+      properties:
+        id: {type: integer, format: int64}
+        name: {type: string}
+        enabled: {type: boolean}
+        online: {type: boolean}
+        lastSeenAt: {type: string, format: date-time, nullable: true}
+        version: {type: string, nullable: true}
+        clamdVersion: {type: string, nullable: true}
+        roots: {type: array, items: {type: string}}
+        slots: {type: integer}
+        versionHint: {type: string, nullable: true, description: Set when the agent is refused for its protocol version}
+    Schedule:
+      type: object
+      properties:
+        id: {type: string}
+        name: {type: string}
+        cron: {type: string}
+        paths: {type: array, items: {type: string}}
+        endpointId: {type: integer, nullable: true}
+        agentId: {type: integer, nullable: true}
+        agent: {type: string, nullable: true}
+        enabled: {type: boolean}
+        eicarCheck: {type: boolean}
+        createdAt: {type: string, format: date-time}
+        lastRunAt: {type: string, format: date-time, nullable: true}
+        lastJobId: {type: string, nullable: true}
+        nextRunAt: {type: string, format: date-time, nullable: true}
     JobPage:
       type: object
       properties:

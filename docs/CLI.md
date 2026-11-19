@@ -33,6 +33,13 @@ precedence, private CA support, credential storage and CI exit-code semantics.
 - The maintained OpenAPI contract is updated to `1.2.0-mcp`; API route prefix
   remains `/api/v1`; the application and CLI release version is `2.1.0`.
 
+- Agents: `GET /api/v1/agents`; `POST /api/v1/scans/paths` takes `agentId` or
+  `agent`; `POST /api/v1/jobs/{id}/cancel`; schedules at `GET|POST /api/v1/schedules`,
+  `PATCH|DELETE /api/v1/schedules/{id}`, `POST /api/v1/schedules/{id}/run` with
+  the `schedules:read` and `schedules:write` scopes (admins have both). Tokens
+  limited to endpoints or path roots never reach agents. `clamctl agents list`,
+  `scan path --agent`, `jobs cancel` and `schedules ...` use them.
+
 These are response additions and authenticated helper routes. No database schema,
 Maven dependency, endpoint, identity configuration or existing scan engine change
 is required. Deploy the updated web application before using CLI `login` or

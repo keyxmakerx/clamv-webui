@@ -63,7 +63,10 @@ fn agent_cli_with(url: &str, token: &str, clamd: u16, root: &str, extra: &[&str]
         root,
     ];
     args.extend_from_slice(extra);
-    Cli::parse_from(args)
+    let mut cli = Cli::parse_from(args);
+    // The test server speaks plain HTTP on loopback; agents refuse that unless told.
+    cli.config.agent_allow_plaintext = url.starts_with("http://");
+    cli
 }
 
 async fn queue(st: &AppState, kind: &str, target: &str, agent: i64) -> Job {
@@ -483,14 +486,26 @@ async fn canaries_set_in_the_ui_reach_the_agent() {
         .add_canary(Some(agent.id), &decoy_s, true, "admin")
         .await
         .expect("add");
-    let cli = agent_cli(&srv.url, &token, clamd, &root_s);
+    // Outside CANARY_DIRS: the agent must not write it.
+    std::fs::create_dir_all(base.join("etc")).expect("mkdir");
+    let stray = base.join("etc").join("shadow.csv");
+    srv.st
+        .db
+        .add_canary(Some(agent.id), stray.to_str().expect("utf8"), true, "admin")
+        .await
+        .expect("add");
+    let mut cli = agent_cli(&srv.url, &token, clamd, &root_s);
+    cli.config.canary_dirs = vec![base.join("share")];
     let handle = tokio::spawn(clamv_webui::agent::client::run(cli.config));
 
     // The agent writes the decoy, arms it and says so on a later poll.
     let mut armed = false;
     for _ in 0..100 {
         let list = srv.st.db.host_canaries(Some(agent.id)).await.expect("q");
-        if list[0].armed == Some(true) {
+        if list
+            .iter()
+            .any(|c| c.path == decoy_s && c.armed == Some(true))
+        {
             armed = true;
             break;
         }
@@ -499,13 +514,17 @@ async fn canaries_set_in_the_ui_reach_the_agent() {
     // A busy agent heartbeats every 20 s at most; an idle one long-polls,
     // so the state may only arrive on the next round. The decoy is the proof.
     assert!(decoy.is_file(), "decoy written");
+    assert!(!stray.exists(), "no decoy outside CANARY_DIRS");
     assert!(armed, "the agent reported it armed");
     tokio::time::sleep(Duration::from_millis(300)).await;
     let _ = std::fs::read(&decoy).expect("read");
     let mut tripped = false;
     for _ in 0..50 {
         let list = srv.st.db.host_canaries(Some(agent.id)).await.expect("q");
-        if list[0].last_tripped_at.is_some() {
+        if list
+            .iter()
+            .any(|c| c.path == decoy_s && c.last_tripped_at.is_some())
+        {
             tripped = true;
             break;
         }

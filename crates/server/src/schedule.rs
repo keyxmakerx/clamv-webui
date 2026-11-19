@@ -80,7 +80,13 @@ pub async fn run(st: &AppState, s: &Schedule, trigger: &'static str) -> Result<u
     }
     let target = match s.agent_id {
         Some(id) => match st.db.agent(id).await.ok().flatten() {
-            Some(a) if a.enabled => Target::Agent(a),
+            Some(a) if a.enabled => {
+                if !crate::agent::is_online(&a, now) {
+                    // Said now, not at the next window or the 24-hour expiry.
+                    tracing::warn!(event = "schedule.agent_offline", schedule = %s.name, agent = %a.name, trigger, "scheduled run queued for an offline agent; it runs when the agent reconnects, or expires after 24 h");
+                }
+                Target::Agent(a)
+            }
             _ => {
                 tracing::error!(event = "schedule.failed", schedule = %s.name, trigger, "the schedule's agent is missing or disabled");
                 return Err("The schedule's agent is missing or disabled.".into());

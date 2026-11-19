@@ -113,6 +113,12 @@ clamctl jobs list --status RUNNING
 clamctl jobs list --verdict VIRUS_FOUND --limit 25 --page 0 --json
 clamctl jobs get JOB_ID
 clamctl jobs watch JOB_ID --interval 2s --timeout 30m
+clamctl jobs cancel JOB_ID
+clamctl agents list
+clamctl scan path /data/media --agent nas --wait
+clamctl schedules list
+clamctl schedules add nightly --cron '0 3 * * *' --path /data --agent nas --eicar
+clamctl schedules run|pause|resume|delete SCHEDULE_ID
 clamctl audit list --limit 20
 clamctl version
 clamctl --help

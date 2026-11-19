@@ -35,6 +35,8 @@ use crate::scan;
 use crate::timefmt::{parse_clamd_date, rfc3339};
 use crate::web::session::{COOKIE, client_ip, cookie, set_cookie};
 
+mod agents;
+
 const CSRF_HEADER: &str = "X-CSRF-TOKEN";
 const MAX_PAGE: i64 = 100;
 /// Signatures older than this are STALE (Java `api.v1.clamd.max-database-age-hours`).
@@ -54,6 +56,17 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/api/v1/jobs", get(list_jobs))
         .route("/api/v1/jobs/{id}", get(job))
         .route("/api/v1/jobs/{id}/progress", get(progress))
+        .route("/api/v1/jobs/{id}/cancel", post(agents::cancel))
+        .route("/api/v1/agents", get(agents::list))
+        .route(
+            "/api/v1/schedules",
+            get(agents::list_schedules).post(agents::create_schedule),
+        )
+        .route(
+            "/api/v1/schedules/{id}",
+            axum::routing::patch(agents::patch_schedule).delete(agents::delete_schedule),
+        )
+        .route("/api/v1/schedules/{id}/run", post(agents::run_schedule))
         .route("/api/v1/scans/paths", post(scan_path))
         .route("/api/v1/audit", get(audit))
         .route("/api/v1/tokens", get(list_tokens).post(create_token))
@@ -130,7 +143,7 @@ fn role_allows(role: Role, scope: &str) -> bool {
     match scope {
         "health:read" | "endpoints:read" => true,
         "jobs:read" | "scan:upload" | "scan:path" => role.allows(Role::Operator),
-        "audit:read" => role.allows(Role::Admin),
+        "audit:read" | "schedules:read" | "schedules:write" => role.allows(Role::Admin),
         _ => false,
     }
 }
@@ -603,6 +616,7 @@ fn job_json(j: &Job) -> Value {
         "status": j.status,
         "verdict": j.verdict,
         "endpointId": j.endpoint_id,
+        "agentId": j.agent_id,
         // Only the upload display name; path targets stay private.
         "filename": (j.kind == scan::KIND_UPLOAD).then(|| j.target.clone()),
         "sizeBytes": j.size_bytes,
@@ -772,6 +786,11 @@ struct PathScan {
     path: String,
     #[serde(rename = "endpointId")]
     endpoint_id: Option<i64>,
+    /// Run on this agent (by id) instead of this server.
+    #[serde(rename = "agentId")]
+    agent_id: Option<i64>,
+    /// Run on this agent (by name) instead of this server.
+    agent: Option<String>,
 }
 
 async fn scan_path(
@@ -788,6 +807,14 @@ async fn scan_path(
     };
     if let Err(r) = rate_limited(&st, &p) {
         return r;
+    }
+    match agents::find_agent(&st, body.agent_id, body.agent.as_deref()).await {
+        Err(r) => return r,
+        Ok(Some(_)) if body.endpoint_id.is_some() => {
+            return bad("Give endpointId or an agent, not both.");
+        }
+        Ok(Some(a)) => return agents::scan_on_agent(&st, &p, &a, body.path.trim()).await,
+        Ok(None) => {}
     }
     if st.cfg.scan_roots.is_empty() {
         return err(

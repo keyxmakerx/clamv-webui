@@ -61,10 +61,12 @@ secrets in a project configuration file.
 | Tool | Arguments | Result | Required API scopes |
 |---|---|---|---|
 | `clamav_scan_file` | `file_path`, optional positive `endpoint_id` | Completed job with verdict, signatures, execution duration, quarantine status and safe error | `scan:upload`, `jobs:read` |
-| `clamav_scan_path` | `path`, optional positive `endpoint_id` | `jobId` and `status: ACCEPTED` | `scan:path` |
+| `clamav_scan_path` | `path`, optional positive `endpoint_id` or `agent` name | `jobId` and `status: ACCEPTED` | `scan:path` |
 | `clamav_get_job` | `job_id` | Job state, verdict, signatures, duration, quarantine status and safe error | `jobs:read` |
 | `clamav_check_health` | none | `health` and `metrics`: connectivity, database version/time/freshness, threads, queue and memory pools | `health:read` |
 | `clamav_list_endpoints` | none | `endpoints` array with ID, name and enabled state | `endpoints:read` |
+| `clamav_list_agents` | none | `agents` array with ID, name, online state and roots | `endpoints:read` (token not limited to endpoints or path roots) |
+| `clamav_cancel_job` | `job_id` | The cancelled job (error code `CANCELLED`) | `scan:path` |
 
 Example tool arguments:
 

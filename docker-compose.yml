@@ -14,6 +14,8 @@ services:
       CLAMD_MAX_STREAM_MB: "1024"  # 1 GB uploads; the bundled clamd below is raised to match
       # QUARANTINE_DIR: /app/data/quarantine  # opt-in; needs read-write scan roots
       LOG_FORMAT: json  # one JSON object per line
+      # TLS_SELF_SIGNED: "true"  # HTTPS; remote agents need it (Admin > Agents shows the fingerprint)
+      # TLS_SELF_SIGNED_NAMES: 100.82.x.y  # names agents connect to; changing it means new agent fingerprints
     ports:
       - "8080:8080"
     read_only: true

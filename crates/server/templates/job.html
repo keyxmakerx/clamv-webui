@@ -6,6 +6,7 @@
 <h1 class="h3 text-break">{{ j.target }}</h1>
 <p>{% if j.verdict.is_empty() %}<span class="badge bg-secondary">{{ j.status }}</span>{% if refresh %} <span class="muted small">refreshing…</span>{% endif %}{% else %}<span class="badge {{ self.badge(j.verdict) }}">{{ j.verdict }}</span>{% endif %}
 {% if !error_message.is_empty() %} <span class="small">{{ error_message }}</span>{% endif %}</p>
+{% if cancellable %}<form method="post" action="/jobs/{{ j.id }}/cancel"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Cancel job</button></form>{% endif %}
 <section class="card mt-3"><div class="card-body">
 <dl class="row mb-0 small">
 <dt class="col-sm-3">Type</dt><dd class="col-sm-9">{{ j.kind }}</dd>

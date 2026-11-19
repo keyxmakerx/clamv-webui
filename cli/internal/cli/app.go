@@ -159,7 +159,7 @@ func helpRequested(args []string) bool {
 }
 
 func commandValueFlag(value string) bool {
-	return oneOf(value, "--username", "--password", "--token", "--status", "--verdict", "--limit", "--page", "--interval", "--timeout", "--transport", "--upload-root", "--listen", "--http-token-file", "--allowed-origin", "--max-upload-bytes")
+	return oneOf(value, "--username", "--password", "--token", "--status", "--verdict", "--limit", "--page", "--interval", "--timeout", "--transport", "--upload-root", "--listen", "--http-token-file", "--allowed-origin", "--max-upload-bytes", "--agent", "--cron", "--path")
 }
 
 func (a *App) Run(ctx context.Context, args []string) int {
@@ -282,6 +282,10 @@ func (a *App) run(ctx context.Context, options globals, words []string) (int, er
 		return 0, a.output(options, values, []string{"ID", "NAME", "ENABLED"}, rows)
 	case "scan":
 		return a.scan(ctx, options, words[1:], client)
+	case "agents":
+		return a.agents(ctx, options, words[1:], client)
+	case "schedules":
+		return a.schedules(ctx, options, words[1:], client)
 	case "jobs":
 		return a.jobs(ctx, options, words[1:], client)
 	case "audit":
@@ -492,6 +496,7 @@ func (a *App) scan(ctx context.Context, options globals, args []string, client *
 	}
 	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
 	wait := scanFlags(fs)
+	agentName := fs.String("agent", "", "Run a path scan on this agent")
 	if err := parseFlags(args[1:], fs); err != nil {
 		return 2, err
 	}
@@ -511,7 +516,9 @@ func (a *App) scan(ctx context.Context, options globals, args []string, client *
 			return 2, usage("scan path accepts one server-side path")
 		}
 		body := map[string]any{"path": fs.Arg(0)}
-		if options.Endpoint > 0 {
+		if *agentName != "" {
+			body["agent"] = *agentName
+		} else if options.Endpoint > 0 {
 			body["endpointId"] = options.Endpoint
 		}
 		encoded, _ := json.Marshal(body)
@@ -559,9 +566,11 @@ func (a *App) scan(ctx context.Context, options globals, args []string, client *
 
 func (a *App) jobs(ctx context.Context, options globals, args []string, client *apiClient) (int, error) {
 	if len(args) == 0 {
-		return 2, usage("usage: clamctl jobs list | jobs get ID | jobs watch ID")
+		return 2, usage("usage: clamctl jobs list | jobs get ID | jobs watch ID | jobs cancel ID")
 	}
 	switch args[0] {
+	case "cancel":
+		return a.cancelJob(ctx, options, args[1:], client)
 	case "list":
 		fs := flag.NewFlagSet("jobs list", flag.ContinueOnError)
 		limit := fs.Int("limit", 25, "Jobs per page (1-100)")
@@ -732,10 +741,15 @@ Health and scanning:
   clamctl status [--endpoint ID]
   clamctl endpoints list
   clamctl scan upload FILE... [--wait] [--json]
-  clamctl scan path SERVER_PATH [--wait] [--endpoint ID]
+  clamctl scan path SERVER_PATH [--wait] [--endpoint ID | --agent NAME]
+  clamctl agents list
   clamctl jobs list [--status RUNNING] [--verdict VIRUS_FOUND] [--limit 25] [--page 0]
   clamctl jobs get JOB_ID
   clamctl jobs watch JOB_ID [--interval 2s] [--timeout 30m] [--json]
+  clamctl jobs cancel JOB_ID
+  clamctl schedules list
+  clamctl schedules add NAME --cron '0 3 * * *' --path /data [--path ...] [--agent NAME] [--eicar]
+  clamctl schedules run|pause|resume|delete SCHEDULE_ID
   clamctl audit list [--limit 20] [--page 0]
   clamctl mcp serve [--upload-root DIRECTORY] [--transport stdio|http]
   clamctl version
