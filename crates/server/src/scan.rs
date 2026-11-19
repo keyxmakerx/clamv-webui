@@ -125,21 +125,53 @@ pub fn failure(code: &'static str, message: &str) -> Outcome {
     }
 }
 
+/// What happened to a result handed to [`finish`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stored {
+    Saved,
+    /// Someone else finished the job first; this result was ignored.
+    AlreadyFinished,
+    /// The database refused every attempt; the result is only in the log.
+    Failed,
+}
+
+/// Waits between attempts to store a result while the database is down.
+#[cfg(not(test))]
+const STORE_RETRIES_MS: [u64; 4] = [500, 1_500, 4_000, 10_000];
+#[cfg(test)]
+const STORE_RETRIES_MS: [u64; 4] = [1, 1, 1, 1];
+
+/// Store an outcome, retrying for about 15 s if the database is briefly down.
+async fn store(st: &AppState, job: &Job, o: &Outcome) -> Stored {
+    let mut waits = STORE_RETRIES_MS.iter();
+    loop {
+        match st.db.finish_job_if(&job.id, jobs::RUNNING, o).await {
+            Ok(true) => return Stored::Saved,
+            Ok(false) => return Stored::AlreadyFinished,
+            Err(e) => match waits.next() {
+                Some(ms) => {
+                    tracing::warn!(job_id = %job.id, error = %e, retry_in_ms = ms, "could not store scan result; retrying");
+                    tokio::time::sleep(Duration::from_millis(*ms)).await;
+                }
+                None => {
+                    tracing::error!(event = "scan.store_failed", job_id = %job.id, error = %e, "could not store scan result");
+                    return Stored::Failed;
+                }
+            },
+        }
+    }
+}
+
 /// Store the outcome of a RUNNING job, then log every result line, record
 /// metrics and call the webhook. A job someone else already finished is left
 /// alone. `ep` names where it ran (endpoint or agent) for logs.
-pub async fn finish(st: &AppState, job: &Job, ep: &str, o: Outcome) {
-    match st.db.finish_job_if(&job.id, jobs::RUNNING, &o).await {
-        Ok(true) => {}
-        Ok(false) => {
-            tracing::warn!(job_id = %job.id, "job already finished; result ignored");
-            return;
-        }
-        // Still log below: logs are the alert path even when the database is down.
-        Err(e) => {
-            tracing::error!(event = "scan.store_failed", job_id = %job.id, error = %e, "could not store scan result")
-        }
+pub async fn finish(st: &AppState, job: &Job, ep: &str, o: Outcome) -> Stored {
+    let stored = store(st, job, &o).await;
+    if stored == Stored::AlreadyFinished {
+        tracing::warn!(job_id = %job.id, "job already finished; result ignored");
+        return stored;
     }
+    // Still log below: logs are the alert path even when the database is down.
     for (path, sigs) in &o.detections {
         for sig in sigs {
             tracing::warn!(event = "scan.detected", job_id = %job.id, kind = %job.kind, endpoint = ep, path = %path, signature = %sig, "malware detected");
@@ -165,8 +197,56 @@ pub async fn finish(st: &AppState, job: &Job, ep: &str, o: Outcome) {
         .map(|s| (crate::db::now_ms() - s) as f64 / 1000.0);
     st.metrics.record(job, &o, secs);
     st.notifier.notify(event("scan.finished", job, ep, &o));
-    if !o.detections.is_empty() && job.kind != crate::quarantine::KIND {
+    if stored == Stored::Saved && !o.detections.is_empty() && job.kind != crate::quarantine::KIND {
         crate::quarantine::auto(st, &job.id).await;
+    }
+    stored
+}
+
+/// Finishes an upload job if its request is dropped (client disconnect)
+/// before the scan ends, so it never stays RUNNING until a restart.
+pub struct UploadGuard {
+    st: Arc<AppState>,
+    job: Option<Job>,
+    ep: String,
+}
+
+impl UploadGuard {
+    pub fn new(st: &Arc<AppState>, job: &Job, ep: &str) -> Self {
+        Self {
+            st: st.clone(),
+            job: Some(job.clone()),
+            ep: ep.to_owned(),
+        }
+    }
+
+    /// Store the real outcome; the guard then has nothing left to do.
+    pub async fn finish(mut self, o: Outcome) -> Stored {
+        let Some(job) = self.job.clone() else {
+            return Stored::AlreadyFinished;
+        };
+        // Disarm only once stored: if this is dropped midway, Drop still finishes the job.
+        let r = finish(&self.st, &job, &self.ep, o).await;
+        self.job = None;
+        r
+    }
+}
+
+impl Drop for UploadGuard {
+    fn drop(&mut self) {
+        let Some(job) = self.job.take() else {
+            return;
+        };
+        let st = self.st.clone();
+        let ep = std::mem::take(&mut self.ep);
+        // Only possible inside the runtime that ran the request.
+        if let Ok(rt) = tokio::runtime::Handle::try_current() {
+            rt.spawn(async move {
+                tracing::warn!(job_id = %job.id, "upload request ended before the scan finished");
+                let o = failure(SCAN_FAILED, "The upload was interrupted.");
+                finish(&st, &job, &ep, o).await;
+            });
+        }
     }
 }
 
@@ -244,6 +324,7 @@ pub async fn start(st: Arc<AppState>) {
         Ok(_) => {}
         Err(e) => tracing::error!(error = %e, "could not reset running jobs"),
     }
+    crate::quarantine::spawn_settler(st.clone());
     tokio::spawn(async move {
         loop {
             dispatch(&st).await;
@@ -284,7 +365,9 @@ async fn run(st: Arc<AppState>, id: String, _permit: OwnedSemaphorePermit) {
         _ => return,
     };
     match job.kind.as_str() {
-        KIND_PATH | KIND_WATCH => run_path(&st, &job).await,
+        KIND_PATH | KIND_WATCH => {
+            run_path(&st, &job).await;
+        }
         other => {
             let o = failure(SCAN_FAILED, "This job type cannot be run.");
             tracing::error!(job_id = %id, kind = other, "unknown job kind");
@@ -293,7 +376,7 @@ async fn run(st: Arc<AppState>, id: String, _permit: OwnedSemaphorePermit) {
     }
 }
 
-async fn run_path(st: &AppState, job: &Job) {
+async fn run_path(st: &AppState, job: &Job) -> Stored {
     let Some(ep) = pick_endpoint(st, job.endpoint_id).await else {
         return finish(
             st,
@@ -356,7 +439,7 @@ async fn run_path(st: &AppState, job: &Job) {
     if let Some((mtime, size)) = seen {
         crate::watch::record(st, &job.target, mtime, size, &o).await;
     }
-    finish(st, job, &ep.name, o).await;
+    finish(st, job, &ep.name, o).await
 }
 
 /// Scan one file by streaming it; results are named `display`.
@@ -436,6 +519,32 @@ mod tests {
             0,
         ));
         assert_eq!(o.error_code, Some(SCAN_FAILED));
+    }
+
+    #[tokio::test]
+    async fn finish_reports_whether_the_result_was_saved() {
+        use clap::Parser;
+        let cli = crate::config::Cli::parse_from(["clamv-webui"]);
+        let db = crate::db::Db::open("sqlite::memory:", 1).await.expect("db");
+        let st = AppState::new(cli.config.clone(), db);
+        let new = || jobs::NewJob {
+            kind: KIND_PATH,
+            target: "/d",
+            endpoint_id: None,
+            schedule_id: None,
+            agent_id: None,
+            submitted_by: None,
+            transport: "UI",
+            running: true,
+        };
+        let job = st.db.create_job(new()).await.expect("job");
+        let ok = || outcome(report(&[], &[], 1));
+        assert_eq!(finish(&st, &job, "-", ok()).await, Stored::Saved);
+        assert_eq!(finish(&st, &job, "-", ok()).await, Stored::AlreadyFinished);
+        // Database gone: every retry fails, and the caller is told so (an agent then resends).
+        let job = st.db.create_job(new()).await.expect("job");
+        st.db.close().await;
+        assert_eq!(finish(&st, &job, "-", ok()).await, Stored::Failed);
     }
 
     #[tokio::test]

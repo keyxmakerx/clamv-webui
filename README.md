@@ -19,7 +19,7 @@ Forked from an earlier Java application, which has been replaced entirely. Licen
 - **Detections page**: every infected file across all hosts, filtered by signature, host, type and folder, with CSV export (up to 50,000 rows).
 - **Search**: the Jobs and Detections pages take free text plus `field:value` terms, for example `sig:Eicar host:nas -path:/games after:7d`. Quotes match exactly, `-` excludes, dates take `YYYY-MM-DD` or `7d`, `12h`, `30m`. Filters are remembered per browser.
 - **Display**: light and dark themes, times shown in your own time zone (or a fixed one) with a 12 or 24 hour clock, set under Account.
-- **Schedules**: cron schedules per path. Each run first scans an EICAR control, so a run against a broken clamd reports a failure, not a clean result.
+- **Schedules**: cron schedules per path, in a time zone of your choice, with an optional scan window (runs start only inside it) and paths to leave out. Each run first scans an EICAR control, so a run against a broken clamd reports a failure, not a clean result.
 - **Watched folders**: files are scanned the moment they are written (Linux inotify), with periodic polling as a safety net.
 - **Canary files**: decoys that raise an alert (log, audit, webhook) the moment anything opens, changes or deletes them, managed per host from the UI, with auditd naming the program and user where the host logs it.
 - **Agents**: run the same image with `agent` on other hosts. Each agent scans its own folders with its own clamd and reports back, so one UI covers every machine. Agents connect out to the server, so they need no open port.
@@ -100,6 +100,7 @@ Every option is an environment variable (or a `--flag`; run `clamv-webui --help`
 | `CLAMD_MAX_STREAM_MB` | `1024` | Upload size limit; raise clamd's `StreamMaxLength` to match (see below) |
 | `SCAN_ROOTS` | empty | Comma-separated paths that path scans, schedules and watches may use; clamd must see them at the same paths |
 | `SCAN_CONCURRENCY` | `2` | Path scans running at once |
+| `SCHEDULE_TZ` | `TZ`, else `UTC` | Default time zone for schedules (IANA name, e.g. `Europe/Berlin`); each schedule can set its own |
 | `UPLOAD_MAX_FILES` | `10` | Files per upload |
 | `WATCH_POLL_SECS` | `60` | Seconds between looks at watched folders |
 | `WATCH_REALTIME` | `true` | Scan files in watched folders as soon as they are written |
@@ -239,4 +240,8 @@ cargo test                 # SQLite; set TEST_DATABASE_URLS to also test other d
 docker build -t clamv-webui .
 ```
 
-CI builds and tests on every push, checks dependencies with `cargo deny`, runs CodeQL and Trivy, and publishes `ghcr.io/keyxmakerx/clamv-webui:latest`.
+CI builds and tests on every push, checks dependencies with `cargo deny`, runs CodeQL and Trivy, starts the image once, and publishes `ghcr.io/keyxmakerx/clamv-webui:latest` (amd64) plus a short commit tag for rollback.
+
+Releases: set `version` in `Cargo.toml`, merge, then push a tag `vX.Y.Z` on that commit. CI checks the tag matches, publishes `:X.Y.Z` and `:X.Y`, and creates the GitHub release that the dashboard's update notice looks for. Compose files stay on `:latest`.
+
+Schema changes go in a new numbered file under `crates/server/migrations/<backend>/` with a line in `crates/server/migrations.sha256`; files already on `main` never change (CI refuses it).

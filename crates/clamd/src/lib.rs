@@ -15,7 +15,11 @@ use tokio::net::TcpStream;
 use tokio::net::UnixStream;
 use tokio::time::timeout;
 
+/// Replies to short commands, and any single scan result line, are capped here.
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+/// A scan reply is parsed as it arrives; past this many results the rest are
+/// counted in one summary error instead of kept.
+pub const MAX_REPORT_LINES: usize = 100_000;
 
 /// Where clamd listens.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -229,12 +233,14 @@ impl Client {
         {
             return self.early_reply(&mut conn).await;
         }
-        let reply = self.read_reply(&mut conn, self.limits.scan_timeout).await?;
-        self.instream_result(&reply)
+        let r = self
+            .read_scan(&mut conn, self.limits.scan_timeout, "stream")
+            .await;
+        self.instream_result(r)
     }
 
-    fn instream_result(&self, reply: &[u8]) -> Result<ScanReport, Error> {
-        match parse_scan(reply, "stream") {
+    fn instream_result(&self, r: Result<ScanReport, Error>) -> Result<ScanReport, Error> {
+        match r {
             Err(Error::Clamd(m)) if m.contains("size limit exceeded") => {
                 Err(Error::StreamTooLarge(self.limits.max_stream_bytes))
             }
@@ -266,8 +272,12 @@ impl Client {
         line.push(0);
         let mut conn = self.connect().await?;
         self.write(&mut conn, &line).await?;
-        let reply = self.read_reply(&mut conn, self.limits.scan_timeout).await?;
-        parse_scan(&reply, &String::from_utf8_lossy(raw))
+        self.read_scan(
+            &mut conn,
+            self.limits.scan_timeout,
+            &String::from_utf8_lossy(raw),
+        )
+        .await
     }
 
     async fn simple(&self, cmd: &str) -> Result<String, Error> {
@@ -284,8 +294,8 @@ impl Client {
     }
 
     async fn early_reply(&self, conn: &mut Box<dyn Conn>) -> Result<ScanReport, Error> {
-        let reply = self.read_reply(conn, self.limits.io_timeout).await?;
-        self.instream_result(&reply)
+        let r = self.read_scan(conn, self.limits.io_timeout, "stream").await;
+        self.instream_result(r)
     }
 
     async fn connect(&self) -> Result<Box<dyn Conn>, Error> {
@@ -333,6 +343,204 @@ impl Client {
         }
         Ok(out)
     }
+
+    /// Read a scan reply to EOF, parsing each result as it arrives, so a reply
+    /// of any size keeps every detection up to `MAX_REPORT_LINES`.
+    async fn read_scan(
+        &self,
+        conn: &mut Box<dyn Conn>,
+        idle: Duration,
+        base: &str,
+    ) -> Result<ScanReport, Error> {
+        let mut p = Parser::new(base);
+        let mut buf = [0u8; 8192];
+        loop {
+            let n = timeout(idle, conn.read(&mut buf))
+                .await
+                .map_err(|_| Error::Timeout("read"))??;
+            if n == 0 {
+                break;
+            }
+            p.feed(&buf[..n])?;
+        }
+        p.finish()
+    }
+}
+
+/// Incremental `z`-mode reply parser; see [`parse_scan`].
+struct Parser {
+    base: String,
+    report: ScanReport,
+    pending: Vec<u8>,
+    /// Bytes of `pending` already searched for a NUL.
+    scanned: usize,
+    nul_seen: bool,
+    kept: usize,
+    dropped: u64,
+    dropped_hits: u64,
+    unknown: Vec<String>,
+    clamd_errors: Vec<String>,
+}
+
+enum Item {
+    Hit(Detection),
+    Ok,
+    FileErr(FileError),
+    Excluded,
+    ClamdErr(String),
+    Unknown(String),
+}
+
+fn clip(s: &str, n: usize) -> String {
+    s.chars().take(n).collect()
+}
+
+impl Parser {
+    fn new(base: &str) -> Self {
+        Self {
+            base: base.to_owned(),
+            report: ScanReport::default(),
+            pending: Vec::new(),
+            scanned: 0,
+            nul_seen: false,
+            kept: 0,
+            dropped: 0,
+            dropped_hits: 0,
+            unknown: Vec::new(),
+            clamd_errors: Vec::new(),
+        }
+    }
+
+    fn feed(&mut self, bytes: &[u8]) -> Result<(), Error> {
+        self.pending.extend_from_slice(bytes);
+        let mut start = 0;
+        while let Some(off) = self.pending[self.scanned..].iter().position(|b| *b == 0) {
+            let end = self.scanned + off;
+            self.nul_seen = true;
+            let item = String::from_utf8_lossy(&self.pending[start..end]).into_owned();
+            self.line(&item);
+            start = end + 1;
+            self.scanned = start;
+        }
+        self.pending.drain(..start);
+        self.scanned = self.pending.len();
+        if self.pending.len() > MAX_RESPONSE_BYTES {
+            return Err(Error::ResponseTooLarge);
+        }
+        Ok(())
+    }
+
+    fn classify(&self, item: &str) -> Item {
+        if let Some(rest) = item.strip_suffix(" FOUND") {
+            return match rest.rsplit_once(": ") {
+                Some((path, sig)) => Item::Hit(Detection {
+                    path: path.to_owned(),
+                    signature: sig.to_owned(),
+                }),
+                None => Item::Unknown(item.to_owned()),
+            };
+        }
+        if item.ends_with(": OK") {
+            return Item::Ok;
+        }
+        if let Some(rest) = item.strip_suffix(" ERROR") {
+            return match split_path(rest, &self.base) {
+                Some((path, message)) => Item::FileErr(FileError {
+                    path: path.to_owned(),
+                    message: message.to_owned(),
+                }),
+                None => Item::ClamdErr(rest.to_owned()),
+            };
+        }
+        if item.ends_with(": Excluded") {
+            // ExcludePath match inside clamd: not scanned by design.
+            return Item::Excluded;
+        }
+        Item::Unknown(item.to_owned())
+    }
+
+    fn line(&mut self, raw: &str) {
+        let item = raw.trim_end_matches(['\n', '\r']);
+        if item.trim().is_empty() {
+            return;
+        }
+        match self.classify(item) {
+            Item::Ok => self.report.ok += 1,
+            Item::Excluded => {}
+            Item::ClamdErr(m) => {
+                if self.clamd_errors.len() < 10 {
+                    self.clamd_errors.push(clip(&m, 500));
+                }
+            }
+            Item::Unknown(m) => {
+                if self.unknown.len() < 10 {
+                    self.unknown.push(clip(&m, 500));
+                }
+            }
+            Item::Hit(d) if self.kept < MAX_REPORT_LINES => {
+                self.kept += 1;
+                self.report.detections.push(d);
+            }
+            Item::FileErr(e) if self.kept < MAX_REPORT_LINES => {
+                self.kept += 1;
+                self.report.errors.push(e);
+            }
+            Item::Hit(_) => {
+                self.dropped += 1;
+                self.dropped_hits += 1;
+            }
+            Item::FileErr(_) => self.dropped += 1,
+        }
+    }
+
+    fn finish(mut self) -> Result<ScanReport, Error> {
+        let rest = std::mem::take(&mut self.pending);
+        let rest = String::from_utf8_lossy(&rest).into_owned();
+        if self.nul_seen {
+            self.line(&rest);
+        } else {
+            // Not `z` mode: newline-separated.
+            for l in rest.split('\n') {
+                self.line(l);
+            }
+        }
+        let r = &self.report;
+        let recognised = !r.detections.is_empty() || !r.errors.is_empty() || r.ok > 0;
+        if !recognised && self.dropped == 0 {
+            if let Some(m) = self.clamd_errors.into_iter().next() {
+                return Err(Error::Clamd(m));
+            }
+            return Err(Error::Protocol(
+                self.unknown
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(|| "no scan verdict".into()),
+            ));
+        }
+        // Next to real results, odd lines become errors so nothing is lost or called clean.
+        for m in self.clamd_errors {
+            self.report.errors.push(FileError {
+                path: self.base.clone(),
+                message: m,
+            });
+        }
+        for m in self.unknown {
+            self.report.errors.push(FileError {
+                path: self.base.clone(),
+                message: format!("unrecognised clamd reply: {m}"),
+            });
+        }
+        if self.dropped > 0 {
+            self.report.errors.push(FileError {
+                path: self.base.clone(),
+                message: format!(
+                    "{} more results ({} detections) were not kept; see clamd's own log",
+                    self.dropped, self.dropped_hits
+                ),
+            });
+        }
+        Ok(self.report)
+    }
 }
 
 #[cfg(unix)]
@@ -351,48 +559,15 @@ fn path_bytes(path: &Path) -> Result<&[u8], Error> {
 /// path (or `stream`); it locates the `path: message` split in ERROR lines
 /// whose message itself contains `: `.
 ///
-/// Results naming a file get recorded; an ERROR not tied to a file (e.g.
-/// `UNKNOWN COMMAND`, size limit) fails the whole scan. Anything else is a
-/// protocol error. Nothing is ever dropped.
+/// Results naming a file get recorded. A reply with no per-file result fails:
+/// an ERROR not tied to a file (e.g. size limit) as `Clamd`, anything else as
+/// `Protocol`. Next to real results, such lines are kept as errors, so the
+/// detections around them survive. Past `MAX_REPORT_LINES` results are counted
+/// in one summary error. A scan with errors is never clean.
 pub fn parse_scan(reply: &[u8], base: &str) -> Result<ScanReport, Error> {
-    let text = String::from_utf8_lossy(reply);
-    let sep = if text.contains('\0') { '\0' } else { '\n' };
-    let mut report = ScanReport::default();
-    let mut any = false;
-    for item in text.split(sep) {
-        let item = item.trim_end_matches(['\n', '\r']);
-        if item.trim().is_empty() {
-            continue;
-        }
-        any = true;
-        if let Some(rest) = item.strip_suffix(" FOUND") {
-            let (path, sig) = rest
-                .rsplit_once(": ")
-                .ok_or_else(|| Error::Protocol(item.to_owned()))?;
-            report.detections.push(Detection {
-                path: path.to_owned(),
-                signature: sig.to_owned(),
-            });
-        } else if item.ends_with(": OK") {
-            report.ok += 1;
-        } else if let Some(rest) = item.strip_suffix(" ERROR") {
-            match split_path(rest, base) {
-                Some((path, message)) => report.errors.push(FileError {
-                    path: path.to_owned(),
-                    message: message.to_owned(),
-                }),
-                None => return Err(Error::Clamd(rest.to_owned())),
-            }
-        } else if item.ends_with(": Excluded") {
-            // ExcludePath match inside clamd: not scanned by design.
-        } else {
-            return Err(Error::Protocol(item.to_owned()));
-        }
-    }
-    if !any {
-        return Err(Error::Protocol("no scan verdict".into()));
-    }
-    Ok(report)
+    let mut p = Parser::new(base);
+    p.feed(reply)?;
+    p.finish()
 }
 
 /// Split `path: message` where the path starts with `base`.
@@ -476,6 +651,47 @@ mod tests {
         let r = parse_scan(reply, "/data").expect("parsed");
         assert_eq!(r.errors.len(), 2);
         assert!(r.detections.is_empty());
+    }
+
+    #[test]
+    fn huge_replies_keep_their_detections() {
+        // Well past the 4 MB a whole reply used to be capped at.
+        let mut reply = Vec::new();
+        for i in 0..100_000 {
+            reply.extend_from_slice(
+                format!("/data/clean/{i:08}-a-long-file-name.bin: OK\0").as_bytes(),
+            );
+        }
+        reply.extend_from_slice(b"/data/evil.exe: Win.Trojan.X FOUND\0");
+        assert!(reply.len() > MAX_RESPONSE_BYTES);
+        let mut p = Parser::new("/data");
+        for chunk in reply.chunks(8192) {
+            p.feed(chunk).expect("feed");
+        }
+        let r = p.finish().expect("parsed");
+        assert_eq!(r.ok, 100_000);
+        assert_eq!(r.detections.len(), 1);
+    }
+
+    #[test]
+    fn odd_lines_next_to_hits_are_errors_not_failures() {
+        let reply = b"/data/a.exe: Win.Trojan.X FOUND\0something new from clamd\0";
+        let r = parse_scan(reply, "/data").expect("parsed");
+        assert_eq!(r.detections.len(), 1);
+        assert_eq!(r.errors.len(), 1);
+        assert!(r.errors[0].message.contains("something new"));
+    }
+
+    #[test]
+    fn results_past_the_cap_are_counted() {
+        let mut reply = Vec::new();
+        for i in 0..MAX_REPORT_LINES + 5 {
+            reply.extend_from_slice(format!("/d/{i}: Eicar FOUND\0").as_bytes());
+        }
+        let r = parse_scan(&reply, "/d").expect("parsed");
+        assert_eq!(r.detections.len(), MAX_REPORT_LINES);
+        let last = r.errors.last().expect("summary");
+        assert!(last.message.starts_with("5 more results (5 detections)"));
     }
 
     #[test]

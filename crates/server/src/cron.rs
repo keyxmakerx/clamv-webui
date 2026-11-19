@@ -1,9 +1,47 @@
-//! Five-field cron expressions (minute hour day-of-month month day-of-week), in UTC.
+//! Five-field cron expressions (minute hour day-of-month month day-of-week),
+//! evaluated in UTC or in an IANA time zone (`next_after_in`).
 //!
 //! Supports `*`, lists, ranges, steps, `@hourly`, `@daily`, `@weekly` and
 //! `@monthly`. When both day fields are restricted, either may match (as in cron).
 
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
+
 use crate::timefmt::civil;
+
+/// An IANA zone name ("Europe/Berlin"); empty or "UTC" is UTC.
+pub fn zone(name: &str) -> Result<TimeZone, String> {
+    let name = name.trim();
+    if name.is_empty() || name.eq_ignore_ascii_case("UTC") {
+        return Ok(TimeZone::UTC);
+    }
+    if name.len() > 64 {
+        return Err("time zone names are at most 64 characters".into());
+    }
+    TimeZone::get(name)
+        .map_err(|_| format!("unknown time zone {name}; use a name like Europe/Berlin"))
+}
+
+/// Milliseconds east of UTC in `tz` at `ms`.
+fn offset_ms(tz: &TimeZone, ms: i64) -> Option<i64> {
+    let ts = Timestamp::from_millisecond(ms).ok()?;
+    Some(i64::from(tz.to_offset(ts).seconds()) * 1000)
+}
+
+/// Minute of the day (0..1440) at `ms` in `tz`.
+pub fn local_minute(tz: &TimeZone, ms: i64) -> i64 {
+    (ms + offset_ms(tz, ms).unwrap_or(0))
+        .div_euclid(60_000)
+        .rem_euclid(1440)
+}
+
+/// A wall-clock time written as if it were UTC → the real instant in `tz`.
+/// A time skipped by a DST change moves forward; a repeated one takes the first.
+fn wall_to_real(tz: &TimeZone, wall_ms: i64) -> Option<i64> {
+    let dt = TimeZone::UTC.to_datetime(Timestamp::from_millisecond(wall_ms).ok()?);
+    let ts = tz.to_ambiguous_timestamp(dt).compatible().ok()?;
+    Some(ts.as_millisecond())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cron {
@@ -131,6 +169,21 @@ impl Cron {
         }
         None
     }
+
+    /// Like `next_after`, with the fields read as wall-clock time in `tz`.
+    pub fn next_after_in(&self, after_ms: i64, tz: &TimeZone) -> Option<i64> {
+        let mut wall = after_ms + offset_ms(tz, after_ms)?;
+        // Around a DST fall-back a wall time can map to an instant already past.
+        for _ in 0..8 {
+            let cand = self.next_after(wall)?;
+            let real = wall_to_real(tz, cand)?;
+            if real > after_ms {
+                return Some(real);
+            }
+            wall = cand;
+        }
+        None
+    }
 }
 
 #[cfg(test)]
@@ -195,6 +248,50 @@ mod tests {
             next("0 9-17/4 * * 1-5", "2026-11-13T10:00Z"),
             "2026-11-13T13:00:00.000Z"
         );
+    }
+
+    #[test]
+    fn runs_in_a_time_zone() {
+        let berlin = zone("Europe/Berlin").expect("zone");
+        let c: Cron = "0 2 * * *".parse().expect("parse");
+        // Winter: 02:00 in Berlin is 01:00Z.
+        assert_eq!(
+            rfc3339(
+                c.next_after_in(at("2026-11-13T03:00Z"), &berlin)
+                    .expect("n")
+            ),
+            "2026-11-14T01:00:00.000Z"
+        );
+        // Summer: 00:00Z.
+        assert_eq!(
+            rfc3339(
+                c.next_after_in(at("2026-07-01T03:00Z"), &berlin)
+                    .expect("n")
+            ),
+            "2026-07-02T00:00:00.000Z"
+        );
+        // 2026-03-29 02:30 does not exist in Berlin: runs at 03:30 local (01:30Z), once.
+        let c: Cron = "30 2 * * *".parse().expect("parse");
+        let first = c
+            .next_after_in(at("2026-03-28T12:00Z"), &berlin)
+            .expect("n");
+        assert_eq!(rfc3339(first), "2026-03-29T01:30:00.000Z");
+        assert_eq!(
+            rfc3339(c.next_after_in(first, &berlin).expect("n")),
+            "2026-03-30T00:30:00.000Z"
+        );
+        // 2026-10-25 02:30 happens twice in Berlin: runs once.
+        let first = c
+            .next_after_in(at("2026-10-24T12:00Z"), &berlin)
+            .expect("n");
+        assert_eq!(rfc3339(first), "2026-10-25T00:30:00.000Z");
+        assert_eq!(
+            rfc3339(c.next_after_in(first, &berlin).expect("n")),
+            "2026-10-26T01:30:00.000Z"
+        );
+        assert_eq!(local_minute(&berlin, at("2026-11-13T23:30Z")), 30);
+        assert!(zone("Mars/Olympus").is_err());
+        assert_eq!(zone("").expect("utc"), TimeZone::UTC);
     }
 
     #[test]
