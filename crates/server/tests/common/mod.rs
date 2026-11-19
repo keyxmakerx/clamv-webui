@@ -6,7 +6,8 @@ use tokio::net::TcpListener;
 
 pub const EICAR: &[u8] = br"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*";
 
-/// PING, VERSION, INSTREAM (FOUND on EICAR) and MULTISCAN (a hit, an error and a limit hit).
+/// PING, VERSION, INSTREAM (FOUND on EICAR) and MULTISCAN (a hit, an error and a
+/// limit hit; 1500 hits for a path ending in `/many`).
 pub async fn fake_clamd() -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let port = listener.local_addr().expect("addr").port();
@@ -45,6 +46,14 @@ pub async fn fake_clamd() -> u16 {
                             b"stream: OK\0".to_vec()
                         }
                     }
+                    c if c.starts_with(b"zMULTISCAN ") && c.ends_with(b"/many") => {
+                        let p = String::from_utf8_lossy(&c[11..]).into_owned();
+                        let mut r = String::new();
+                        for i in 0..1500 {
+                            r.push_str(&format!("{p}/f{i:05}: Eicar-Test-Signature FOUND\0"));
+                        }
+                        r.into_bytes()
+                    }
                     c if c.starts_with(b"zMULTISCAN ") => {
                         let p = String::from_utf8_lossy(&c[11..]).into_owned();
                         format!(
@@ -55,6 +64,21 @@ pub async fn fake_clamd() -> u16 {
                     _ => b"UNKNOWN COMMAND\0".to_vec(),
                 };
                 let _ = s.write_all(&reply).await;
+            });
+        }
+    });
+    port
+}
+
+/// A clamd that accepts and reads but never answers.
+pub async fn silent_clamd() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut b = [0u8; 8192];
+                while matches!(s.read(&mut b).await, Ok(n) if n > 0) {}
             });
         }
     });

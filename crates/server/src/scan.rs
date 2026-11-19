@@ -136,7 +136,10 @@ pub enum Stored {
 }
 
 /// Waits between attempts to store a result while the database is down.
+#[cfg(not(test))]
 const STORE_RETRIES_MS: [u64; 4] = [500, 1_500, 4_000, 10_000];
+#[cfg(test)]
+const STORE_RETRIES_MS: [u64; 4] = [1, 1, 1, 1];
 
 /// Store an outcome, retrying for about 15 s if the database is briefly down.
 async fn store(st: &AppState, job: &Job, o: &Outcome) -> Stored {
@@ -321,6 +324,7 @@ pub async fn start(st: Arc<AppState>) {
         Ok(_) => {}
         Err(e) => tracing::error!(error = %e, "could not reset running jobs"),
     }
+    crate::quarantine::spawn_settler(st.clone());
     tokio::spawn(async move {
         loop {
             dispatch(&st).await;
@@ -515,6 +519,32 @@ mod tests {
             0,
         ));
         assert_eq!(o.error_code, Some(SCAN_FAILED));
+    }
+
+    #[tokio::test]
+    async fn finish_reports_whether_the_result_was_saved() {
+        use clap::Parser;
+        let cli = crate::config::Cli::parse_from(["clamv-webui"]);
+        let db = crate::db::Db::open("sqlite::memory:", 1).await.expect("db");
+        let st = AppState::new(cli.config.clone(), db);
+        let new = || jobs::NewJob {
+            kind: KIND_PATH,
+            target: "/d",
+            endpoint_id: None,
+            schedule_id: None,
+            agent_id: None,
+            submitted_by: None,
+            transport: "UI",
+            running: true,
+        };
+        let job = st.db.create_job(new()).await.expect("job");
+        let ok = || outcome(report(&[], &[], 1));
+        assert_eq!(finish(&st, &job, "-", ok()).await, Stored::Saved);
+        assert_eq!(finish(&st, &job, "-", ok()).await, Stored::AlreadyFinished);
+        // Database gone: every retry fails, and the caller is told so (an agent then resends).
+        let job = st.db.create_job(new()).await.expect("job");
+        st.db.close().await;
+        assert_eq!(finish(&st, &job, "-", ok()).await, Stored::Failed);
     }
 
     #[tokio::test]

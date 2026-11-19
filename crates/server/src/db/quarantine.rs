@@ -187,4 +187,40 @@ impl Db {
         .await?;
         Ok(())
     }
+
+    /// Entries still on their way into quarantine.
+    pub async fn pending_quarantine(&self) -> Result<Vec<Item>, DbError> {
+        let rows = sqlx::query(self.sql(concat!(
+            "SELECT ",
+            cols!(),
+            " FROM quarantine WHERE state = 'PENDING' ORDER BY created_at LIMIT 500"
+        )))
+        .fetch_all(self.pool())
+        .await?;
+        rows.iter().map(item).collect()
+    }
+
+    /// Move a PENDING entry on; false if it already left PENDING.
+    pub async fn settle_pending_quarantine(
+        &self,
+        id: &str,
+        state: &str,
+        error: Option<&str>,
+        held: Option<(&str, i64)>,
+        by: &str,
+    ) -> Result<bool, DbError> {
+        let r = sqlx::query(self.sql(
+            "UPDATE quarantine SET state = ?, error_code = ?, sha256 = COALESCE(?, sha256), size_bytes = COALESCE(?, size_bytes), updated_by = ?, updated_at = ? WHERE id = ? AND state = 'PENDING'",
+        ))
+        .bind(state)
+        .bind(error)
+        .bind(held.map(|h| h.0))
+        .bind(held.map(|h| h.1))
+        .bind(by)
+        .bind(now_ms())
+        .bind(id)
+        .execute(self.pool())
+        .await?;
+        Ok(r.rows_affected() == 1)
+    }
 }
