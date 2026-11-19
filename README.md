@@ -240,4 +240,8 @@ cargo test                 # SQLite; set TEST_DATABASE_URLS to also test other d
 docker build -t clamv-webui .
 ```
 
-CI builds and tests on every push, checks dependencies with `cargo deny`, runs CodeQL and Trivy, and publishes `ghcr.io/keyxmakerx/clamv-webui:latest`.
+CI builds and tests on every push, checks dependencies with `cargo deny`, runs CodeQL and Trivy, starts the image once, and publishes `ghcr.io/keyxmakerx/clamv-webui:latest` (amd64) plus a short commit tag for rollback.
+
+Releases: set `version` in `Cargo.toml`, merge, then push a tag `vX.Y.Z` on that commit. CI checks the tag matches, publishes `:X.Y.Z` and `:X.Y`, and creates the GitHub release that the dashboard's update notice looks for. Compose files stay on `:latest`.
+
+Schema changes go in a new numbered file under `crates/server/migrations/<backend>/` with a line in `crates/server/migrations.sha256`; files already on `main` never change (CI refuses it).
