@@ -163,7 +163,7 @@ The Settings page (Admin) can change the scan, retention, watch, webhook-policy 
 
 ## Languages
 
-Each user picks a language under **Account**; otherwise the browser's language is used, then English. Only English ships for now. To add one, copy `crates/server/i18n/en.json` to `<code>.json`, translate the values and add a line to `LANGS` in `src/i18n.rs`; missing strings show in English. The shell is wrapped so far; page text moves into the catalog as it is translated.
+Each user picks a language under **Account**; otherwise the browser's language is used, then English. The sign-in and error pages follow the browser too. Shipped: English, Українська, Română, Français, Español and Deutsch. To add one, copy `crates/server/i18n/en.json` to `<code>.json`, translate the values and add a line to `LANGS` in `src/i18n.rs`; missing strings show in English, and a test checks every catalog has the same keys as `en.json`. Messages the server builds on the fly are still English.
 
 ## Security model
 
