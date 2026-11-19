@@ -16,6 +16,10 @@ pub const OK: &str = "OK";
 pub const VIRUS_FOUND: &str = "VIRUS_FOUND";
 pub const ERROR: &str = "ERROR";
 
+/// Per job, at most this many detection lines and this many error lines are
+/// stored; the rest are counted in `results_omitted` (every line is still logged).
+pub const MAX_STORED_LINES: usize = 1000;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JobFileError {
     pub path: String,
@@ -46,6 +50,8 @@ pub struct Job {
     pub errors: Vec<JobFileError>,
     pub error_code: Option<String>,
     pub error_message: Option<String>,
+    /// Result lines left out of `detections` and `errors` by the storage cap.
+    pub results_omitted: i64,
 }
 
 impl Job {
@@ -85,6 +91,27 @@ pub struct Outcome {
     pub error_message: Option<String>,
     pub sha256: Option<String>,
     pub size_bytes: Option<i64>,
+}
+
+/// The stored view of an outcome: at most `MAX_STORED_LINES` detection and
+/// error lines each, plus how many were left out.
+pub fn capped(o: &Outcome) -> (BTreeMap<String, Vec<String>>, Vec<JobFileError>, i64) {
+    let mut omitted = 0usize;
+    let mut kept = 0usize;
+    let mut det: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (path, sigs) in &o.detections {
+        for sig in sigs {
+            if kept < MAX_STORED_LINES {
+                det.entry(path.clone()).or_default().push(sig.clone());
+                kept += 1;
+            } else {
+                omitted += 1;
+            }
+        }
+    }
+    let errs: Vec<JobFileError> = o.errors.iter().take(MAX_STORED_LINES).cloned().collect();
+    omitted += o.errors.len() - errs.len();
+    (det, errs, i64::try_from(omitted).unwrap_or(i64::MAX))
 }
 
 #[derive(Debug, Default)]
@@ -185,6 +212,7 @@ fn from_row(r: &AnyRow) -> Result<Job, DbError> {
             .unwrap_or_default(),
         error_code: r.try_get("error_code")?,
         error_message: r.try_get("error_message")?,
+        results_omitted: r.try_get("results_omitted")?,
     })
 }
 
@@ -193,7 +221,7 @@ macro_rules! select {
         concat!(
             "SELECT id, kind, status, verdict, target, sha256, size_bytes, endpoint_id, schedule_id, agent_id, ",
             "submitted_by, transport, submitted_at, started_at, finished_at, files_scanned, detections_json, ",
-            "errors_json, error_code, error_message FROM scan_jobs ",
+            "errors_json, error_code, error_message, results_omitted FROM scan_jobs ",
             $($tail)+
         )
     };
@@ -268,19 +296,20 @@ impl Db {
         o: &Outcome,
         guard: Option<&str>,
     ) -> Result<u64, DbError> {
-        let det = (!o.detections.is_empty())
-            .then(|| serde_json::to_string(&o.detections))
+        let (detections, errors, omitted) = capped(o);
+        let det = (!detections.is_empty())
+            .then(|| serde_json::to_string(&detections))
             .transpose()
             .map_err(|e| DbError::Encode(e.to_string()))?;
-        let err = (!o.errors.is_empty())
-            .then(|| serde_json::to_string(&o.errors))
+        let err = (!errors.is_empty())
+            .then(|| serde_json::to_string(&errors))
             .transpose()
             .map_err(|e| DbError::Encode(e.to_string()))?;
         let mut tx = self.pool().begin().await?;
         let now = now_ms();
         let r = sqlx::query(self.sql(
             "UPDATE scan_jobs SET status = 'FINISHED', verdict = ?, finished_at = ?, files_scanned = ?, \
-             detections_json = ?, errors_json = ?, error_code = ?, error_message = ?, \
+             detections_json = ?, errors_json = ?, error_code = ?, error_message = ?, results_omitted = ?, \
              sha256 = COALESCE(?, sha256), size_bytes = COALESCE(?, size_bytes) \
              WHERE id = ? AND (? IS NULL OR status = ?)",
         ))
@@ -291,6 +320,7 @@ impl Db {
         .bind(err)
         .bind(o.error_code)
         .bind(o.error_message.as_deref())
+        .bind(omitted)
         .bind(o.sha256.as_deref())
         .bind(o.size_bytes)
         .bind(id)
@@ -300,7 +330,7 @@ impl Db {
         .await?;
         // One row per hit, so the dashboard and Detections page need no JSON scans.
         if r.rows_affected() == 1 {
-            for (path, sigs) in &o.detections {
+            for (path, sigs) in &detections {
                 for sig in sigs {
                     let sig: String = sig.chars().take(255).collect();
                     sqlx::query(self.sql(

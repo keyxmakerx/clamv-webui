@@ -76,7 +76,7 @@ impl Db {
         let paths = serde_json::to_string(s.paths).map_err(|e| DbError::Encode(e.to_string()))?;
         sqlx::query(self.sql(
             "INSERT INTO scan_schedules (id, name, cron, paths_json, exclusions_json, endpoint_id, agent_id, enabled, \
-             max_streams, eicar_check, created_at, updated_at) VALUES (?, ?, ?, ?, '[]', ?, ?, 1, 1, ?, ?, ?)",
+             eicar_check, created_at, updated_at) VALUES (?, ?, ?, ?, '[]', ?, ?, 1, ?, ?, ?)",
         ))
         .bind(&id)
         .bind(s.name)

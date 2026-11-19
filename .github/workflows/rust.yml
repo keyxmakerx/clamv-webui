@@ -28,6 +28,16 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked --all-targets
 
+  migrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Released migrations never change
+        run: scripts/check-migrations.sh "${{ github.event.pull_request.base.sha || github.event.before }}"
+
   db:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -89,7 +99,7 @@ jobs:
           command: check advisories bans licenses sources
 
   image:
-    needs: [check, db, ldap, deny]
+    needs: [check, migrations, db, ldap, deny]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:

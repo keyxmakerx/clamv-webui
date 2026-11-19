@@ -465,9 +465,10 @@ async fn scan_upload(
                         return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
                     }
                 };
+                let guard = scan::UploadGuard::new(&st, &job, &ep.name);
                 audit_scan(&st, &u, &info, &job, "SCAN_UPLOAD").await;
                 let o = scan_field(&st, &ep, field, &name).await;
-                scan::finish(&st, &job, &ep.name, o).await;
+                guard.finish(o).await;
                 ids.push(job.id);
             }
             _ => {}
