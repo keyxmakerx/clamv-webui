@@ -2,20 +2,28 @@
 {% block title %}Schedules · ClamAV Web UI{% endblock %}
 {% block content %}
 <h1 class="h3">Scheduled scans</h1>
-<p class="muted">Times are UTC. A run is skipped while the previous one is still going. With the EICAR control on, each run first checks that clamd flags the EICAR test file; a miss logs <code>eicar.control_failed</code>.</p>
+<p class="muted">Cron times and scan windows are in each schedule's time zone (default <code>{{ default_zone }}</code>, set with <code>SCHEDULE_TZ</code>). A run is skipped while the previous one is still going. With the EICAR control on, each run first checks that clamd flags the EICAR test file; a miss logs <code>eicar.control_failed</code>.</p>
 <section class="card mt-3"><div class="card-body">
 <h2 class="h5">Add schedule</h2>
 {% if roots.is_empty() && agents.is_empty() %}<p class="muted">Set <code>SCAN_ROOTS</code> or add an agent to schedule path scans.</p>{% else %}
 <form method="post" action="/admin/schedules" class="row g-3">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
-<div class="col-md-4"><label class="form-label" for="sn">Name</label><input class="form-control" id="sn" name="name" required maxlength="100" placeholder="Nightly library" autocomplete="off"></div>
-<div class="col-md-4"><label class="form-label" for="sc">When (cron, UTC)</label><input class="form-control" id="sc" name="cron" required maxlength="128" placeholder="30 2 * * *" autocomplete="off">
+<div class="col-md-4"><label class="form-label" for="sn">Name</label><input class="form-control" id="sn" name="name" required maxlength="100" placeholder="Nightly library" autocomplete="off" value="{{ draft.name }}"></div>
+<div class="col-md-4"><label class="form-label" for="sc">When (cron)</label><input class="form-control" id="sc" name="cron" required maxlength="128" placeholder="30 2 * * *" autocomplete="off" value="{{ draft.cron }}">
 <div class="form-text">minute hour day month weekday, or @daily / @weekly</div></div>
 <div class="col-md-4"><label class="form-label" for="se">Run on</label><select class="form-select" id="se" name="endpoint">
-{% if !roots.is_empty() %}<optgroup label="This server">{% for e in endpoints %}<option value="{% if !e.is_default %}{{ e.id }}{% endif %}"{% if e.is_default %} selected{% endif %}>{{ e.name }}{% if e.is_default %} (default){% endif %}</option>{% endfor %}</optgroup>{% endif %}{% if !agents.is_empty() %}<optgroup label="Agents">{% for a in agents %}<option value="a:{{ a.id }}">{{ a.name }}{% if !a.online %} (offline){% endif %}</option>{% endfor %}</optgroup>{% endif %}</select></div>
-<div class="col-md-8"><label class="form-label" for="sp">Paths, one per line</label><textarea class="form-control" id="sp" name="paths" rows="3" required placeholder="{% for r in roots %}{{ r }}&#10;{% endfor %}"></textarea></div>
-<div class="col-md-4 d-flex align-items-end"><label class="form-check-label"><input class="form-check-input" type="checkbox" name="eicar" value="1" checked> EICAR control on every run</label></div>
-<div class="col-12"><button class="btn btn-primary" type="submit">Add schedule</button></div>
+{% if !roots.is_empty() %}<optgroup label="This server">{% for e in endpoints %}<option value="{% if !e.is_default %}{{ e.id }}{% endif %}"{% if (draft.endpoint.is_empty() && e.is_default) || draft.endpoint == e.id.to_string() %} selected{% endif %}>{{ e.name }}{% if e.is_default %} (default){% endif %}</option>{% endfor %}</optgroup>{% endif %}{% if !agents.is_empty() %}<optgroup label="Agents">{% for a in agents %}<option value="a:{{ a.id }}"{% if draft.endpoint == format!("a:{}", a.id) %} selected{% endif %}>{{ a.name }}{% if !a.online %} (offline){% endif %}</option>{% endfor %}</optgroup>{% endif %}</select></div>
+<div class="col-md-8"><label class="form-label" for="sp">Paths, one per line</label><textarea class="form-control" id="sp" name="paths" rows="3" required placeholder="{% for r in roots %}{{ r }}&#10;{% endfor %}">{{ draft.paths }}</textarea></div>
+<div class="col-md-4 d-flex align-items-end"><label class="form-check-label"><input class="form-check-input" type="checkbox" name="eicar" value="1"{% if draft.eicar %} checked{% endif %}> EICAR control on every run</label></div>
+<div class="col-md-8"><label class="form-label" for="sx">Leave out, one path per line (optional)</label><textarea class="form-control" id="sx" name="exclusions" rows="2" placeholder="/media/tv/Downloads">{{ draft.exclusions }}</textarea>
+<div class="form-text">Everything under these paths is skipped. On an agent, only whole paths from the list above.</div></div>
+<div class="col-md-4"><label class="form-label" for="sz">Time zone (optional)</label><input class="form-control" id="sz" name="time_zone" maxlength="64" placeholder="{{ default_zone }}" autocomplete="off" value="{{ draft.time_zone }}">
+<div class="form-text">An IANA name like Europe/Berlin</div></div>
+<div class="col-md-4"><label class="form-label" for="sws">Scan window start (optional)</label><input class="form-control" type="time" id="sws" name="window_start" value="{{ draft.window_start }}"></div>
+<div class="col-md-4"><label class="form-label" for="swe">Scan window end</label><input class="form-control" type="time" id="swe" name="window_end" value="{{ draft.window_end }}">
+<div class="form-text">Runs start only inside the window; queued paths are dropped when it closes. 22:00 to 06:00 spans midnight.</div></div>
+{% if !preview.is_empty() %}<div class="col-12"><p class="mb-1"><strong>Next runs</strong> ({% if draft.time_zone.is_empty() %}{{ default_zone }}{% else %}{{ draft.time_zone }}{% endif %})</p><ul class="small mb-0">{% for t in preview %}<li>{{ t }}</li>{% endfor %}</ul></div>{% endif %}
+<div class="col-12 d-flex gap-2"><button class="btn btn-primary" type="submit">Add schedule</button><button class="btn btn-outline-secondary" type="submit" name="preview" value="1" formnovalidate>Preview next runs</button></div>
 </form>{% endif %}
 </div></section>
 <section class="card mt-3"><div class="card-body table-responsive">
@@ -23,9 +31,9 @@
 <thead><tr><th>Schedule</th><th>Paths</th><th>Next run</th><th>Last run</th><th>EICAR control</th><th></th></tr></thead>
 <tbody>
 {% for r in rows %}<tr>
-<td><strong>{{ r.name }}</strong>{% if !r.enabled %} <span class="badge bg-secondary">paused</span>{% endif %}<div class="small"><code>{{ r.cron }}</code> · {{ r.endpoint }}</div></td>
-<td class="small text-break">{% for p in r.paths %}<div>{{ p }}</div>{% endfor %}</td>
-<td class="small text-nowrap">{{ r.next }}</td>
+<td><strong>{{ r.name }}</strong>{% if !r.enabled %} <span class="badge bg-secondary">paused</span>{% endif %}<div class="small"><code>{{ r.cron }}</code> {{ r.zone }}{% if !r.window.is_empty() %} · window {{ r.window }}{% endif %} · {{ r.endpoint }}</div></td>
+<td class="small text-break">{% for p in r.paths %}<div>{{ p }}</div>{% endfor %}{% for x in r.exclusions %}<div class="muted">not {{ x }}</div>{% endfor %}</td>
+<td class="small text-nowrap">{{ r.next }}{% if r.enabled && r.upcoming.len() > 1 %}<div class="muted" title="Next runs in {{ r.zone }}">{% for t in r.upcoming %}{{ t }}{% if !loop.last %}<br>{% endif %}{% endfor %}</div>{% endif %}</td>
 <td class="small text-nowrap">{% if r.last_job.is_empty() %}{{ r.last_run }}{% else %}<a href="/jobs/{{ r.last_job }}">{{ r.last_run }}</a>{% endif %}</td>
 <td>{% if !r.eicar %}<span class="muted small">off</span>{% else if r.control == "passed" %}<a href="/jobs/{{ r.control_job }}"><span class="badge bg-success">passed</span></a>{% else if r.control == "failed" %}<a href="/jobs/{{ r.control_job }}"><span class="badge bg-danger">failed</span></a>{% else %}<span class="muted small">{{ r.control }}</span>{% endif %}</td>
 <td><div class="d-flex gap-2">

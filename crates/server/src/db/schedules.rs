@@ -20,6 +20,13 @@ pub struct Schedule {
     pub created_at: i64,
     pub last_run_at: Option<i64>,
     pub last_job_id: Option<String>,
+    /// Paths (and everything under them) left out of each run.
+    pub exclusions: Vec<String>,
+    /// Minutes of the day, in the schedule's zone, when runs may start: (start, end).
+    /// End before start spans midnight.
+    pub window: Option<(i64, i64)>,
+    /// IANA zone for the cron fields and the window; None means the server default.
+    pub time_zone: Option<String>,
 }
 
 pub struct NewSchedule<'a> {
@@ -29,10 +36,21 @@ pub struct NewSchedule<'a> {
     pub endpoint_id: Option<i64>,
     pub agent_id: Option<i64>,
     pub eicar_check: bool,
+    pub exclusions: &'a [String],
+    pub window: Option<(i64, i64)>,
+    pub time_zone: Option<&'a str>,
+}
+
+macro_rules! cols {
+    () => {
+        "id, name, cron, paths_json, endpoint_id, agent_id, enabled, eicar_check, created_at, last_run_at, \
+         last_job_id, exclusions_json, window_start_min, window_end_min, time_zone"
+    };
 }
 
 fn from_row(r: &AnyRow) -> Result<Schedule, DbError> {
     let paths: String = r.try_get("paths_json")?;
+    let exclusions: String = r.try_get("exclusions_json")?;
     Ok(Schedule {
         id: r.try_get("id")?,
         name: r.try_get("name")?,
@@ -45,25 +63,36 @@ fn from_row(r: &AnyRow) -> Result<Schedule, DbError> {
         created_at: r.try_get("created_at")?,
         last_run_at: r.try_get("last_run_at")?,
         last_job_id: r.try_get("last_job_id")?,
+        exclusions: serde_json::from_str(&exclusions).unwrap_or_default(),
+        window: match (
+            r.try_get::<Option<i64>, _>("window_start_min")?,
+            r.try_get::<Option<i64>, _>("window_end_min")?,
+        ) {
+            (Some(a), Some(b)) if a != b => Some((a, b)),
+            _ => None,
+        },
+        time_zone: r.try_get("time_zone")?,
     })
 }
 
 impl Db {
     pub async fn list_schedules(&self) -> Result<Vec<Schedule>, DbError> {
-        let rows = sqlx::query(self.sql(
-            "SELECT id, name, cron, paths_json, endpoint_id, agent_id, enabled, eicar_check, created_at, last_run_at, \
-             last_job_id FROM scan_schedules ORDER BY name",
-        ))
+        let rows = sqlx::query(self.sql(concat!(
+            "SELECT ",
+            cols!(),
+            " FROM scan_schedules ORDER BY name"
+        )))
         .fetch_all(self.pool())
         .await?;
         rows.iter().map(from_row).collect()
     }
 
     pub async fn schedule(&self, id: &str) -> Result<Option<Schedule>, DbError> {
-        let row = sqlx::query(self.sql(
-            "SELECT id, name, cron, paths_json, endpoint_id, agent_id, enabled, eicar_check, created_at, last_run_at, \
-             last_job_id FROM scan_schedules WHERE id = ?",
-        ))
+        let row = sqlx::query(self.sql(concat!(
+            "SELECT ",
+            cols!(),
+            " FROM scan_schedules WHERE id = ?"
+        )))
         .bind(id)
         .fetch_optional(self.pool())
         .await?;
@@ -74,17 +103,24 @@ impl Db {
         let id = new_id();
         let now = now_ms();
         let paths = serde_json::to_string(s.paths).map_err(|e| DbError::Encode(e.to_string()))?;
+        let excl =
+            serde_json::to_string(s.exclusions).map_err(|e| DbError::Encode(e.to_string()))?;
         sqlx::query(self.sql(
             "INSERT INTO scan_schedules (id, name, cron, paths_json, exclusions_json, endpoint_id, agent_id, enabled, \
-             max_streams, eicar_check, created_at, updated_at) VALUES (?, ?, ?, ?, '[]', ?, ?, 1, 1, ?, ?, ?)",
+             eicar_check, window_start_min, window_end_min, time_zone, created_at, updated_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)",
         ))
         .bind(&id)
         .bind(s.name)
         .bind(s.cron)
         .bind(paths)
+        .bind(excl)
         .bind(s.endpoint_id)
         .bind(s.agent_id)
         .bind(i64::from(s.eicar_check))
+        .bind(s.window.map(|w| w.0))
+        .bind(s.window.map(|w| w.1))
+        .bind(s.time_zone)
         .bind(now)
         .bind(now)
         .execute(self.pool())
@@ -172,5 +208,22 @@ impl Db {
             Some(j) => self.job(&j).await,
             None => Ok(None),
         }
+    }
+
+    /// A schedule's jobs still waiting to start, oldest first.
+    pub async fn schedule_queued_jobs(&self, id: &str) -> Result<Vec<super::jobs::Job>, DbError> {
+        let ids: Vec<String> = sqlx::query_scalar(self.sql(
+            "SELECT id FROM scan_jobs WHERE schedule_id = ? AND status = 'QUEUED' ORDER BY submitted_at, id LIMIT 1000",
+        ))
+        .bind(id)
+        .fetch_all(self.pool())
+        .await?;
+        let mut out = Vec::with_capacity(ids.len());
+        for j in ids {
+            if let Some(job) = self.job(&j).await? {
+                out.push(job);
+            }
+        }
+        Ok(out)
     }
 }

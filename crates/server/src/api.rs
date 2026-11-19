@@ -963,10 +963,11 @@ async fn scan_uploads(
                     Ok(j) => j,
                     Err(_) => return unavailable(),
                 };
+                let guard = scan::UploadGuard::new(&st, &job, &ep.name);
                 p.audit(&st, "SCAN_UPLOAD", Some(&job), Some(fname.clone()))
                     .await;
                 let o = crate::web::scan::scan_field(&st, &ep, field, &fname).await;
-                scan::finish(&st, &job, &ep.name, o).await;
+                guard.finish(o).await;
                 ids.push(job.id);
             }
             _ => {}

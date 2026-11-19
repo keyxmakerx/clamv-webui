@@ -280,6 +280,9 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     if cfg.metrics_token().is_some_and(|t| t.len() < 16) {
         anyhow::bail!("METRICS_TOKEN must be at least 16 characters");
     }
+    if let Some(z) = &cfg.schedule_tz {
+        crate::cron::zone(z).map_err(|e| anyhow::anyhow!("SCHEDULE_TZ: {e}"))?;
+    }
     let url = cfg.database_url()?;
     let db = Db::open(&url, cfg.database_max_connections)
         .await
