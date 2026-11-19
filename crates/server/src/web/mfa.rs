@@ -33,6 +33,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/account/2fa/enable", post(enable))
         .route("/account/2fa/disable", post(disable))
         .route("/account/2fa/recovery", post(new_recovery))
+        .route("/account/confirm", post(confirm))
         .route("/admin/users/{id}/mfa-reset", post(admin_reset))
 }
 
@@ -46,6 +47,7 @@ fn mfa_cookie(value: &str, max_age: i64, secure: bool) -> String {
 fn transport_name(t: &str) -> &'static str {
     match t {
         "LDAP" => "LDAP",
+        "OIDC" => "OIDC",
         _ => "UI",
     }
 }
@@ -146,27 +148,58 @@ async fn check_code(st: &AppState, user_id: &str, input: &str) -> Option<&'stati
     None
 }
 
-/// What a signed-in user must show again before sign-in methods change, so a
-/// stolen session alone cannot add its own passkey or drop a factor.
+/// How long one confirmation covers sensitive changes in the same session.
+const CONFIRM_TTL_MS: i64 = 5 * 60 * 1000;
+
+/// Whether this session confirmed its user within the last few minutes.
+pub(crate) fn is_confirmed(st: &AppState, s: &Session) -> bool {
+    let now = crate::db::now_ms();
+    st.confirmed
+        .lock()
+        .map(|g| g.get(&s.id_hash).is_some_and(|t| *t > now))
+        .unwrap_or(false)
+}
+
+/// Remember a confirmation for this session (memory only; a restart forgets it).
+pub(crate) fn mark_confirmed(st: &AppState, session_hash: &str) {
+    if let Ok(mut g) = st.confirmed.lock() {
+        let now = crate::db::now_ms();
+        g.retain(|_, t| *t > now);
+        if g.len() < 10_000 {
+            g.insert(session_hash.to_owned(), now + CONFIRM_TTL_MS);
+        }
+    }
+}
+
+/// What a signed-in user must show again before sign-in methods or other
+/// users change, so a stolen session alone cannot add its own factor (sa2):
+/// "totp" (a current code), "password" (local), "ldap" (directory password)
+/// or "sso" (a fresh sign-in at the provider).
 pub(crate) async fn proof_kind(st: &AppState, u: &User) -> &'static str {
     if st.db.totp(&u.id).await.ok().flatten().is_some() {
         "totp"
     } else if !u.is_external() {
         "password"
+    } else if st.ldap.is_some() && u.username.starts_with("ldap:") {
+        "ldap"
     } else {
-        ""
+        "sso"
     }
 }
 
-/// Check that proof: a current code (or recovery code), else the local password.
-/// Wrong answers count toward the same lockouts as sign-in.
+/// Check that proof, or a confirmation from the last few minutes. A correct
+/// answer confirms the session. Wrong answers count toward the same lockouts as sign-in.
 pub(crate) async fn prove(
     st: &AppState,
+    s: &Session,
     u: &User,
     info: &RequestInfo,
     input: &str,
 ) -> Result<(), &'static str> {
-    match proof_kind(st, u).await {
+    if is_confirmed(st, s) {
+        return Ok(());
+    }
+    let r = match proof_kind(st, u).await {
         "totp" => checked_code(st, u, info, input)
             .await
             .map(|_| ())
@@ -182,7 +215,94 @@ pub(crate) async fn prove(
         .await
         .map(|_| ())
         .map_err(|_| "Enter your current password to confirm."),
-        _ => Ok(()),
+        "ldap" => {
+            let name = u.username.trim_start_matches("ldap:");
+            match crate::auth::login::authenticate_ldap(
+                st,
+                name,
+                input,
+                info.ip,
+                info.user_agent.as_deref(),
+            )
+            .await
+            {
+                Ok(x) if x.id == u.id => Ok(()),
+                _ => Err("Enter your directory password to confirm."),
+            }
+        }
+        _ => Err("Confirm with a fresh sign-in at your provider first (Confirm it's you)."),
+    };
+    if r.is_ok() {
+        mark_confirmed(st, &s.id_hash);
+        tracing::info!(event = "auth.confirmed", user = %u.username, ip = %info.ip, "user confirmed their identity");
+    }
+    r
+}
+
+/// The "Confirm it's you" box shown above sensitive actions.
+pub struct ConfirmView {
+    pub kind: &'static str,
+    pub active: bool,
+    /// Where to come back to: a fixed path, never user input.
+    pub next: &'static str,
+    pub sso_label: String,
+}
+
+pub(crate) async fn confirm_view(
+    st: &AppState,
+    s: &Session,
+    u: &User,
+    next: &'static str,
+) -> ConfirmView {
+    ConfirmView {
+        kind: proof_kind(st, u).await,
+        active: is_confirmed(st, s),
+        next,
+        sso_label: st
+            .oidc
+            .as_ref()
+            .map_or_else(|| "your provider".to_owned(), |o| o.label().to_owned()),
+    }
+}
+
+/// Only these pages may be returned to after a confirmation.
+pub(crate) fn confirm_next(raw: &str) -> &'static str {
+    match raw {
+        "/admin/users" => "/admin/users",
+        _ => "/account/security",
+    }
+}
+
+#[derive(Deserialize)]
+struct ConfirmForm {
+    #[serde(rename = "_csrf")]
+    csrf: Option<String>,
+    #[serde(default)]
+    proof: String,
+    #[serde(default)]
+    next: String,
+}
+
+async fn confirm(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    info: RequestInfo,
+    Form(f): Form<ConfirmForm>,
+) -> Response {
+    let (s, u) = match signed_in(auth, f.csrf.as_deref()) {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    let next = confirm_next(&f.next);
+    match prove(&st, &s, &u, &info, &f.proof).await {
+        Ok(()) => {
+            audit_user(&st, &u, &info, "REAUTH", None).await;
+            Redirect::to(next).into_response()
+        }
+        Err(m) if next == "/admin/users" => {
+            super::admin::users_result(&st, &s, &u, Some(m.to_owned()), None).await
+        }
+        Err(m) => security(&st, &s, &u, Some(m.to_owned()), None, None, Vec::new()).await,
     }
 }
 
@@ -358,8 +478,10 @@ struct SecurityPage {
     enrol: Option<Enrolment>,
     codes: Vec<String>,
     sso: bool,
-    /// "totp", "password" or "": what changing passkeys asks for again.
+    /// "totp", "password", "ldap" or "sso": what changing passkeys asks for
+    /// again; "" while a recent confirmation covers it.
     proof: &'static str,
+    confirm: ConfirmView,
 }
 
 pub(crate) async fn security(
@@ -406,18 +528,37 @@ pub(crate) async fn security(
             enrol,
             codes,
             sso: u.is_external() && st.ldap.is_none(),
-            proof: proof_kind(st, u).await,
+            proof: if is_confirmed(st, s) {
+                ""
+            } else {
+                proof_kind(st, u).await
+            },
+            confirm: confirm_view(st, s, u, "/account/security").await,
         },
     )
 }
 
-async fn security_page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
+#[derive(Deserialize)]
+struct SecurityQuery {
+    enrol: Option<String>,
+}
+
+async fn security_page(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    axum::extract::Query(q): axum::extract::Query<SecurityQuery>,
+) -> Response {
     let (s, u) = match auth.require(Role::Viewer) {
         Ok(x) => x,
         Err(r) => return r,
     };
-    security(&st, &s, &u, None, None, None, Vec::new()).await
+    let error = q.enrol.is_some().then(|| {
+        "Admins must use two-factor sign-in here. Set up an authenticator app or a passkey to continue.".to_owned()
+    });
+    security(&st, &s, &u, error, None, None, Vec::new()).await
 }
+
+const CONFIRM_FIRST: &str = "Confirm it's you first, then try again.";
 
 #[derive(Deserialize)]
 struct LangForm {
@@ -478,6 +619,19 @@ async fn setup(State(st): State<Arc<AppState>>, auth: Auth, Form(f): Form<CsrfFo
         Ok(x) => x,
         Err(r) => return r,
     };
+    // A stolen session must not enrol its own seed (sa2).
+    if !is_confirmed(&st, &s) {
+        return security(
+            &st,
+            &s,
+            &u,
+            Some(CONFIRM_FIRST.into()),
+            None,
+            None,
+            Vec::new(),
+        )
+        .await;
+    }
     let secret = totp::new_secret();
     // The candidate seed rides in the form, sealed to this user, until confirmed.
     let sealed = match st.sealer.seal(&secret, &format!("enrol:{}", u.id)) {
@@ -548,6 +702,18 @@ async fn enable(
             &s,
             &u,
             Some("An authenticator app is already set up. Turn it off first.".into()),
+            None,
+            None,
+            Vec::new(),
+        )
+        .await;
+    }
+    if !is_confirmed(&st, &s) {
+        return security(
+            &st,
+            &s,
+            &u,
+            Some(CONFIRM_FIRST.into()),
             None,
             None,
             Vec::new(),
@@ -703,10 +869,13 @@ async fn admin_reset(
     Path(id): Path<String>,
     Form(f): Form<CsrfForm>,
 ) -> Response {
-    let (_s, me) = match super::admin::admin_post(auth, f.csrf.as_deref()) {
+    let (s, me) = match super::admin::admin_post(auth, f.csrf.as_deref()) {
         Ok(x) => x,
         Err(r) => return r,
     };
+    if !is_confirmed(&st, &s) {
+        return super::admin::users_result(&st, &s, &me, Some(CONFIRM_FIRST.into()), None).await;
+    }
     let Ok(Some(target)) = st.db.user_by_id(&id).await else {
         return Redirect::to("/admin/users").into_response();
     };

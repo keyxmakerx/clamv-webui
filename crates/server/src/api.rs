@@ -92,6 +92,17 @@ pub fn err(status: StatusCode, code: &str, message: &str) -> Response {
         .into_response()
 }
 
+/// A token works only while the admin who made it still exists and is enabled (sa4).
+async fn creator_active(st: &AppState, t: &ApiToken) -> bool {
+    let Some(name) = t.created_by.as_deref() else {
+        return false;
+    };
+    matches!(
+        st.db.user_by_username(name).await,
+        Ok(Some(u)) if u.enabled && u.role == Role::Admin
+    )
+}
+
 fn ok(status: StatusCode, body: Value) -> Response {
     (status, [(header::CACHE_CONTROL, "no-store")], Json(body)).into_response()
 }
@@ -252,8 +263,8 @@ impl FromRequestParts<Arc<AppState>> for Principal {
         let (who, via) = match authz {
             Some(a) if a.len() > 7 && a[..7].eq_ignore_ascii_case("bearer ") => {
                 match st.db.token_by_secret(a[7..].trim()).await {
-                    Ok(Some(t)) => (Who::Token(t), Via::Bearer),
-                    Ok(None) => {
+                    Ok(Some(t)) if creator_active(st, &t).await => (Who::Token(t), Via::Bearer),
+                    Ok(_) => {
                         tracing::warn!(event = "auth.failed", ip = %ip, transport = "API_TOKEN", "invalid, expired or revoked API token");
                         return Err(err(
                             StatusCode::UNAUTHORIZED,
@@ -265,6 +276,17 @@ impl FromRequestParts<Arc<AppState>> for Principal {
                 }
             }
             Some(a) if a.len() > 6 && a[..6].eq_ignore_ascii_case("basic ") => {
+                if st.cfg.api_basic_https_only
+                    && !st.cfg.tls_enabled()
+                    && !crate::web::session::forwarded_https(st, &parts.headers)
+                {
+                    tracing::warn!(event = "auth.basic_refused", ip = %ip, "HTTP Basic refused over plain HTTP");
+                    return Err(err(
+                        StatusCode::FORBIDDEN,
+                        "https_required",
+                        "Passwords are only accepted over HTTPS. Use HTTPS or an API token.",
+                    ));
+                }
                 let decoded = base64::engine::general_purpose::STANDARD
                     .decode(a[6..].trim())
                     .ok()
@@ -282,6 +304,19 @@ impl FromRequestParts<Arc<AppState>> for Principal {
                         // A password alone must not get around the second factor.
                         let (totp, keys) =
                             st.db.mfa_methods(&u.id).await.map_err(|_| unavailable())?;
+                        if !totp
+                            && keys == 0
+                            && st.cfg.require_admin_2fa
+                            && u.role == Role::Admin
+                            && !u.is_external()
+                        {
+                            tracing::warn!(event = "auth.basic_refused", user = %u.username, ip = %ip, "HTTP Basic refused: admin has not set up two-factor sign-in");
+                            return Err(err(
+                                StatusCode::FORBIDDEN,
+                                "second_factor_required",
+                                "Set up two-factor sign-in in the web UI, then use an API token.",
+                            ));
+                        }
                         if totp || keys > 0 {
                             tracing::warn!(event = "auth.basic_refused", user = %u.username, ip = %ip, "HTTP Basic refused for an account with two-factor sign-in");
                             return Err(err(
@@ -306,7 +341,7 @@ impl FromRequestParts<Arc<AppState>> for Principal {
                             "Authentication required.",
                         ));
                     }
-                    Err(Failure::Unavailable) => return Err(unavailable()),
+                    Err(Failure::Busy | Failure::Unavailable) => return Err(unavailable()),
                 }
             }
             Some(_) => {

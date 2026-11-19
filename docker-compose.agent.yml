@@ -5,6 +5,7 @@ services:
     container_name: clamv-agent
     command: agent
     restart: unless-stopped
+    mem_limit: 256m  # caps memory if sign-ins or scans spike
     environment:
       AGENT_SERVER_URL: https://100.82.0.5:8080  # the server as this host reaches it; http:// is refused
       AGENT_TOKEN_FILE: /run/secrets/agent_token  # token from Admin > Agents

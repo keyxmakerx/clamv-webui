@@ -142,6 +142,38 @@ async fn totp_and_recovery_codes() {
     )
     .await;
     let csrf = csrf_of(&page);
+    // The session alone cannot start setup (sa2): it must confirm first.
+    let res = app
+        .clone()
+        .oneshot(form(
+            "/account/2fa/setup",
+            &format!("_csrf={csrf}"),
+            &session,
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert!(text(res).await.contains("Confirm it"));
+    let res = app
+        .clone()
+        .oneshot(form(
+            "/account/confirm",
+            &format!("_csrf={csrf}&next=/account/security&proof=wrong-password-123"),
+            &session,
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST, "wrong password");
+    let res = app
+        .clone()
+        .oneshot(form(
+            "/account/confirm",
+            &format!("_csrf={csrf}&next=/account/security&proof={}", urlenc(pw())),
+            &session,
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.headers()[header::LOCATION], "/account/security");
     let page = text(
         app.clone()
             .oneshot(form(

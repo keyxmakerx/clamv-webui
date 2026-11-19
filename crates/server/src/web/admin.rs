@@ -63,6 +63,7 @@ struct UsersPage {
     nav: Nav,
     users: Vec<UserView>,
     roles: [Role; 3],
+    confirm: super::mfa::ConfirmView,
 }
 
 async fn users_page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
@@ -70,10 +71,10 @@ async fn users_page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
         Ok(x) => x,
         Err(r) => return r,
     };
-    show_users(&st, Nav::new("users", &s, &u), &u).await
+    show_users(&st, Nav::new("users", &s, &u), &s, &u).await
 }
 
-async fn show_users(st: &AppState, nav: Nav, me: &User) -> Response {
+async fn show_users(st: &AppState, nav: Nav, s: &Session, me: &User) -> Response {
     let list = match st.db.list_users().await {
         Ok(l) => l,
         Err(e) => {
@@ -113,11 +114,12 @@ async fn show_users(st: &AppState, nav: Nav, me: &User) -> Response {
             nav,
             users,
             roles: [Role::Viewer, Role::Operator, Role::Admin],
+            confirm: super::mfa::confirm_view(st, s, me, "/admin/users").await,
         },
     )
 }
 
-async fn users_result(
+pub(super) async fn users_result(
     st: &AppState,
     s: &Session,
     me: &User,
@@ -127,7 +129,14 @@ async fn users_result(
     let mut nav = Nav::new("users", s, me);
     nav.error = error;
     nav.success = success;
-    show_users(st, nav, me).await
+    show_users(st, nav, s, me).await
+}
+
+const CONFIRM_FIRST: &str = "Confirm it's you first, then try again.";
+
+/// Access a change grants: none while disabled, else the role.
+fn access(role: Role, enabled: bool) -> Option<Role> {
+    enabled.then_some(role)
 }
 
 fn valid_username(name: &str) -> bool {
@@ -170,6 +179,10 @@ async fn create_user(
     let Ok(role) = f.role.parse::<Role>() else {
         return users_result(&st, &s, &me, Some("Unknown role.".into()), None).await;
     };
+    // A new admin could approve anything, so a stolen session alone must not make one (sa2).
+    if role == Role::Admin && !super::mfa::is_confirmed(&st, &s) {
+        return users_result(&st, &s, &me, Some(CONFIRM_FIRST.into()), None).await;
+    }
     let hash = match password::hash(&f.password) {
         Ok(h) => h,
         Err(e) => return users_result(&st, &s, &me, Some(e.to_string()), None).await,
@@ -227,6 +240,11 @@ async fn update_user(
     let Ok(Some(target)) = st.db.user_by_id(&id).await else {
         return users_result(&st, &s, &me, Some("No such user.".into()), None).await;
     };
+    if access(role, enabled) > access(target.role, target.enabled)
+        && !super::mfa::is_confirmed(&st, &s)
+    {
+        return users_result(&st, &s, &me, Some(CONFIRM_FIRST.into()), None).await;
+    }
     if let Err(msg) = keeps_an_admin(&st, &target, role, enabled).await {
         return users_result(&st, &s, &me, Some(msg), None).await;
     }
@@ -291,6 +309,9 @@ async fn reset_password(
         Ok(x) => x,
         Err(r) => return r,
     };
+    if !super::mfa::is_confirmed(&st, &s) {
+        return users_result(&st, &s, &me, Some(CONFIRM_FIRST.into()), None).await;
+    }
     let Ok(Some(target)) = st.db.user_by_id(&id).await else {
         return users_result(&st, &s, &me, Some("No such user.".into()), None).await;
     };
@@ -466,6 +487,14 @@ mod tests {
         assert_eq!(fmt_ts(0), "1970-01-01 00:00:00 UTC");
         assert_eq!(fmt_ts(1_794_536_660_000), "2026-11-13 02:24:20 UTC");
         assert_eq!(fmt_ts(951_782_400_000), "2000-02-29 00:00:00 UTC");
+    }
+
+    #[test]
+    fn raising_access_is_detected() {
+        assert!(access(Role::Admin, true) > access(Role::Operator, true));
+        assert!(access(Role::Viewer, true) > access(Role::Admin, false));
+        assert!(access(Role::Admin, false) <= access(Role::Viewer, true));
+        assert!(access(Role::Operator, true) <= access(Role::Operator, true));
     }
 
     #[test]

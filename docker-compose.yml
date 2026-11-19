@@ -5,6 +5,7 @@ services:
     image: ghcr.io/keyxmakerx/clamv-webui:latest
     container_name: clamv-webui
     restart: unless-stopped
+    mem_limit: 512m  # caps memory if sign-ins or scans spike
     depends_on:
       - clamav
     environment:

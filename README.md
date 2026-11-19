@@ -131,11 +131,15 @@ To have alerts name who touched a canary, add the auditd rule the page shows (`-
 |---|---|---|
 | `COOKIE_SECURE` | `false` | Always on with TLS; leave off only on plain HTTP over a private network |
 | `SESSION_IDLE_MINUTES` / `SESSION_MAX_HOURS` | `30` / `12` | Session lifetime |
+| `SSO_SESSION_MINUTES` | `60` | SSO and LDAP sessions end sooner, so role changes at the provider apply |
+| `REQUIRE_ADMIN_2FA` | `false` | Admins with a local password must add an authenticator app or passkey first |
+| `API_BASIC_HTTPS_ONLY` | `false` | Refuse HTTP Basic on the API over plain HTTP (tokens still work) |
 | `REQUEST_TIMEOUT_SECS` | `60` | Per-request timeout for UI and API calls |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | unset | Serve HTTPS with your certificate |
 | `TLS_SELF_SIGNED` / `TLS_SELF_SIGNED_NAMES` | `false` / unset | Generate a certificate in `DATA_DIR/tls` for the listed names or IPs |
 | `TRUSTED_PROXIES` | empty | Reverse proxies (CIDRs) whose `X-Forwarded-For`/`-Proto` are believed; see [docs/REVERSE_PROXY.md](docs/REVERSE_PROXY.md) |
-| `PUBLIC_URL` | unset | The address users open, e.g. `https://clamav.example.com`; passkeys are tied to its host name |
+| `PUBLIC_URL` | unset | The address users open, e.g. `https://clamav.example.com`; passkeys are tied to its host name, and other host names are refused |
+| `ALLOWED_HOSTS` | empty | Extra host names accepted when `PUBLIC_URL` is set (localhost always is) |
 | `SECRET_KEY_FILE` | `DATA_DIR/secret.key` | Key that encrypts stored 2FA secrets; created on first use. Back it up with the database |
 
 ### Alerts (webhook, ntfy, Gotify, Slack, Discord)
@@ -205,7 +209,7 @@ Off until `QUARANTINE_DIR` is set (on the server, or on an agent that also allow
 | `LDAP_URL` | `ldaps://` URL, or `ldap://` with `LDAP_STARTTLS=true`; plain LDAP is refused |
 | `LDAP_BIND_DN`, `LDAP_BIND_PASSWORD(_FILE)` | Service account used to find the user |
 | `LDAP_USER_BASE`, `LDAP_USER_FILTER` | Search base and filter (`{username}` is escaped) |
-| `LDAP_ADMIN_GROUPS`, `LDAP_OPERATOR_GROUPS`, `LDAP_VIEWER_GROUPS` | Group DNs or names; no group means no access |
+| `LDAP_ADMIN_GROUPS`, `LDAP_OPERATOR_GROUPS`, `LDAP_VIEWER_GROUPS` | Group DNs or names; no group means no access. Use full DNs: a short name matches that group in any OU |
 | `LDAP_GROUP_ATTRIBUTE`, `LDAP_CA_FILE` | Optional |
 
 ### Settings page
@@ -220,7 +224,7 @@ Each user picks a language under **Account**; otherwise the browser's language i
 
 - Runs as UID 10001 in a read-only container with all capabilities dropped. Scan roots should be mounted read-only; the app never writes to them unless quarantine is turned on.
 - Path scans resolve symlinks and must stay inside `SCAN_ROOTS`. clamd endpoints are limited to `CLAMD_HOST_ALLOWLIST`.
-- Passwords use Argon2id. Second factors: TOTP seeds are encrypted with `SECRET_KEY_FILE`, codes cannot be replayed, recovery codes are hashed and single-use, five wrong codes end the attempt and ten in 15 minutes lock the account's second step, however many times the password is entered. HTTP Basic on the API is refused for accounts with a second factor (use a token). Passkeys require user verification and are checked for origin, relying party, signature and counter. Admins can reset a user's second factors; `reset-admin` clears the admin's. Sessions are server-side with `SameSite=Strict` cookies, CSRF tokens on every form, login rate limiting, and a per-user limit of 30 scans a minute in the UI and API.
+- Passwords use Argon2id. Second factors: TOTP seeds are encrypted with `SECRET_KEY_FILE`, codes cannot be replayed, recovery codes are hashed and single-use, five wrong codes end the attempt and ten in 15 minutes lock the account's second step, however many times the password is entered. HTTP Basic on the API is refused for accounts with a second factor (use a token). Passkeys require user verification and are checked for origin, relying party, signature and counter. Admins can reset a user's second factors; `reset-admin` clears the admin's. Sessions are server-side with `SameSite=Strict` cookies, CSRF tokens on every form, login rate limiting, and a per-user limit of 30 scans a minute in the UI and API. Sign-in hardening, step-up confirmation and what to do when locked out: [docs/SECURITY.md](docs/SECURITY.md).
 - A strict Content-Security-Policy (no inline script or style) and the usual security headers on every response.
 - API tokens are stored hashed and shown once. Metrics need a bearer token.
 - File names in notifications have bidirectional-override characters replaced, so `cv\u202Efdp.exe` cannot pose as a PDF; Slack text is escaped so names cannot carry mentions or links.

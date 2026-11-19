@@ -224,13 +224,6 @@ pub(crate) struct LoginPage {
     pub sso: Option<String>,
     pub ldap: bool,
     pub source: String,
-    /// The one-time admin password file is still in DATA_DIR.
-    pub first_start: bool,
-}
-
-/// True until `admin` replaces its one-time password, so the sign-in page can point to the file.
-pub(crate) fn bootstrap_file_present(st: &AppState) -> bool {
-    st.first_start.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 #[derive(Deserialize)]
@@ -263,7 +256,6 @@ async fn login_page(
             sso: st.oidc.as_ref().map(|o| o.label().to_owned()),
             ldap: st.ldap.is_some(),
             source: String::new(),
-            first_start: bootstrap_file_present(&st),
         },
     )
 }
@@ -302,7 +294,6 @@ async fn login(
                 sso: st.oidc.as_ref().map(|o| o.label().to_owned()),
                 ldap: st.ldap.is_some(),
                 source: source.clone(),
-                first_start: bootstrap_file_present(&st),
             },
         )
     };
@@ -356,6 +347,12 @@ async fn login(
             );
         }
         Err(Failure::Bad) => return page(StatusCode::UNAUTHORIZED, BAD_LOGIN),
+        Err(Failure::Busy) => {
+            return page(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "The server is busy. Try again in a moment.",
+            );
+        }
         Err(Failure::Unavailable) => {
             return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
         }
@@ -375,14 +372,15 @@ pub(crate) async fn begin_session(
         let _ = st.db.delete_session_by_hash(&old.id_hash).await;
     }
     let ip_s = info.ip.to_string();
+    // SSO and LDAP roles are re-read at sign-in, so those sessions are kept short (sa4).
+    let ttl = if user.is_external() {
+        st.cfg.external_session_ms()
+    } else {
+        st.cfg.session_max_ms()
+    };
     let (raw, _) = match st
         .db
-        .create_session(
-            &user.id,
-            st.cfg.session_max_ms(),
-            Some(&ip_s),
-            info.user_agent.as_deref(),
-        )
+        .create_session(&user.id, ttl, Some(&ip_s), info.user_agent.as_deref())
         .await
     {
         Ok(s) => s,
@@ -412,10 +410,7 @@ pub(crate) async fn begin_session(
     } else {
         "/dashboard"
     };
-    Ok((
-        set_cookie(&raw, st.cfg.session_max_ms() / 1000, st.cfg.cookie_secure),
-        to,
-    ))
+    Ok((set_cookie(&raw, ttl / 1000, st.cfg.cookie_secure), to))
 }
 
 #[derive(Deserialize)]
@@ -526,6 +521,7 @@ async fn change_password(
         Ok(_) => {}
         Err(Failure::Locked) => return fail("Too many attempts. Try again later."),
         Err(Failure::Bad) => return fail("Current password is wrong."),
+        Err(Failure::Busy) => return fail("The server is busy. Try again in a moment."),
         Err(Failure::Unavailable) => {
             return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
         }
@@ -545,10 +541,6 @@ async fn change_password(
     if let Err(e) = st.db.set_password(&u.id, &hash, false, true).await {
         tracing::error!(error = %e, "password update failed");
         return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
-    }
-    if u.username == "admin" {
-        st.first_start
-            .store(false, std::sync::atomic::Ordering::Relaxed);
     }
     st.db
         .audit(AuditEntry {

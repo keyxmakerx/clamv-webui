@@ -2,6 +2,7 @@
 {% block title %}Users · ClamAV Web UI{% endblock %}
 {% block content %}
 <h1 class="h3">Users</h1>
+{% include "_confirm.html" %}
 <section class="card mt-3"><div class="card-body">
 <h2 class="h5">Add user</h2>
 <form method="post" action="/admin/users" class="row g-2 align-items-end">
