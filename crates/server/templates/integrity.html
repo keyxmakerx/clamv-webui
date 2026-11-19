@@ -1,60 +1,60 @@
 {% extends "shell.html" %}
-{% block title %}Host Checks · ClamAV Web UI{% endblock %}
+{% block title %}{{ nav.t("Host Checks · ClamAV Web UI") }}{% endblock %}
 {% block content %}
-<h1 class="h3">Host checks</h1>
-<h2 class="h5 mt-3">AIDE and rkhunter</h2>
-<p class="muted">AIDE and rkhunter runs from every host. Each host runs them on its own timer or from Managed checks below; this server and the agents read <code>{{ aide }}</code> and <code>{{ rkhunter }}</code> (mount them read-only) and report each new run.</p>
+<h1 class="h3">{{ nav.t("Host checks") }}</h1>
+<h2 class="h5 mt-3">{{ nav.t("AIDE and rkhunter") }}</h2>
+<p class="muted">{{ nav.t("AIDE and rkhunter runs from every host. Each host runs them on its own timer or from Managed checks below; this server and the agents read") }} <code>{{ aide }}</code> {{ nav.t("and") }} <code>{{ rkhunter }}</code> {{ nav.t("(mount them read-only) and report each new run.") }}</p>
 <section class="card mt-3"><div class="card-body table-responsive">
 <table class="table table-sm align-top">
-<thead><tr><th>Ran</th><th>Host</th><th>Tool</th><th>Result</th></tr></thead>
+<thead><tr><th>{{ nav.t("Ran") }}</th><th>{{ nav.t("Host") }}</th><th>{{ nav.t("Tool") }}</th><th>{{ nav.t("Result") }}</th></tr></thead>
 <tbody>
 {% for r in runs %}<tr>
 <td class="small text-nowrap">{{ r.ran }}</td>
 <td class="small">{{ r.host }}</td>
 <td class="small">{{ r.tool }}</td>
-<td>{% if r.ok %}<span class="badge bg-success">clean</span>{% else %}<span class="badge bg-danger">changes</span>{% endif %} <span class="small">{{ r.summary }}</span>
-{% if !r.findings.is_empty() %}<details class="small mt-1"><summary>{{ r.findings.len() }} finding(s)</summary><ul class="mb-0">{% for f in r.findings %}<li class="text-break"><code>{{ f }}</code></li>{% endfor %}</ul></details>{% endif %}</td>
-</tr>{% else %}<tr><td colspan="4" class="muted">No runs yet. Mount the AIDE or rkhunter report into this container or an agent.</td></tr>{% endfor %}
+<td>{% if r.ok %}<span class="badge bg-success">{{ nav.t("clean") }}</span>{% else %}<span class="badge bg-danger">{{ nav.t("changes") }}</span>{% endif %} <span class="small">{{ r.summary }}</span>
+{% if !r.findings.is_empty() %}<details class="small mt-1"><summary>{{ r.findings.len() }} {{ nav.t("finding(s)") }}</summary><ul class="mb-0">{% for f in r.findings %}<li class="text-break"><code>{{ f }}</code></li>{% endfor %}</ul></details>{% endif %}</td>
+</tr>{% else %}<tr><td colspan="4" class="muted">{{ nav.t("No runs yet. Mount the AIDE or rkhunter report into this container or an agent.") }}</td></tr>{% endfor %}
 </tbody></table>
 </div></section>
-<h2 class="h5 mt-4">Managed checks</h2>
-<p class="muted">clamv can start AIDE and rkhunter itself without root: each host installs fixed, sandboxed systemd units and a polkit rule once (<code>host-setup</code>), and clamv may only start those units and switch their timers. Accepting a new baseline asks for your passkey every time.</p>
+<h2 class="h5 mt-4">{{ nav.t("Managed checks") }}</h2>
+<p class="muted">{{ nav.t("clamv can start AIDE and rkhunter itself without root: each host installs fixed, sandboxed systemd units and a polkit rule once (") }}<code>host-setup</code>{{ nav.t("), and clamv may only start those units and switch their timers. Accepting a new baseline asks for your passkey every time.") }}</p>
 <div id="passkey-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
 <div id="stepup-ok" class="alert alert-success py-2 small d-none" role="status"></div>
 <section class="card mt-2"><div class="card-body table-responsive">
 <table class="table table-sm align-middle">
-<thead><tr><th>Host</th><th>Units</th><th>Daily timers</th>{% if nav.is_admin %}<th>Run</th>{% endif %}</tr></thead>
+<thead><tr><th>{{ nav.t("Host") }}</th><th>{{ nav.t("Units") }}</th><th>{{ nav.t("Daily timers") }}</th>{% if nav.is_admin %}<th>{{ nav.t("Run") }}</th>{% endif %}</tr></thead>
 <tbody>
 {% for m in managed %}<tr>
-<td class="small">{{ m.host }}{% if !m.read.is_empty() %}<div class="muted">read {{ m.read }} ago</div>{% endif %}</td>
-<td class="small">{% if !m.known %}<span class="badge bg-secondary">waiting for host</span>{% else if !m.error.is_empty() %}<span class="badge bg-secondary">not reachable</span><div class="muted text-break">{{ m.error }}</div>{% else if !m.aide && !m.rkhunter %}<span class="badge bg-secondary">not installed</span>{% else %}{% if m.aide %}<span class="badge bg-success">AIDE</span> {% endif %}{% if m.rkhunter %}<span class="badge bg-success">rkhunter</span>{% endif %}{% endif %}</td>
-<td class="small">{% match m.aide_timer %}{% when Some(on) %}AIDE {% if on %}<span class="text-success">on</span>{% else %}<span class="muted">off</span>{% endif %}{% if nav.is_admin %} <form class="d-inline" method="post" action="/integrity/run"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ m.value }}"><input type="hidden" name="action" value="{% if on %}aide.timer.off{% else %}aide.timer.on{% endif %}"><button class="btn btn-link btn-sm p-0" type="submit">{% if on %}turn off{% else %}turn on{% endif %}</button></form>{% endif %}
-<div class="muted">{% if m.aide_at.is_empty() %}at a random time{% else %}at {{ m.aide_at }}{% endif %}{% if nav.is_admin %} <form class="d-inline-flex gap-1 align-items-center" method="post" action="/integrity/timer"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ m.value }}"><input type="hidden" name="tool" value="aide"><input class="form-control form-control-sm py-0 timer-input" type="time" name="time" value="{{ m.aide_at }}" aria-label="AIDE daily time"><button class="btn btn-link btn-sm p-0" type="submit">set</button></form>{% endif %}</div>{% when None %}{% endmatch %}
-{% match m.rkhunter_timer %}{% when Some(on) %}rkhunter {% if on %}<span class="text-success">on</span>{% else %}<span class="muted">off</span>{% endif %}{% if nav.is_admin %} <form class="d-inline" method="post" action="/integrity/run"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ m.value }}"><input type="hidden" name="action" value="{% if on %}rkhunter.timer.off{% else %}rkhunter.timer.on{% endif %}"><button class="btn btn-link btn-sm p-0" type="submit">{% if on %}turn off{% else %}turn on{% endif %}</button></form>{% endif %}
-<div class="muted">{% if m.rkhunter_at.is_empty() %}at a random time{% else %}at {{ m.rkhunter_at }}{% endif %}{% if nav.is_admin %} <form class="d-inline-flex gap-1 align-items-center" method="post" action="/integrity/timer"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ m.value }}"><input type="hidden" name="tool" value="rkhunter"><input class="form-control form-control-sm py-0 timer-input" type="time" name="time" value="{{ m.rkhunter_at }}" aria-label="rkhunter daily time"><button class="btn btn-link btn-sm p-0" type="submit">set</button></form>{% endif %}</div>{% when None %}{% endmatch %}</td>
-{% if nav.is_admin %}<td class="text-nowrap">{% if m.aide %}<form class="d-inline" method="post" action="/integrity/run"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ m.value }}"><input type="hidden" name="action" value="aide.check"><button class="btn btn-sm btn-outline-secondary" type="submit">Run AIDE</button></form>
-<button class="btn btn-sm btn-outline-warning" type="button" data-stepup="aide.accept" data-host="{{ m.value }}" data-csrf="{{ nav.csrf }}" title="Needs your passkey"><i class="fas fa-key" aria-hidden="true"></i> Accept baseline</button>{% endif %}
-{% if m.rkhunter %}<form class="d-inline" method="post" action="/integrity/run"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ m.value }}"><input type="hidden" name="action" value="rkhunter.check"><button class="btn btn-sm btn-outline-secondary" type="submit">Run rkhunter</button></form>
-<button class="btn btn-sm btn-outline-warning" type="button" data-stepup="rkhunter.propupd" data-host="{{ m.value }}" data-csrf="{{ nav.csrf }}" title="Needs your passkey"><i class="fas fa-key" aria-hidden="true"></i> Update properties</button>{% endif %}</td>{% endif %}
+<td class="small">{{ m.host }}{% if !m.read.is_empty() %}<div class="muted">{{ nav.t("read") }} {{ m.read }} {{ nav.t("ago") }}</div>{% endif %}</td>
+<td class="small">{% if !m.known %}<span class="badge bg-secondary">{{ nav.t("waiting for host") }}</span>{% else if !m.error.is_empty() %}<span class="badge bg-secondary">{{ nav.t("not reachable") }}</span><div class="muted text-break">{{ m.error }}</div>{% else if !m.aide && !m.rkhunter %}<span class="badge bg-secondary">{{ nav.t("not installed") }}</span>{% else %}{% if m.aide %}<span class="badge bg-success">AIDE</span> {% endif %}{% if m.rkhunter %}<span class="badge bg-success">rkhunter</span>{% endif %}{% endif %}</td>
+<td class="small">{% match m.aide_timer %}{% when Some(on) %}AIDE {% if on %}<span class="text-success">{{ nav.t("on") }}</span>{% else %}<span class="muted">{{ nav.t("off") }}</span>{% endif %}{% if nav.is_admin %} <form class="d-inline" method="post" action="/integrity/run"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ m.value }}"><input type="hidden" name="action" value="{% if on %}aide.timer.off{% else %}aide.timer.on{% endif %}"><button class="btn btn-link btn-sm p-0" type="submit">{% if on %}{{ nav.t("turn off") }}{% else %}{{ nav.t("turn on") }}{% endif %}</button></form>{% endif %}
+<div class="muted">{% if m.aide_at.is_empty() %}{{ nav.t("at a random time") }}{% else %}{{ nav.t("at") }} {{ m.aide_at }}{% endif %}{% if nav.is_admin %} <form class="d-inline-flex gap-1 align-items-center" method="post" action="/integrity/timer"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ m.value }}"><input type="hidden" name="tool" value="aide"><input class="form-control form-control-sm py-0 timer-input" type="time" name="time" value="{{ m.aide_at }}" aria-label="{{ nav.t("AIDE daily time") }}"><button class="btn btn-link btn-sm p-0" type="submit">{{ nav.t("set") }}</button></form>{% endif %}</div>{% when None %}{% endmatch %}
+{% match m.rkhunter_timer %}{% when Some(on) %}rkhunter {% if on %}<span class="text-success">{{ nav.t("on") }}</span>{% else %}<span class="muted">{{ nav.t("off") }}</span>{% endif %}{% if nav.is_admin %} <form class="d-inline" method="post" action="/integrity/run"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ m.value }}"><input type="hidden" name="action" value="{% if on %}rkhunter.timer.off{% else %}rkhunter.timer.on{% endif %}"><button class="btn btn-link btn-sm p-0" type="submit">{% if on %}{{ nav.t("turn off") }}{% else %}{{ nav.t("turn on") }}{% endif %}</button></form>{% endif %}
+<div class="muted">{% if m.rkhunter_at.is_empty() %}{{ nav.t("at a random time") }}{% else %}{{ nav.t("at") }} {{ m.rkhunter_at }}{% endif %}{% if nav.is_admin %} <form class="d-inline-flex gap-1 align-items-center" method="post" action="/integrity/timer"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ m.value }}"><input type="hidden" name="tool" value="rkhunter"><input class="form-control form-control-sm py-0 timer-input" type="time" name="time" value="{{ m.rkhunter_at }}" aria-label="{{ nav.t("rkhunter daily time") }}"><button class="btn btn-link btn-sm p-0" type="submit">{{ nav.t("set") }}</button></form>{% endif %}</div>{% when None %}{% endmatch %}</td>
+{% if nav.is_admin %}<td class="text-nowrap">{% if m.aide %}<form class="d-inline" method="post" action="/integrity/run"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ m.value }}"><input type="hidden" name="action" value="aide.check"><button class="btn btn-sm btn-outline-secondary" type="submit">{{ nav.t("Run AIDE") }}</button></form>
+<button class="btn btn-sm btn-outline-warning" type="button" data-stepup="aide.accept" data-host="{{ m.value }}" data-csrf="{{ nav.csrf }}" title="{{ nav.t("Needs your passkey") }}"><i class="fas fa-key" aria-hidden="true"></i> {{ nav.t("Accept baseline") }}</button>{% endif %}
+{% if m.rkhunter %}<form class="d-inline" method="post" action="/integrity/run"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="host" value="{{ m.value }}"><input type="hidden" name="action" value="rkhunter.check"><button class="btn btn-sm btn-outline-secondary" type="submit">{{ nav.t("Run rkhunter") }}</button></form>
+<button class="btn btn-sm btn-outline-warning" type="button" data-stepup="rkhunter.propupd" data-host="{{ m.value }}" data-csrf="{{ nav.csrf }}" title="{{ nav.t("Needs your passkey") }}"><i class="fas fa-key" aria-hidden="true"></i> {{ nav.t("Update properties") }}</button>{% endif %}</td>{% endif %}
 </tr>{% endfor %}
 </tbody></table>
-<details class="small"><summary class="muted">How to set a host up</summary>
-<ol class="mb-0 mt-1"><li>On the host, run <code>docker run --rm --user 0 -v /:/host ghcr.io/keyxmakerx/clamv-webui:latest host-setup</code>. It adds a <code>clamv</code> user with clamv's container uid (10001), the units and the polkit rule.</li>
-<li>Mount the host's <code>/run/dbus/system_bus_socket</code> read-only into the clamv or agent container.</li>
-<li>Reports land where clamv already reads them (<code>/var/log/aide/aide.log</code>, <code>/var/log/rkhunter.log</code>).</li></ol></details>
+<details class="small"><summary class="muted">{{ nav.t("How to set a host up") }}</summary>
+<ol class="mb-0 mt-1"><li>{{ nav.t("On the host, run") }} <code>docker run --rm --user 0 -v /:/host ghcr.io/keyxmakerx/clamv-webui:latest host-setup</code>{{ nav.t(". It adds a") }} <code>clamv</code> {{ nav.t("user with clamv's container uid (10001), the units and the polkit rule.") }}</li>
+<li>{{ nav.t("Mount the host's") }} <code>/run/dbus/system_bus_socket</code> {{ nav.t("read-only into the clamv or agent container.") }}</li>
+<li>{{ nav.t("Reports land where clamv already reads them (") }}<code>/var/log/aide/aide.log</code>, <code>/var/log/rkhunter.log</code>).</li></ol></details>
 </div></section>
-<h2 class="h5 mt-4">Falco, last 30 days</h2>
-<p class="muted">Each host's Falco writes JSON alerts to <code>{{ falco_path }}</code> (set <code>json_output: true</code> and <code>file_output</code>); mount it read-only and alerts arrive within seconds. Error and worse also notify.</p>
+<h2 class="h5 mt-4">{{ nav.t("Falco, last 30 days") }}</h2>
+<p class="muted">{{ nav.t("Each host's Falco writes JSON alerts to") }} <code>{{ falco_path }}</code> {{ nav.t("(set") }} <code>json_output: true</code> {{ nav.t("and") }} <code>file_output</code>{{ nav.t("); mount it read-only and alerts arrive within seconds. Error and worse also notify.") }}</p>
 <section class="card mt-2"><div class="card-body table-responsive">
 <table class="table table-sm align-top">
-<thead><tr><th>When</th><th>Host</th><th>Priority</th><th>Rule</th></tr></thead>
+<thead><tr><th>{{ nav.t("When") }}</th><th>{{ nav.t("Host") }}</th><th>{{ nav.t("Priority") }}</th><th>{{ nav.t("Rule") }}</th></tr></thead>
 <tbody>
 {% for f in falco %}<tr>
 <td class="small text-nowrap">{{ f.at }}</td>
 <td class="small">{{ f.host }}{% if !f.container.is_empty() %}<br><span class="muted">{{ f.container }}</span>{% endif %}</td>
 <td><span class="badge {% if f.loud %}bg-danger{% else %}bg-warning text-dark{% endif %}">{{ f.priority }}</span></td>
 <td><strong class="small">{{ f.rule }}</strong><div class="small muted text-break">{{ f.output }}</div></td>
-</tr>{% else %}<tr><td colspan="4" class="muted">No Falco alerts.</td></tr>{% endfor %}
+</tr>{% else %}<tr><td colspan="4" class="muted">{{ nav.t("No Falco alerts.") }}</td></tr>{% endfor %}
 </tbody></table>
 </div></section>
 {% if nav.is_admin %}<script defer src="/js/passkey.js?v={{ crate::web::asset_v() }}"></script>{% endif %}

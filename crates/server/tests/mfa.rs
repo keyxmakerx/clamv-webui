@@ -915,12 +915,29 @@ async fn language_is_picked_from_the_cookie_or_the_browser() {
     )
     .await;
     assert!(page.contains("<html lang=\"en\">"));
-    // u05: with English the only language, the picker stays hidden.
-    assert!(
-        !page.contains("name=\"lang\""),
-        "no picker with one language"
-    );
+    assert!(page.contains("name=\"lang\""), "language picker shown");
     let csrf = csrf_of(&page);
+
+    // The cookie wins over the browser, on signed-in pages...
+    let page = text(
+        app.clone()
+            .oneshot(get(
+                "/account/security",
+                &format!("{session}; clamv_lang=de"),
+            ))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(page.contains("<html lang=\"de\">") && page.contains("Sprache speichern"));
+    // ...and the browser's language applies to the sign-in page too.
+    let mut r = get("/login", "");
+    r.headers_mut().insert(
+        header::ACCEPT_LANGUAGE,
+        "fr-CA,fr;q=0.9".parse().expect("hv"),
+    );
+    let page = text(app.clone().oneshot(r).await.expect("res")).await;
+    assert!(page.contains("<html lang=\"fr\">") && page.contains("Se connecter"));
 
     let res = app
         .clone()
