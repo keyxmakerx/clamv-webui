@@ -64,6 +64,15 @@ struct Pending {
     nonce: String,
     verifier: String,
     created: i64,
+    /// A signed-in user confirming who they are: the provider must ask again.
+    reauth: bool,
+}
+
+/// The result of a finished sign-in.
+pub struct Finished {
+    pub id: Identity,
+    /// Started as a confirmation, and the provider showed a fresh sign-in.
+    pub reauth: bool,
 }
 
 pub struct Oidc {
@@ -82,6 +91,18 @@ pub struct Oidc {
     http: reqwest::Client,
     cache: tokio::sync::Mutex<Option<Cached>>,
     pending: Mutex<HashMap<String, Pending>>,
+}
+
+/// A confirmation needs proof the provider asked again: `auth_time` (required
+/// by OIDC when max_age is sent) no earlier than when the confirmation began.
+fn fresh_auth(c: &Value, started_secs: i64) -> Result<(), String> {
+    match c["auth_time"].as_i64() {
+        Some(t) if t + LEEWAY_SECS >= started_secs => Ok(()),
+        Some(_) => Err("the provider did not ask for a fresh sign-in".into()),
+        None => {
+            Err("the provider sent no auth_time, so a fresh sign-in cannot be confirmed".into())
+        }
+    }
 }
 
 fn loopback(u: &Url) -> bool {
@@ -253,7 +274,8 @@ impl Oidc {
     }
 
     /// Begin a sign-in: the provider URL to send the browser to, and the state to bind in a cookie.
-    pub async fn start(&self) -> Result<(String, String), String> {
+    /// With `reauth` the provider is asked for a fresh sign-in (prompt=login, max_age=0).
+    pub async fn start(&self, reauth: bool) -> Result<(String, String), String> {
         let meta = self.meta().await?;
         let mut u = self.check_url(&meta.authorization_endpoint)?;
         let state = super::token::random_secret();
@@ -273,6 +295,7 @@ impl Oidc {
                     nonce: nonce.clone(),
                     verifier,
                     created: now,
+                    reauth,
                 },
             );
         }
@@ -285,11 +308,16 @@ impl Oidc {
             .append_pair("nonce", &nonce)
             .append_pair("code_challenge", &challenge)
             .append_pair("code_challenge_method", "S256");
+        if reauth {
+            u.query_pairs_mut()
+                .append_pair("prompt", "login")
+                .append_pair("max_age", "0");
+        }
         Ok((u.to_string(), state))
     }
 
     /// Finish a sign-in from the callback's state and code.
-    pub async fn finish(&self, state: &str, code: &str) -> Result<Identity, String> {
+    pub async fn finish(&self, state: &str, code: &str) -> Result<Finished, String> {
         let pending = self
             .pending
             .lock()
@@ -334,6 +362,9 @@ impl Oidc {
             .ok_or("no id_token in the response")?;
         let claims = self.verify(id_token).await?;
         self.check_claims(&claims, &pending.nonce)?;
+        if pending.reauth {
+            fresh_auth(&claims, pending.created / 1000)?;
+        }
         let subject = claims["sub"].as_str().unwrap_or_default().to_owned();
         let mut groups = claim_groups(&claims, &self.groups_claim);
         let mut name_src = claims.clone();
@@ -364,12 +395,15 @@ impl Oidc {
             .find_map(|k| name_src[*k].as_str().or_else(|| claims[*k].as_str()))
             .unwrap_or(&subject)
             .to_owned();
-        Ok(Identity {
-            source: "OIDC",
-            issuer: self.issuer.clone(),
-            subject,
-            name,
-            groups: groups.unwrap_or_default(),
+        Ok(Finished {
+            id: Identity {
+                source: "OIDC",
+                issuer: self.issuer.clone(),
+                subject,
+                name,
+                groups: groups.unwrap_or_default(),
+            },
+            reauth: pending.reauth,
         })
     }
 
@@ -565,6 +599,14 @@ fn verify_sig(alg: &str, k: &Jwk, msg: &[u8], sig: &[u8]) -> Result<bool, String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn confirmation_needs_a_fresh_auth_time() {
+        let started = 1_800_000_000;
+        assert!(fresh_auth(&serde_json::json!({ "auth_time": started + 5 }), started).is_ok());
+        assert!(fresh_auth(&serde_json::json!({ "auth_time": started - 3600 }), started).is_err());
+        assert!(fresh_auth(&serde_json::json!({}), started).is_err());
+    }
 
     #[test]
     fn groups_follow_dotted_paths() {

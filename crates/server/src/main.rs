@@ -17,6 +17,9 @@ async fn main() -> ExitCode {
             match app::reset_admin(&cli.config).await {
                 Ok(file) => {
                     println!("New admin password written to {}", file.display());
+                    println!(
+                        "Sign-in locks are kept in memory: restart the server to clear one now."
+                    );
                     ExitCode::SUCCESS
                 }
                 Err(e) => {

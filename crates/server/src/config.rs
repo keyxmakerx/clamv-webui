@@ -166,6 +166,10 @@ pub struct Config {
     #[arg(long, env = "CANARY_FILES", value_delimiter = ',', global = true)]
     pub canary_files: Vec<std::path::PathBuf>,
 
+    /// Agent mode: folders where the server may have this agent write decoy files; elsewhere canaries are only watched.
+    #[arg(long, env = "CANARY_DIRS", value_delimiter = ',', global = true)]
+    pub canary_dirs: Vec<std::path::PathBuf>,
+
     /// Up to 5 comma-separated alert URLs; Discord is detected, prefix ntfy+, gotify+ or slack+ for those.
     #[arg(long, env = "WEBHOOK_URL", hide_env_values = true, global = true)]
     pub webhook_url: Option<String>,
@@ -204,6 +208,10 @@ pub struct Config {
         global = true
     )]
     pub falco_events: std::path::PathBuf,
+
+    /// Default time zone for schedules (IANA name, e.g. Europe/Berlin); falls back to TZ, then UTC.
+    #[arg(long, env = "SCHEDULE_TZ", global = true)]
+    pub schedule_tz: Option<String>,
 
     /// Folder infected files are moved into; quarantine is off while it is unset. Needs writable scan roots.
     #[arg(long, env = "QUARANTINE_DIR", global = true)]
@@ -532,6 +540,32 @@ pub struct Config {
     #[arg(long, env = "SESSION_MAX_HOURS", default_value_t = 12, global = true)]
     pub session_max_hours: u32,
 
+    /// Sessions from SSO or LDAP end after this many minutes, so group changes at the provider apply.
+    #[arg(long, env = "SSO_SESSION_MINUTES", default_value_t = 60, global = true)]
+    pub sso_session_minutes: u32,
+
+    /// Admins with a local password must set up an authenticator app or passkey before using the app.
+    #[arg(
+        long,
+        env = "REQUIRE_ADMIN_2FA",
+        default_value_t = false,
+        global = true
+    )]
+    pub require_admin_2fa: bool,
+
+    /// Refuse HTTP Basic API sign-in over plain HTTP (the Java app always did).
+    #[arg(
+        long,
+        env = "API_BASIC_HTTPS_ONLY",
+        default_value_t = false,
+        global = true
+    )]
+    pub api_basic_https_only: bool,
+
+    /// Extra host names accepted when PUBLIC_URL is set; any other Host header is refused (DNS rebinding).
+    #[arg(long, env = "ALLOWED_HOSTS", value_delimiter = ',', global = true)]
+    pub allowed_hosts: Vec<String>,
+
     /// First admin password (min 12 chars). Without it a random one is written to DATA_DIR/bootstrap-admin-password.
     #[arg(
         long,
@@ -591,6 +625,20 @@ pub struct Config {
     /// Agent mode: pin the server certificate by SHA-256 (as logged at server start); no CA needed.
     #[arg(long, env = "AGENT_SERVER_FINGERPRINT", global = true)]
     pub agent_server_fingerprint: Option<String>,
+
+    /// Agent mode: accept a plain http:// AGENT_SERVER_URL (token and results unencrypted). Off: HTTPS only.
+    #[arg(
+        long,
+        env = "AGENT_ALLOW_PLAINTEXT",
+        default_value_t = false,
+        action = clap::ArgAction::Set,
+        global = true
+    )]
+    pub agent_allow_plaintext: bool,
+
+    /// Agent mode: folder that keeps unsent results across agent restarts; without it they are held in memory.
+    #[arg(long, env = "AGENT_QUEUE_DIR", global = true)]
+    pub agent_queue_dir: Option<std::path::PathBuf>,
 }
 
 impl Config {
@@ -636,6 +684,11 @@ impl Config {
 
     pub fn session_max_ms(&self) -> i64 {
         i64::from(self.session_max_hours.max(1)) * 3_600_000
+    }
+
+    /// Lifetime of a session from SSO or LDAP: the shorter of the two limits.
+    pub fn external_session_ms(&self) -> i64 {
+        (i64::from(self.sso_session_minutes.max(5)) * 60_000).min(self.session_max_ms())
     }
 
     pub fn tls_enabled(&self) -> bool {

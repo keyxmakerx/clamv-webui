@@ -26,6 +26,46 @@ use crate::scan;
 
 const MAX_PATHS: usize = 50;
 
+/// `HH:MM` → minute of the day.
+fn parse_hhmm(v: &str) -> Result<Option<i64>, String> {
+    let v = v.trim();
+    if v.is_empty() {
+        return Ok(None);
+    }
+    let bad = || format!("{v} is not a time like 22:00.");
+    let (h, m) = v.split_once(':').ok_or_else(bad)?;
+    let (h, m): (i64, i64) = (h.parse().map_err(|_| bad())?, m.parse().map_err(|_| bad())?);
+    if !(0..24).contains(&h) || !(0..60).contains(&m) {
+        return Err(bad());
+    }
+    Ok(Some(h * 60 + m))
+}
+
+fn hhmm(m: i64) -> String {
+    format!("{:02}:{:02}", m / 60, m % 60)
+}
+
+/// A time in `tz`, as `2026-11-20 02:00`.
+fn fmt_in(tz: &jiff::tz::TimeZone, ms: i64) -> String {
+    jiff::Timestamp::from_millisecond(ms)
+        .map(|t| tz.to_datetime(t).strftime("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_default()
+}
+
+/// What the form holds, kept when it is shown again (errors, preview).
+#[derive(Default)]
+pub struct Draft {
+    name: String,
+    cron: String,
+    paths: String,
+    endpoint: String,
+    eicar: bool,
+    time_zone: String,
+    window_start: String,
+    window_end: String,
+    exclusions: String,
+}
+
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
         .route("/admin/schedules", get(page).post(create))
@@ -44,12 +84,20 @@ pub struct Row {
     endpoint: String,
     /// The "Run on" value for the edit form: "", an endpoint id, or `a:<id>`.
     run_on: String,
+    /// The edit form's own zone and window values (empty when unset).
+    time_zone: String,
+    window_start: String,
+    window_end: String,
     enabled: bool,
     eicar: bool,
     control: &'static str,
     control_job: String,
     last_run: String,
     last_job: String,
+    zone: String,
+    window: String,
+    exclusions: Vec<String>,
+    upcoming: Vec<String>,
 }
 
 #[derive(Template)]
@@ -60,6 +108,9 @@ struct SchedulesPage {
     endpoints: Vec<Endpoint>,
     agents: Vec<super::scan::AgentChoice>,
     roots: Vec<String>,
+    default_zone: String,
+    draft: Draft,
+    preview: Vec<String>,
 }
 
 impl SchedulesPage {
@@ -78,17 +129,33 @@ async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
         Ok(x) => x,
         Err(r) => return r,
     };
-    show(&st, Nav::new("schedules", &s, &u)).await
+    show(&st, Nav::new("schedules", &s, &u), fresh(), Vec::new()).await
+}
+
+fn fresh() -> Draft {
+    Draft {
+        eicar: true,
+        ..Draft::default()
+    }
 }
 
 async fn row(st: &AppState, s: Schedule, names: &super::scan::Names) -> Row {
+    let (zone, tz) = crate::schedule::zone_of(&st.cfg, &s);
+    let from = now_ms().max(s.last_run_at.unwrap_or(0));
+    let runs = match s.cron.parse::<Cron>() {
+        Ok(c) => crate::schedule::next_runs(&c, s.window, &tz, from, 3),
+        Err(_) => Vec::new(),
+    };
     let next = match s.cron.parse::<Cron>() {
-        Ok(c) if s.enabled => c
-            .next_after(now_ms().max(s.last_run_at.unwrap_or(0)))
-            .map_or_else(|| "never".into(), fmt_ts),
+        Ok(_) if s.enabled => runs.first().map_or_else(|| "never".into(), |t| fmt_ts(*t)),
         Ok(_) => "paused".into(),
         Err(_) => "invalid".into(),
     };
+    let upcoming = runs.iter().map(|t| fmt_in(&tz, *t)).collect();
+    let window = s
+        .window
+        .map(|(a, b)| format!("{}–{}", hhmm(a), hhmm(b)))
+        .unwrap_or_default();
     let control = st.db.last_control_job(&s.id).await.ok().flatten();
     let (state, cj) = match &control {
         None => ("none", String::new()),
@@ -103,6 +170,9 @@ async fn row(st: &AppState, s: Schedule, names: &super::scan::Names) -> Row {
             (None, Some(e)) => e.to_string(),
             (None, None) => String::new(),
         },
+        time_zone: s.time_zone.clone().unwrap_or_default(),
+        window_start: s.window.map(|w| hhmm(w.0)).unwrap_or_default(),
+        window_end: s.window.map(|w| hhmm(w.1)).unwrap_or_default(),
         next,
         control: state,
         control_job: cj,
@@ -114,10 +184,14 @@ async fn row(st: &AppState, s: Schedule, names: &super::scan::Names) -> Row {
         paths: s.paths,
         enabled: s.enabled,
         eicar: s.eicar_check,
+        zone,
+        window,
+        exclusions: s.exclusions,
+        upcoming,
     }
 }
 
-async fn show(st: &AppState, nav: Nav) -> Response {
+async fn show(st: &AppState, nav: Nav, draft: Draft, preview: Vec<String>) -> Response {
     let (Ok(list), Ok(endpoints)) = (st.db.list_schedules().await, st.db.list_endpoints().await)
     else {
         return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
@@ -145,6 +219,9 @@ async fn show(st: &AppState, nav: Nav) -> Response {
                 .iter()
                 .map(|p| p.display().to_string())
                 .collect(),
+            default_zone: crate::schedule::default_zone(&st.cfg).0,
+            draft,
+            preview,
         },
     )
 }
@@ -159,6 +236,21 @@ async fn result(
     super::ux::back(s, "/admin/schedules", error, success)
 }
 
+async fn with_draft(
+    st: &AppState,
+    s: &Session,
+    me: &User,
+    error: Option<String>,
+    success: Option<String>,
+    draft: Draft,
+    preview: Vec<String>,
+) -> Response {
+    let mut nav = Nav::new("schedules", s, me);
+    nav.error = error;
+    nav.success = success;
+    show(st, nav, draft, preview).await
+}
+
 #[derive(Deserialize)]
 struct CreateForm {
     #[serde(rename = "_csrf")]
@@ -171,6 +263,33 @@ struct CreateForm {
     paths: String,
     endpoint: Option<String>,
     eicar: Option<String>,
+    #[serde(default)]
+    time_zone: String,
+    #[serde(default)]
+    window_start: String,
+    #[serde(default)]
+    window_end: String,
+    #[serde(default)]
+    exclusions: String,
+    /// Show the next run times instead of saving.
+    preview: Option<String>,
+}
+
+/// Check one exclusion line for where the schedule runs.
+async fn exclusion(st: &AppState, run_on: &RunOn, line: &str) -> Result<String, String> {
+    match run_on {
+        RunOn::Agent(a) => match crate::agent::refuse(a, line) {
+            None => Ok(line.trim_end_matches('/').to_owned()),
+            Some(m) => Err(format!("{line}: {m}")),
+        },
+        RunOn::Endpoint(_) => match scan::resolve_path(&st.cfg.scan_roots, line).await {
+            Ok(p) => p
+                .to_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("{line}: only UTF-8 paths can be excluded.")),
+            Err(m) => Err(format!("{line}: {m}")),
+        },
+    }
 }
 
 /// A checked schedule form.
@@ -181,22 +300,97 @@ struct Checked {
     endpoint_id: Option<i64>,
     agent_id: Option<i64>,
     eicar: bool,
+    exclusions: Vec<String>,
+    window: Option<(i64, i64)>,
+    zone_name: String,
+    tz: jiff::tz::TimeZone,
+    upcoming: Vec<i64>,
 }
 
-/// The same checks for a new schedule and an edited one.
-async fn check(st: &AppState, f: &CreateForm) -> Result<Checked, String> {
+impl Checked {
+    fn new_schedule(&self) -> NewSchedule<'_> {
+        NewSchedule {
+            name: &self.name,
+            cron: &self.cron,
+            paths: &self.paths,
+            endpoint_id: self.endpoint_id,
+            agent_id: self.agent_id,
+            eicar_check: self.eicar,
+            exclusions: &self.exclusions,
+            window: self.window,
+            time_zone: (!self.zone_name.is_empty()).then_some(self.zone_name.as_str()),
+        }
+    }
+
+    fn audit_line(&self) -> String {
+        format!(
+            "{} [{}{}] {}{}",
+            self.name,
+            self.cron,
+            if self.zone_name.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", self.zone_name)
+            },
+            self.paths.join(", "),
+            if self.exclusions.is_empty() {
+                String::new()
+            } else {
+                format!(" excluding {}", self.exclusions.join(", "))
+            }
+        )
+    }
+}
+
+/// The same checks for a new schedule and an edited one. With `preview_only`
+/// the checks stop once the next run times are known.
+async fn check(st: &AppState, f: &CreateForm, preview_only: bool) -> Result<Checked, String> {
+    let zone_name = f.time_zone.trim();
+    let tz = match zone_name {
+        "" => crate::schedule::default_zone(&st.cfg).1,
+        z => crate::cron::zone(z).map_err(|e| format!("Time zone: {e}."))?,
+    };
+    let window = match (parse_hhmm(&f.window_start), parse_hhmm(&f.window_end)) {
+        (Ok(None), Ok(None)) => None,
+        (Ok(Some(a)), Ok(Some(b))) if a != b => Some((a, b)),
+        (Err(e), _) | (_, Err(e)) => return Err(format!("Scan window: {e}")),
+        _ => {
+            return Err("Scan window: give a start and a different end, or neither.".into());
+        }
+    };
     let name = f.name.trim();
-    if name.is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control) {
+    if !preview_only
+        && (name.is_empty() || name.chars().count() > 100 || name.chars().any(char::is_control))
+    {
         return Err("Names are 1 to 100 characters.".into());
     }
     let cron = f.cron.trim();
-    if let Err(e) = cron.parse::<Cron>() {
-        return Err(format!("Schedule: {e}."));
+    let parsed = cron
+        .parse::<Cron>()
+        .map_err(|e| format!("Schedule: {e}."))?;
+    let upcoming = crate::schedule::next_runs(&parsed, window, &tz, now_ms(), 5);
+    let mut c = Checked {
+        name: name.to_owned(),
+        cron: cron.to_owned(),
+        paths: Vec::new(),
+        endpoint_id: None,
+        agent_id: None,
+        eicar: f.eicar.is_some(),
+        exclusions: Vec::new(),
+        window,
+        zone_name: zone_name.to_owned(),
+        tz,
+        upcoming,
+    };
+    if preview_only {
+        return Ok(c);
+    }
+    if c.upcoming.is_empty() {
+        return Err("That schedule never runs inside its window.".into());
     }
     let run_on = super::scan::chosen_target(st, f.endpoint.as_deref())
         .await
         .map_err(str::to_owned)?;
-    let mut paths = Vec::new();
     for line in f.paths.lines().map(str::trim).filter(|l| !l.is_empty()) {
         let p = match &run_on {
             // The agent checks each path again when it runs.
@@ -220,25 +414,46 @@ async fn check(st: &AppState, f: &CreateForm) -> Result<Checked, String> {
                 }
             }
         };
-        if !paths.contains(&p) {
-            paths.push(p);
+        if !c.paths.contains(&p) {
+            c.paths.push(p);
         }
     }
-    if paths.is_empty() || paths.len() > MAX_PATHS {
+    if c.paths.is_empty() || c.paths.len() > MAX_PATHS {
         return Err(format!("Give 1 to {MAX_PATHS} paths, one per line."));
     }
-    let (endpoint_id, agent_id) = match &run_on {
+    for line in f
+        .exclusions
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+    {
+        let p = exclusion(st, &run_on, line).await?;
+        if !c.exclusions.contains(&p) {
+            c.exclusions.push(p);
+        }
+    }
+    if c.exclusions.len() > MAX_PATHS {
+        return Err(format!("At most {MAX_PATHS} exclusions."));
+    }
+    if let RunOn::Agent(_) = &run_on {
+        // The agent's folders cannot be listed from here to scan around an inner exclusion.
+        if let Some(e) = c.exclusions.iter().find(|e| {
+            c.paths
+                .iter()
+                .any(|p| std::path::Path::new(e).starts_with(p) && e != &p)
+        }) {
+            return Err(format!(
+                "{e}: on an agent, exclusions can only leave out whole paths; use ExcludePath in that host's clamd.conf for folders inside a path."
+            ));
+        }
+    } else {
+        crate::schedule::expand(&c.paths, &c.exclusions).await?;
+    }
+    (c.endpoint_id, c.agent_id) = match &run_on {
         RunOn::Agent(a) => (None, Some(a.id)),
         RunOn::Endpoint(e) => (*e, None),
     };
-    Ok(Checked {
-        name: name.to_owned(),
-        cron: cron.to_owned(),
-        paths,
-        endpoint_id,
-        agent_id,
-        eicar: f.eicar.is_some(),
-    })
+    Ok(c)
 }
 
 async fn create(
@@ -251,43 +466,38 @@ async fn create(
         Ok(x) => x,
         Err(r) => return r,
     };
-    let c = match check(&st, &f).await {
-        Ok(c) => c,
-        Err(m) => return result(&st, &s, &me, Some(m), None).await,
+    let draft = || Draft {
+        name: f.name.clone(),
+        cron: f.cron.clone(),
+        paths: f.paths.clone(),
+        endpoint: f.endpoint.clone().unwrap_or_default(),
+        eicar: f.eicar.is_some(),
+        time_zone: f.time_zone.clone(),
+        window_start: f.window_start.clone(),
+        window_end: f.window_end.clone(),
+        exclusions: f.exclusions.clone(),
     };
-    match st
-        .db
-        .create_schedule(NewSchedule {
-            name: &c.name,
-            cron: &c.cron,
-            paths: &c.paths,
-            endpoint_id: c.endpoint_id,
-            agent_id: c.agent_id,
-            eicar_check: c.eicar,
-        })
-        .await
-    {
+    // Errors and the preview show the form again with what was typed.
+    let fail = |m: String| with_draft(&st, &s, &me, Some(m), None, draft(), Vec::new());
+    let c = match check(&st, &f, f.preview.is_some()).await {
+        Ok(c) => c,
+        Err(m) => return fail(m).await,
+    };
+    if f.preview.is_some() {
+        let shown: Vec<String> = c.upcoming.iter().map(|t| fmt_in(&c.tz, *t)).collect();
+        let msg = if shown.is_empty() {
+            Some("That schedule never runs inside its window.".to_owned())
+        } else {
+            None
+        };
+        return with_draft(&st, &s, &me, msg, None, draft(), shown).await;
+    }
+    match st.db.create_schedule(c.new_schedule()).await {
         Ok(_) => {
-            audit(
-                &st,
-                &me,
-                &info,
-                "SCHEDULE_CREATE",
-                format!("{} [{}] {}", c.name, c.cron, c.paths.join(", ")),
-            )
-            .await;
+            audit(&st, &me, &info, "SCHEDULE_CREATE", c.audit_line()).await;
             result(&st, &s, &me, None, Some(format!("Added {}.", c.name))).await
         }
-        Err(_) => {
-            result(
-                &st,
-                &s,
-                &me,
-                Some("That name is already taken.".into()),
-                None,
-            )
-            .await
-        }
+        Err(_) => fail("That name is already taken.".into()).await,
     }
 }
 
@@ -305,34 +515,13 @@ async fn edit(
     if !matches!(st.db.schedule(&id).await, Ok(Some(_))) {
         return result(&st, &s, &me, Some("No such schedule.".into()), None).await;
     }
-    let c = match check(&st, &f).await {
+    let c = match check(&st, &f, false).await {
         Ok(c) => c,
         Err(m) => return result(&st, &s, &me, Some(m), None).await,
     };
-    match st
-        .db
-        .update_schedule(
-            &id,
-            NewSchedule {
-                name: &c.name,
-                cron: &c.cron,
-                paths: &c.paths,
-                endpoint_id: c.endpoint_id,
-                agent_id: c.agent_id,
-                eicar_check: c.eicar,
-            },
-        )
-        .await
-    {
+    match st.db.update_schedule(&id, c.new_schedule()).await {
         Ok(_) => {
-            audit(
-                &st,
-                &me,
-                &info,
-                "SCHEDULE_UPDATE",
-                format!("{} [{}] {}", c.name, c.cron, c.paths.join(", ")),
-            )
-            .await;
+            audit(&st, &me, &info, "SCHEDULE_UPDATE", c.audit_line()).await;
             result(&st, &s, &me, None, Some(format!("Saved {}.", c.name))).await
         }
         Err(_) => {

@@ -44,7 +44,7 @@ struct TokensPage {
     nav: Nav,
     tokens: Vec<TokenRow>,
     endpoints: Vec<Endpoint>,
-    scopes: [&'static str; 6],
+    scopes: [&'static str; 8],
     roots: String,
     secret: Option<String>,
 }

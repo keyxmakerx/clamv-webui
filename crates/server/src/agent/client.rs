@@ -1,6 +1,6 @@
 //! `clamv-webui agent`: take jobs from a server and scan with the local clamd.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
@@ -12,6 +12,7 @@ use reqwest::Url;
 use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, Notify, OwnedSemaphorePermit, Semaphore};
 
+use super::outbox::{Item, Outbox};
 use super::proto::{
     AgentEvent, Assignment, Failure, PROTOCOL, PollRequest, PollResponse, Report, ResultRequest,
 };
@@ -35,6 +36,10 @@ struct Agent {
     slots: Arc<Semaphore>,
     freed: Notify,
     running: Mutex<HashSet<String>>,
+    /// Stops a running scan when the server cancels it.
+    stops: std::sync::Mutex<HashMap<String, tokio::sync::oneshot::Sender<()>>>,
+    /// Results and events not delivered yet, sent in order.
+    outbox: Outbox,
     last_ok: AtomicI64,
     clamd_version: Mutex<(i64, Option<String>)>,
     conf: crate::clamdconf::Cache,
@@ -87,9 +92,15 @@ fn build(cfg: Config) -> anyhow::Result<Agent> {
         super::policy::Policy::new(super::policy::parse(&allow).map_err(|e| anyhow::anyhow!(e))?);
     tracing::info!(event = "agent.allow", allow = %policy.names(), "actions this host allows; set AGENT_ALLOW to change");
     if base.scheme() == "http" {
+        if !cfg.agent_allow_plaintext {
+            anyhow::bail!(
+                "AGENT_SERVER_URL is plain http://: use https:// with AGENT_SERVER_FINGERPRINT (shown in Admin > Agents), \
+                 or set AGENT_ALLOW_PLAINTEXT=true on this host if the link is a private VPN or mesh"
+            );
+        }
         tracing::warn!(
             event = "agent.plaintext",
-            "AGENT_SERVER_URL is plain HTTP: the token and results are unencrypted; use only over a VPN or mesh"
+            "AGENT_SERVER_URL is plain HTTP (AGENT_ALLOW_PLAINTEXT=true): the token and results are unencrypted"
         );
     }
     let tls = match &cfg.agent_server_fingerprint {
@@ -125,6 +136,8 @@ fn build(cfg: Config) -> anyhow::Result<Agent> {
         slots: Arc::new(Semaphore::new(cfg.scan_concurrency.max(1))),
         freed: Notify::new(),
         running: Mutex::new(HashSet::new()),
+        stops: std::sync::Mutex::new(HashMap::new()),
+        outbox: Outbox::open(cfg.agent_queue_dir.clone())?,
         last_ok: AtomicI64::new(0),
         clamd_version: Mutex::new((0, None)),
         conf: crate::clamdconf::Cache::default(),
@@ -146,6 +159,7 @@ pub async fn run(cfg: Config) -> anyhow::Result<()> {
     spawn_falco(a.clone());
     spawn_host_units(a.clone());
     spawn_firewall(a.clone());
+    spawn_sender(a.clone());
     tokio::select! {
         () = poll_loop(a) => {}
         () = shutdown() => tracing::info!("agent stopping"),
@@ -205,9 +219,16 @@ async fn poll_loop(a: Arc<Agent>) {
             wait: free > 0,
             canaries: canary_states(&a),
             host_checks: a.host_units.lock().ok().and_then(|g| g.clone()),
+            kinds: super::proto::KINDS
+                .iter()
+                .map(|k| (*k).to_owned())
+                .collect(),
         };
         match poll_once(&a, &req).await {
             Ok(resp) => {
+                for id in &resp.cancel {
+                    stop_job(&a, id);
+                }
                 let jobs = resp.jobs;
                 if let Some(mut list) = resp
                     .canaries
@@ -215,6 +236,13 @@ async fn poll_loop(a: Arc<Agent>) {
                 {
                     // The server checks these too; a decoy is never written to a path this host would not accept.
                     list.retain(|s| crate::canary::valid_path(&s.path).is_ok());
+                    // Decoys are written only inside this host's CANARY_DIRS; elsewhere the file is just watched.
+                    for sp in list.iter_mut().filter(|sp| sp.create) {
+                        if !super::path_in_roots(&dirs_text(&a.cfg.canary_dirs), &sp.path) {
+                            tracing::warn!(event = "canary.create_refused", path = %sp.path, "decoy not written: outside CANARY_DIRS on this host; watching it only if it exists");
+                            sp.create = false;
+                        }
+                    }
                     a.canaries.send_if_modified(|cur| {
                         let changed = *cur != list;
                         if changed {
@@ -227,9 +255,10 @@ async fn poll_loop(a: Arc<Agent>) {
                     });
                 }
                 if !connected {
-                    tracing::info!(event = "agent.connected", server = %a.base, "connected to server");
+                    tracing::info!(event = "agent.connected", server = %a.base, queued = a.outbox.len(), "connected to server");
                     connected = true;
                     warned = false;
+                    a.outbox.ready.notify_one();
                 }
                 backoff = Duration::from_secs(1);
                 a.last_ok.store(now_ms(), Ordering::Relaxed);
@@ -246,7 +275,7 @@ async fn poll_loop(a: Arc<Agent>) {
                 tracing::error!(
                     event = "agent.rejected",
                     status = status.as_u16(),
-                    "server refused this agent (token revoked, agent disabled or version mismatch); retrying in 60 s"
+                    "server refused this agent (token revoked, agent disabled, or version mismatch: update the older of agent and server); retrying in 60 s"
                 );
                 tokio::time::sleep(Duration::from_secs(60)).await;
             }
@@ -326,8 +355,34 @@ async fn start_job(a: &Arc<Agent>, j: Assignment) {
         return;
     };
     a.running.lock().await.insert(j.id.clone());
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    if j.kind == scan::KIND_PATH
+        && let Ok(mut g) = a.stops.lock()
+    {
+        g.insert(j.id.clone(), tx);
+    }
     let a = a.clone();
-    tokio::spawn(async move { execute(a, j, permit).await });
+    tokio::spawn(async move {
+        let id = j.id.clone();
+        tokio::select! {
+            () = execute(a.clone(), j, permit) => {}
+            Ok(()) = rx => {
+                tracing::warn!(event = "agent.job_cancelled", job_id = %id, "job cancelled on the server; scan stopped");
+                a.running.lock().await.remove(&id);
+                a.freed.notify_one();
+            }
+        }
+        if let Ok(mut g) = a.stops.lock() {
+            g.remove(&id);
+        }
+    });
+}
+
+/// Stop a running scan the server cancelled; other kinds run to the end.
+fn stop_job(a: &Agent, id: &str) {
+    if let Some(tx) = a.stops.lock().ok().and_then(|mut g| g.remove(id)) {
+        let _ = tx.send(());
+    }
 }
 
 async fn execute(a: Arc<Agent>, j: Assignment, _permit: OwnedSemaphorePermit) {
@@ -349,7 +404,7 @@ async fn execute(a: Arc<Agent>, j: Assignment, _permit: OwnedSemaphorePermit) {
         let code = body.failure.as_ref().map_or("", |f| f.code.as_str());
         tracing::info!(event = "agent.action", job_id = %j.id, kind = %j.kind, action = %action, perm = perm.map_or("-", |p| p.name()), ok = body.failure.is_none(), code, "action run for the server");
     }
-    deliver(&a, &j.id, &body).await;
+    deliver(&a, &j.id, body);
     a.running.lock().await.remove(&j.id);
     a.freed.notify_one();
 }
@@ -372,8 +427,8 @@ async fn run_job(a: &Arc<Agent>, j: &Assignment) -> ResultRequest {
         crate::firewall::KIND => firewall_job(a, j).await,
         crate::quarantine::KIND => quarantine_job(a, j).await,
         other => {
-            tracing::error!(job_id = %j.id, kind = other, "job type not supported by this agent");
-            fail(scan::SCAN_FAILED)
+            tracing::error!(job_id = %j.id, kind = other, "job type not supported by this agent; update it");
+            fail(super::proto::UNSUPPORTED)
         }
     }
 }
@@ -468,7 +523,7 @@ async fn firewall_job(a: &Arc<Agent>, j: &Assignment) -> ResultRequest {
     let r = match op {
         crate::firewall::Op::Snapshot => match crate::firewall::snapshot(&dir).await {
             Ok(snapshot) => {
-                send_event(a, &AgentEvent::Firewall { snapshot }).await;
+                send_event(a, AgentEvent::Firewall { snapshot });
                 return ok(Report::default());
             }
             Err(e) => Err(e),
@@ -509,7 +564,7 @@ async fn firewall_job(a: &Arc<Agent>, j: &Assignment) -> ResultRequest {
 
 async fn firewall_snapshot(a: &Agent) {
     match crate::firewall::snapshot(crate::firewall::dir()).await {
-        Ok(snapshot) => send_event(a, &AgentEvent::Firewall { snapshot }).await,
+        Ok(snapshot) => send_event(a, AgentEvent::Firewall { snapshot }),
         Err(e) => tracing::debug!(error = %e.message, "firewall snapshot failed"),
     }
 }
@@ -633,44 +688,106 @@ async fn scan_path(a: &Agent, j: &Assignment) -> ResultRequest {
     }
 }
 
-/// Post a result, retrying for about ten minutes; the server drops it after that.
-async fn deliver(a: &Agent, id: &str, body: &ResultRequest) {
-    let Ok(url) = a.base.join(&format!("agent/v1/jobs/{id}/result")) else {
-        return;
-    };
-    let mut wait = Duration::from_secs(2);
-    for attempt in 1..=12 {
-        match a
-            .http
-            .post(url.clone())
-            .bearer_auth(&a.token)
-            .json(body)
-            .send()
-            .await
-        {
-            Ok(r) if r.status().is_success() => return,
-            Ok(r) if r.status() == reqwest::StatusCode::CONFLICT => {
-                tracing::warn!(event = "agent.result_dropped", job_id = %id, "server no longer expects this result");
-                return;
-            }
-            Ok(r) => {
-                tracing::warn!(job_id = %id, attempt, status = r.status().as_u16(), "result not accepted; retrying")
-            }
-            Err(e) => {
-                tracing::warn!(job_id = %id, attempt, error = %without_url(&e), "could not send result; retrying")
+/// Queue a result; the sender delivers it whenever the server is reachable.
+fn deliver(a: &Agent, id: &str, mut body: ResultRequest) {
+    if let Some(r) = body.report.as_mut() {
+        r.fit(super::proto::MAX_BODY);
+    }
+    a.outbox.push(&Item::Result {
+        job: id.to_owned(),
+        body,
+    });
+}
+
+/// Send queued items in order, waiting out server outages; nothing is dropped
+/// unless the server refuses it for good or the queue overflows.
+fn spawn_sender(a: Arc<Agent>) {
+    tokio::spawn(async move {
+        let mut wait = Duration::from_secs(2);
+        loop {
+            let Some((seq, item)) = a.outbox.peek() else {
+                let _ =
+                    tokio::time::timeout(Duration::from_secs(5), a.outbox.ready.notified()).await;
+                continue;
+            };
+            match send_item(&a, &item).await {
+                Sent::Done => {
+                    a.outbox.done(seq);
+                    wait = Duration::from_secs(2);
+                }
+                Sent::Refused(status) => {
+                    match &item {
+                        Item::Result { job, .. } if status == 409 => {
+                            tracing::warn!(event = "agent.result_dropped", job_id = %job, "server no longer expects this result (cancelled or finished)")
+                        }
+                        Item::Result { job, .. } => {
+                            tracing::error!(event = "agent.result_lost", job_id = %job, status, "server refused a result")
+                        }
+                        Item::Event { .. } => {
+                            tracing::warn!(
+                                event = "agent.event_refused",
+                                status,
+                                "server refused an event"
+                            )
+                        }
+                    }
+                    a.outbox.done(seq);
+                }
+                Sent::Retry(why) => {
+                    tracing::debug!(item = item.label(), queued = a.outbox.len(), error = %why, "could not send; will retry");
+                    let _ = tokio::time::timeout(wait, a.outbox.ready.notified()).await;
+                    wait = (wait * 2).min(Duration::from_secs(60));
+                }
             }
         }
-        tokio::time::sleep(wait).await;
-        wait = (wait * 2).min(Duration::from_secs(120));
+    });
+}
+
+enum Sent {
+    Done,
+    Refused(u16),
+    Retry(String),
+}
+
+async fn send_item(a: &Agent, item: &Item) -> Sent {
+    let (path, req) = match item {
+        Item::Result { job, body } => (
+            format!("agent/v1/jobs/{job}/result"),
+            serde_json::to_vec(body),
+        ),
+        Item::Event { body } => ("agent/v1/events".to_owned(), serde_json::to_vec(body)),
+    };
+    let (Ok(url), Ok(req)) = (a.base.join(&path), req) else {
+        return Sent::Refused(0);
+    };
+    match a
+        .http
+        .post(url)
+        .bearer_auth(&a.token)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(req)
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => Sent::Done,
+        // 408 and 429 pass; 401/403 mean this agent is refused right now, so keep the item.
+        Ok(r)
+            if r.status().is_client_error()
+                && !matches!(r.status().as_u16(), 401 | 403 | 408 | 426 | 429) =>
+        {
+            Sent::Refused(r.status().as_u16())
+        }
+        Ok(r) => Sent::Retry(format!("HTTP {}", r.status())),
+        Err(e) => Sent::Retry(without_url(&e)),
     }
-    tracing::error!(event = "agent.result_lost", job_id = %id, "gave up sending a scan result");
 }
 
 fn roots_text(cfg: &Config) -> Vec<String> {
-    cfg.scan_roots
-        .iter()
-        .map(|r| r.display().to_string())
-        .collect()
+    dirs_text(&cfg.scan_roots)
+}
+
+fn dirs_text(dirs: &[std::path::PathBuf]) -> Vec<String> {
+    dirs.iter().map(|r| r.display().to_string()).collect()
 }
 
 /// Scan files under REALTIME_PATHS as soon as they are written, one at a time.
@@ -725,7 +842,7 @@ async fn spawn_realtime(a: Arc<Agent>) {
             }
             seen.insert(p.clone(), stamp);
             let body = realtime_scan(&a, &p).await;
-            send_event(&a, &body).await;
+            send_event(&a, body);
         }
     });
 }
@@ -793,7 +910,7 @@ fn spawn_falco(a: Arc<Agent>) {
     let min = crate::falco::rank(&a.cfg.falco_min_priority);
     crate::falco::follow(path, min, move |alerts| {
         let a = a.clone();
-        async move { send_event(&a, &AgentEvent::Falco { alerts }).await }
+        async move { send_event(&a, AgentEvent::Falco { alerts }) }
     });
 }
 
@@ -807,7 +924,7 @@ fn spawn_integrity(a: Arc<Agent>) {
             if !report.ok {
                 tracing::warn!(event = "integrity.findings", tool = %report.tool, summary = %report.summary, "integrity check found changes");
             }
-            send_event(&a, &AgentEvent::Integrity { report }).await;
+            send_event(&a, AgentEvent::Integrity { report });
         }
     });
 }
@@ -839,51 +956,20 @@ fn spawn_canaries(a: Arc<Agent>) {
             // Logged here too, so the alert survives a server outage.
             tracing::error!(event = "canary.tripped", path = %p, what = %what, "canary file touched");
             let ev = AgentEvent::Canary { path: p, what };
-            send_event(&a, &ev).await;
+            send_event(&a, ev);
         }
     });
 }
 
-/// Post an event, retrying for a few minutes.
-async fn send_event(a: &Agent, ev: &AgentEvent) {
-    let Ok(url) = a.base.join("agent/v1/events") else {
-        return;
-    };
-    let mut wait = Duration::from_secs(2);
-    for attempt in 1..=6 {
-        match a
-            .http
-            .post(url.clone())
-            .bearer_auth(&a.token)
-            .json(ev)
-            .send()
-            .await
-        {
-            Ok(r) if r.status().is_success() => return,
-            Ok(r) if r.status().is_client_error() && r.status().as_u16() != 429 => {
-                tracing::warn!(
-                    event = "agent.event_refused",
-                    status = r.status().as_u16(),
-                    "server refused an event"
-                );
-                return;
-            }
-            Ok(r) => tracing::debug!(
-                attempt,
-                status = r.status().as_u16(),
-                "event not accepted; retrying"
-            ),
-            Err(e) => {
-                tracing::debug!(attempt, error = %without_url(&e), "could not send event; retrying")
-            }
-        }
-        tokio::time::sleep(wait).await;
-        wait = (wait * 2).min(Duration::from_secs(60));
+/// Queue an event; the sender delivers it whenever the server is reachable.
+fn send_event(a: &Agent, mut ev: AgentEvent) {
+    if let AgentEvent::Scan {
+        report: Some(r), ..
+    } = &mut ev
+    {
+        r.fit(super::proto::MAX_BODY);
     }
-    tracing::error!(
-        event = "agent.event_lost",
-        "gave up sending an event to the server"
-    );
+    a.outbox.push(&Item::Event { body: ev });
 }
 
 /// Trust exactly the server certificate with this SHA-256, as the server logs at start.
@@ -1006,5 +1092,10 @@ mod tests {
         let mut pin = good.to_vec();
         pin.extend(["--agent-server-fingerprint", fp.as_str()]);
         assert!(build(cfg(&pin)).is_ok());
+        let mut plain = good.to_vec();
+        plain[1] = "http://s.example:8080";
+        assert!(build(cfg(&plain)).is_err(), "plain HTTP refused by default");
+        plain.extend(["--agent-allow-plaintext", "true"]);
+        assert!(build(cfg(&plain)).is_ok(), "allowed on this host");
     }
 }

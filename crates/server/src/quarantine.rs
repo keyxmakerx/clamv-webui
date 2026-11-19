@@ -70,14 +70,23 @@ fn stored(dir: &Path, id: &str) -> Option<PathBuf> {
 }
 
 /// Copy `from` to a new file `to` with `mode`, returning its sha256 and size.
+/// A copy that fails part way is removed, so no partial file is left behind.
 async fn copy_new(from: &Path, to: &Path, mode: u32) -> std::io::Result<Held> {
     let mut src = tokio::fs::File::open(from).await?;
-    let mut dst = tokio::fs::OpenOptions::new()
+    let dst = tokio::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .mode(mode)
         .open(to)
         .await?;
+    let r = copy_into(&mut src, dst).await;
+    if r.is_err() {
+        let _ = tokio::fs::remove_file(to).await;
+    }
+    r
+}
+
+async fn copy_into(src: &mut tokio::fs::File, mut dst: tokio::fs::File) -> std::io::Result<Held> {
     let mut h = Sha256::new();
     let mut size: i64 = 0;
     let mut buf = vec![0u8; 256 * 1024];
@@ -91,6 +100,26 @@ async fn copy_new(from: &Path, to: &Path, mode: u32) -> std::io::Result<Held> {
         size += i64::try_from(n).unwrap_or(0);
     }
     dst.sync_all().await?;
+    Ok(Held {
+        sha256: h.finalize().iter().map(|b| format!("{b:02x}")).collect(),
+        size,
+    })
+}
+
+/// sha256 and size of a file already in quarantine.
+async fn hash_file(path: &Path) -> std::io::Result<Held> {
+    let mut f = tokio::fs::File::open(path).await?;
+    let mut h = Sha256::new();
+    let mut size: i64 = 0;
+    let mut buf = vec![0u8; 256 * 1024];
+    loop {
+        let n = f.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+        size += i64::try_from(n).unwrap_or(0);
+    }
     Ok(Held {
         sha256: h.finalize().iter().map(|b| format!("{b:02x}")).collect(),
         size,
@@ -254,16 +283,17 @@ pub async fn start(st: &AppState, detection: i64, by: &str) -> Result<String, St
             let _ = st.db.set_quarantine_job(&item.id, &job).await;
         }
         None => {
+            // Its own task, so a closed browser tab cannot stop a move half way.
             let r = match central_clamd(st).await {
                 Some(c) => {
-                    move_in(
-                        &c,
-                        &st.cfg.scan_roots,
-                        st.cfg.quarantine_dir.as_deref(),
-                        &item.id,
-                        &item.original_path,
+                    let roots = st.cfg.scan_roots.clone();
+                    let dir = st.cfg.quarantine_dir.clone();
+                    let (id, path) = (item.id.clone(), item.original_path.clone());
+                    tokio::spawn(
+                        async move { move_in(&c, &roots, dir.as_deref(), &id, &path).await },
                     )
                     .await
+                    .unwrap_or(Err(FAILED))
                 }
                 None => Err(FAILED),
             };
@@ -440,6 +470,97 @@ fn clean_code(c: &str) -> &'static str {
     .unwrap_or(FAILED)
 }
 
+/// Entries left PENDING with nothing that will ever finish them: the agent job
+/// was lost, expired or interrupted, or the server restarted mid-move. They
+/// would otherwise block a new attempt for that file forever.
+pub async fn settle(st: &AppState, at_startup: bool) {
+    let Ok(list) = st.db.pending_quarantine().await else {
+        return;
+    };
+    let now = crate::db::now_ms();
+    for item in list {
+        let outcome = match (item.agent_id, &item.job_id) {
+            (Some(_), Some(job)) => match st.db.job(job).await {
+                Ok(Some(j)) if j.status != crate::db::jobs::FINISHED => continue,
+                Ok(_) => Err(FAILED),
+                Err(_) => continue,
+            },
+            // The job was never queued (database error right after creating the entry).
+            (Some(_), None) if now - item.updated_at > 10 * 60_000 => Err(FAILED),
+            (Some(_), None) => continue,
+            (None, _) if at_startup => local_leftover(st, &item).await,
+            (None, _) => continue,
+        };
+        let by = "recovery";
+        let host = host_name(st, item.agent_id).await;
+        let done = match &outcome {
+            Ok(h) => {
+                st.db
+                    .settle_pending_quarantine(
+                        &item.id,
+                        q::HELD,
+                        None,
+                        Some((&h.sha256, h.size)),
+                        by,
+                    )
+                    .await
+            }
+            Err(code) => {
+                st.db
+                    .settle_pending_quarantine(&item.id, q::FAILED, Some(code), None, by)
+                    .await
+            }
+        };
+        if done.unwrap_or(false) {
+            match outcome {
+                Ok(_) => {
+                    tracing::warn!(event = "quarantine.recovered", host = %host, path = %item.original_path, "move finished before a restart; entry marked quarantined")
+                }
+                Err(_) => {
+                    tracing::warn!(event = "quarantine.failed", host = %host, path = %item.original_path, code = FAILED, "quarantine never completed; entry released")
+                }
+            }
+        }
+    }
+}
+
+/// After a restart: a local move either finished (copy there, original gone)
+/// or did not (any copy is removed and the original stays).
+async fn local_leftover(st: &AppState, item: &q::Item) -> Result<Held, &'static str> {
+    let Some(dest) = st
+        .cfg
+        .quarantine_dir
+        .as_deref()
+        .and_then(|d| stored(d, &item.id))
+    else {
+        return Err(FAILED);
+    };
+    if tokio::fs::symlink_metadata(&dest).await.is_err() {
+        return Err(FAILED);
+    }
+    if tokio::fs::symlink_metadata(&item.original_path)
+        .await
+        .is_ok()
+    {
+        let _ = tokio::fs::remove_file(&dest).await;
+        return Err(FAILED);
+    }
+    hash_file(&dest).await.map_err(|_| FAILED)
+}
+
+/// Settle leftovers at start, then check agent entries every minute.
+pub fn spawn_settler(st: Arc<AppState>) {
+    tokio::spawn(async move {
+        settle(&st, true).await;
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            settle(&st, false).await;
+        }
+    });
+}
+
 /// With QUARANTINE_AUTO, quarantine each new detection from a finished job.
 pub async fn auto(st: &AppState, job_id: &str) {
     if !st.cfg.quarantine_auto {
@@ -468,6 +589,17 @@ mod tests {
         assert!(!valid_id("../../etc/passwd"));
         assert!(!valid_id(""));
         assert!(stored(Path::new("/q"), "a/b").is_none());
+    }
+
+    #[tokio::test]
+    async fn failed_copy_leaves_no_partial_file() {
+        let base = std::env::temp_dir().join(format!("clamv-qp-{}", crate::db::new_id()));
+        std::fs::create_dir_all(base.join("src")).expect("dir");
+        // Reading a directory fails after the destination was created.
+        let to = base.join("x.quarantined");
+        assert!(copy_new(&base.join("src"), &to, 0o400).await.is_err());
+        assert!(!to.exists(), "partial copy removed");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[tokio::test]

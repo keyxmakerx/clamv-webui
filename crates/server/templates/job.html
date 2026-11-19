@@ -6,7 +6,7 @@
 <h1 class="h3 path">{{ crate::web::wbr(j.target)|safe }}</h1>
 <p>{% if j.verdict.is_empty() %}<span class="badge bg-secondary">{{ j.status }}</span>{% if refresh %} <span class="muted small">refreshing…</span>{% endif %}{% else %}<span class="badge {{ self.badge(j.verdict) }}">{{ j.verdict }}</span>{% endif %}
 {% if !error_message.is_empty() %} <span class="small">{{ error_message }}</span>{% endif %}</p>
-{% if can_rescan %}<div class="d-flex gap-2 flex-wrap mb-2"><form method="post" action="/jobs/{{ j.id }}/rescan"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-primary" type="submit"><i class="fas fa-redo" aria-hidden="true"></i> Scan again</button></form></div>{% endif %}
+{% if cancellable || can_rescan %}<div class="d-flex gap-2 flex-wrap mb-2">{% if cancellable %}<form method="post" action="/jobs/{{ j.id }}/cancel"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">Cancel job</button></form>{% endif %}{% if can_rescan %}<form method="post" action="/jobs/{{ j.id }}/rescan"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-primary" type="submit"><i class="fas fa-redo" aria-hidden="true"></i> Scan again</button></form>{% endif %}</div>{% endif %}
 <section class="card mt-3"><div class="card-body">
 <dl class="row mb-0 small">
 <dt class="col-sm-3">Type</dt><dd class="col-sm-9">{{ j.kind }}</dd>
@@ -32,5 +32,6 @@
 </tbody></table>
 {% if more_errors > 0 %}<p class="muted small">{{ more_errors }} more not shown.</p>{% endif %}
 </div></section>{% endif %}
+{% if omitted > 0 %}<p class="muted small mt-3">{{ omitted }} more result lines were not stored; every line is in the server log (search for this job id).</p>{% endif %}
 </div>
 {% endblock %}

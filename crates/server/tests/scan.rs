@@ -16,11 +16,14 @@ use tokio::net::TcpListener;
 use tower::ServiceExt;
 
 mod common;
-use common::{EICAR, fake_clamd};
+use common::{EICAR, fake_clamd, silent_clamd};
 const BOUNDARY: &str = "XtestBOUNDARYx";
 
 async fn app(extra: &[&str]) -> (Router, Arc<AppState>, String, String) {
-    let port = fake_clamd().await;
+    app_on(fake_clamd().await, extra).await
+}
+
+async fn app_on(port: u16, extra: &[&str]) -> (Router, Arc<AppState>, String, String) {
     let ep = format!("tcp://127.0.0.1:{port}");
     let mut args = vec!["clamv-webui", "--clamd-endpoint", ep.as_str()];
     args.extend_from_slice(extra);
@@ -221,6 +224,169 @@ async fn path_scans_keep_every_result() {
     let _ = std::fs::remove_dir_all(&base);
 }
 
+#[tokio::test]
+async fn dropped_upload_does_not_stay_running() {
+    let (app, st, c, t) = app_on(silent_clamd().await, &[]).await;
+    let req = upload(&c, multipart(Some(&t), &[("slow.bin", b"hello")]));
+    let task = tokio::spawn(async move { app.oneshot(req).await });
+    let mut id = None;
+    for _ in 0..50 {
+        let (jobs, _) = st
+            .db
+            .list_jobs(&JobFilter::default(), 0, 10)
+            .await
+            .expect("list");
+        if let Some(j) = jobs.first() {
+            id = Some(j.id.clone());
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let id = id.expect("job created");
+    // The browser goes away while clamd is still scanning.
+    task.abort();
+    let job = wait_finished(&st, &id).await;
+    assert_eq!(job.verdict.as_deref(), Some("ERROR"));
+    assert_eq!(
+        job.error_message.as_deref(),
+        Some("The upload was interrupted.")
+    );
+}
+
+#[tokio::test]
+async fn huge_results_are_capped_when_stored() {
+    let base = std::env::temp_dir().join(format!("clamv-many-{}", clamv_webui::db::new_id()));
+    let root = base.join("media");
+    std::fs::create_dir_all(root.join("many")).expect("mkdir");
+    let roots = root.to_str().expect("utf8").to_owned();
+    let (app, st, c, t) = app(&["--scan-roots", &roots]).await;
+    clamv_webui::scan::start(st.clone()).await;
+    let res = app
+        .clone()
+        .oneshot(form(
+            "/scan/path",
+            &format!("_csrf={t}&path={}/many", root.display()),
+            &c,
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let loc = res.headers()[header::LOCATION].to_str().expect("loc");
+    let job = wait_finished(&st, loc.trim_start_matches("/jobs/")).await;
+    assert_eq!(job.verdict.as_deref(), Some("VIRUS_FOUND"));
+    assert_eq!(
+        job.detections.len(),
+        clamv_webui::db::jobs::MAX_STORED_LINES
+    );
+    assert_eq!(job.results_omitted, 500);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[tokio::test]
+async fn quarantine_leftovers_are_settled_at_start() {
+    use clamv_webui::db::quarantine as q;
+    let base = std::env::temp_dir().join(format!("clamv-qs-{}", clamv_webui::db::new_id()));
+    let (root, qdir) = (base.join("root"), base.join("q"));
+    std::fs::create_dir_all(&root).expect("root");
+    std::fs::create_dir_all(&qdir).expect("q");
+    let (_app, st, _c, _t) = app(&[
+        "--scan-roots",
+        root.to_str().expect("utf8"),
+        "--quarantine-dir",
+        qdir.to_str().expect("utf8"),
+    ])
+    .await;
+    // Finished before the restart: copy held, original gone.
+    let done = root.join("done.exe");
+    let a = st
+        .db
+        .create_quarantine(None, done.to_str().expect("utf8"), "Eicar", "admin")
+        .await
+        .expect("q")
+        .expect("item");
+    std::fs::write(qdir.join(format!("{}.quarantined", a.id)), b"X5O").expect("held");
+    // Cut off mid-copy: original still there, partial copy present.
+    let half = root.join("half.exe");
+    std::fs::write(&half, b"X5O!P").expect("orig");
+    let b = st
+        .db
+        .create_quarantine(None, half.to_str().expect("utf8"), "Eicar", "admin")
+        .await
+        .expect("q")
+        .expect("item");
+    std::fs::write(qdir.join(format!("{}.quarantined", b.id)), b"X5").expect("partial");
+
+    clamv_webui::quarantine::settle(&st, true).await;
+    let a = st.db.quarantine_item(&a.id).await.expect("q").expect("a");
+    assert_eq!(a.state, q::HELD);
+    assert_eq!(a.size_bytes, Some(3));
+    let b2 = st.db.quarantine_item(&b.id).await.expect("q").expect("b");
+    assert_eq!(b2.state, q::FAILED);
+    assert!(!qdir.join(format!("{}.quarantined", b.id)).exists());
+    assert!(half.exists(), "original left in place");
+    // The file can be tried again.
+    assert!(
+        st.db
+            .create_quarantine(None, half.to_str().expect("utf8"), "Eicar", "admin")
+            .await
+            .expect("q")
+            .is_some()
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[tokio::test]
+async fn lost_agent_quarantine_jobs_release_the_entry() {
+    use clamv_webui::db::jobs::NewJob;
+    use clamv_webui::db::quarantine as q;
+    let (_app, st, _c, _t) = app(&[]).await;
+    let (agent, _) = st.db.create_agent("nas", "admin").await.expect("agent");
+    let item = st
+        .db
+        .create_quarantine(Some(agent.id), "/data/x.exe", "Eicar", "admin")
+        .await
+        .expect("q")
+        .expect("item");
+    let job = st
+        .db
+        .create_job(NewJob {
+            kind: "QUARANTINE",
+            target: "{}",
+            endpoint_id: None,
+            schedule_id: None,
+            agent_id: Some(agent.id),
+            submitted_by: Some("admin"),
+            transport: "UI",
+            running: true,
+        })
+        .await
+        .expect("job");
+    st.db
+        .set_quarantine_job(&item.id, &job.id)
+        .await
+        .expect("link");
+    // Still running on the agent: left alone.
+    clamv_webui::quarantine::settle(&st, false).await;
+    let i = st
+        .db
+        .quarantine_item(&item.id)
+        .await
+        .expect("q")
+        .expect("i");
+    assert_eq!(i.state, q::PENDING);
+    // The server gives up on the job (agent lost) without a result.
+    let o = clamv_webui::scan::failure(clamv_webui::scan::SCAN_FAILED, "lost");
+    st.db.finish_job(&job.id, &o).await.expect("finish");
+    clamv_webui::quarantine::settle(&st, false).await;
+    let i = st
+        .db
+        .quarantine_item(&item.id)
+        .await
+        .expect("q")
+        .expect("i");
+    assert_eq!(i.state, q::FAILED);
+}
+
 fn form(uri: &str, body: &str, cookie: &str) -> Request<Body> {
     Request::post(uri)
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
@@ -365,6 +531,9 @@ async fn eicar_control_failure_is_recorded() {
             endpoint_id: Some(dead.id),
             agent_id: None,
             eicar_check: true,
+            exclusions: &[],
+            window: None,
+            time_zone: None,
         })
         .await
         .expect("schedule");
@@ -378,6 +547,136 @@ async fn eicar_control_failure_is_recorded() {
         .expect("job");
     assert_eq!(j.verdict.as_deref(), Some("ERROR"));
     assert_eq!(j.error_code.as_deref(), Some("SCAN_FAILED"));
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[tokio::test]
+async fn schedules_take_zone_window_and_exclusions() {
+    let base = std::env::temp_dir().join(format!("clamv-sx-{}", clamv_webui::db::new_id()));
+    let media = base.join("media");
+    for d in ["tv/Downloads/x", "tv/Shows", "movies"] {
+        std::fs::create_dir_all(media.join(d)).expect("mkdir");
+    }
+    std::fs::write(media.join("tv/notes.txt"), b"n").expect("file");
+    let media = std::fs::canonicalize(&media).expect("real");
+    let roots = media.to_str().expect("utf8").to_owned();
+    let (app, st, c, t) = app(&["--scan-roots", &roots]).await;
+    let enc = |v: &str| {
+        v.replace('/', "%2F")
+            .replace(' ', "+")
+            .replace('\n', "%0A")
+            .replace(':', "%3A")
+    };
+    let fields = |extra: &str| {
+        format!(
+            "_csrf={t}&name=Night&cron={}&paths={}&exclusions={}&time_zone=Europe%2FBerlin&window_start=22%3A00&window_end=06%3A00{extra}",
+            enc("30 23 * * *"),
+            enc(&roots),
+            enc(&format!("{roots}/tv/Downloads")),
+        )
+    };
+    // Preview: next runs in Berlin, nothing saved.
+    let res = app
+        .clone()
+        .oneshot(form("/admin/schedules", &fields("&preview=1"), &c))
+        .await
+        .expect("res");
+    let html = body(res).await;
+    assert!(html.contains("Next runs"), "preview shown");
+    assert!(html.contains(" 23:30</li>"));
+    assert!(st.db.list_schedules().await.expect("q").is_empty());
+    // A window that never meets the cron is refused.
+    let never = fields("")
+        .replace("window_start=22%3A00", "window_start=01%3A00")
+        .replace("window_end=06%3A00", "window_end=02%3A00");
+    let res = app
+        .clone()
+        .oneshot(form("/admin/schedules", &never, &c))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    // Saved.
+    let res = app
+        .clone()
+        .oneshot(form("/admin/schedules", &fields(""), &c))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let s = st.db.list_schedules().await.expect("q").remove(0);
+    assert_eq!(s.time_zone.as_deref(), Some("Europe/Berlin"));
+    assert_eq!(s.window, Some((22 * 60, 6 * 60)));
+    // A run scans around the exclusion: movies, tv/Shows and tv/notes.txt, not tv/Downloads.
+    let n = clamv_webui::schedule::run(&st, &s, "manual")
+        .await
+        .expect("run");
+    let (jobs, _) = st
+        .db
+        .list_jobs(&JobFilter::default(), 0, 50)
+        .await
+        .expect("list");
+    let mut targets: Vec<String> = jobs
+        .iter()
+        .filter(|j| j.kind == "PATH")
+        .map(|j| j.target.trim_start_matches(&roots).to_owned())
+        .collect();
+    targets.sort();
+    assert_eq!(targets, ["/movies", "/tv/Shows", "/tv/notes.txt"]);
+    assert_eq!(n, 3);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[tokio::test]
+async fn closed_windows_drop_queued_paths() {
+    let base = std::env::temp_dir().join(format!("clamv-sw-{}", clamv_webui::db::new_id()));
+    std::fs::create_dir_all(&base).expect("mkdir");
+    let roots = base.to_str().expect("utf8").to_owned();
+    let (_app, st, _c, _t) = app(&["--scan-roots", &roots]).await;
+    let now_min = (clamv_webui::db::now_ms() / 60_000).rem_euclid(1440);
+    // A window that closed a minute ago (UTC), opened two hours before.
+    let window = Some(((now_min + 1440 - 120) % 1440, (now_min + 1440 - 1) % 1440));
+    let s = st
+        .db
+        .create_schedule(clamv_webui::db::schedules::NewSchedule {
+            name: "w",
+            cron: "0 0 1 1 *",
+            paths: std::slice::from_ref(&roots),
+            endpoint_id: None,
+            agent_id: None,
+            eicar_check: false,
+            exclusions: &[],
+            window,
+            time_zone: Some("UTC"),
+        })
+        .await
+        .expect("schedule");
+    let job = st
+        .db
+        .create_job(clamv_webui::db::jobs::NewJob {
+            kind: "PATH",
+            target: &roots,
+            endpoint_id: None,
+            schedule_id: Some(&s.id),
+            agent_id: None,
+            submitted_by: Some("schedule:w"),
+            transport: "SCHEDULER",
+            running: false,
+        })
+        .await
+        .expect("job");
+    // Queued inside the window.
+    sqlx::query(
+        st.db
+            .sql("UPDATE scan_jobs SET submitted_at = ? WHERE id = ?"),
+    )
+    .bind(clamv_webui::db::now_ms() - 30 * 60_000)
+    .bind(&job.id)
+    .execute(st.db.pool())
+    .await
+    .expect("backdate");
+    clamv_webui::schedule::tick(&st).await.expect("tick");
+    let j = st.db.job(&job.id).await.expect("q").expect("job");
+    assert_eq!(j.status, "FINISHED");
+    assert_eq!(j.error_code.as_deref(), Some("WINDOW_CLOSED"));
     let _ = std::fs::remove_dir_all(&base);
 }
 

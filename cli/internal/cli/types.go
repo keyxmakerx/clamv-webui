@@ -14,6 +14,7 @@ type job struct {
 	Status           string     `json:"status"`
 	Verdict          string     `json:"verdict"`
 	EndpointID       *int64     `json:"endpointId"`
+	AgentID          *int64     `json:"agentId,omitempty"`
 	Filename         *string    `json:"filename"`
 	SizeBytes        *int64     `json:"sizeBytes"`
 	SubmittedAt      *time.Time `json:"submittedAt"`

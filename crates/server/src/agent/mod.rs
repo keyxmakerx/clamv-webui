@@ -7,6 +7,7 @@
 //! against the roots the agent reported, for a quick answer in the UI.
 
 pub mod client;
+pub mod outbox;
 pub mod policy;
 pub mod proto;
 
@@ -40,15 +41,23 @@ pub const POLL_HOLD: Duration = Duration::from_secs(25);
 /// Most jobs handed out per poll.
 const MAX_BATCH: u32 = 8;
 
+/// Error code for a job the server gave up on while its agent was away; a late result may still finish it.
+pub const AGENT_LOST: &str = "AGENT_LOST";
+/// Error code for a job an operator cancelled.
+pub const CANCELLED: &str = "CANCELLED";
+
 /// Wakes waiting polls when a job is queued for any agent.
 pub struct Hub {
     tx: watch::Sender<u64>,
+    /// Agents refused for their protocol version: id to (their protocol, their version).
+    mismatch: std::sync::Mutex<std::collections::HashMap<i64, (u32, String)>>,
 }
 
 impl Default for Hub {
     fn default() -> Self {
         Self {
             tx: watch::channel(0).0,
+            mismatch: std::sync::Mutex::default(),
         }
     }
 }
@@ -56,6 +65,26 @@ impl Default for Hub {
 impl Hub {
     pub fn poke(&self) {
         self.tx.send_modify(|n| *n = n.wrapping_add(1));
+    }
+
+    /// What to tell the operator when this agent speaks another protocol version.
+    pub fn version_hint(&self, agent_id: i64) -> Option<String> {
+        let g = self.mismatch.lock().ok()?;
+        let (theirs, version) = g.get(&agent_id)?;
+        Some(if *theirs < proto::MIN_PROTOCOL {
+            format!("Agent v{version} is too old for this server: update the agent.")
+        } else {
+            format!("Agent v{version} is newer than this server: update the server.")
+        })
+    }
+
+    fn set_mismatch(&self, agent_id: i64, v: Option<(u32, String)>) {
+        if let Ok(mut g) = self.mismatch.lock() {
+            match v {
+                Some(v) => g.insert(agent_id, v),
+                None => g.remove(&agent_id),
+            };
+        }
     }
 }
 
@@ -154,10 +183,22 @@ async fn poll(
     c: Caller,
     Json(req): Json<PollRequest>,
 ) -> Response {
-    if req.protocol != proto::PROTOCOL {
-        tracing::warn!(event = "agent.protocol_mismatch", agent = %c.agent.name, theirs = req.protocol, ours = proto::PROTOCOL, "agent speaks another protocol version");
+    if !(proto::MIN_PROTOCOL..=proto::PROTOCOL).contains(&req.protocol) {
+        let version = clip(&req.version, 64);
+        tracing::warn!(event = "agent.protocol_mismatch", agent = %c.agent.name, theirs = req.protocol, ours = proto::PROTOCOL, agent_version = %version, "agent speaks another protocol version; update the older side");
+        st.agents
+            .set_mismatch(c.agent.id, Some((req.protocol, version)));
         return reply(StatusCode::UPGRADE_REQUIRED, "protocol version mismatch");
     }
+    st.agents.set_mismatch(c.agent.id, None);
+    let kinds: Vec<String> = if req.protocol < 2 {
+        proto::LEGACY_KINDS
+            .iter()
+            .map(|k| (*k).to_owned())
+            .collect()
+    } else {
+        req.kinds.iter().take(64).map(|k| clip(k, 32)).collect()
+    };
     let mut rx = st.agents.tx.subscribe();
     let roots: Vec<String> = req.roots.iter().take(64).map(|r| clip(r, 4096)).collect();
     let version = clip(&req.version, 64);
@@ -212,39 +253,67 @@ async fn poll(
     let free = req.free.min(MAX_BATCH);
     let mut jobs = Vec::new();
     if free > 0 {
-        jobs = claim(&st, &c.agent, free).await;
+        jobs = claim(&st, &c.agent, free, &kinds).await;
         if jobs.is_empty() && req.wait && current {
             let _ = tokio::time::timeout(POLL_HOLD, rx.changed()).await;
-            jobs = claim(&st, &c.agent, free).await;
+            jobs = claim(&st, &c.agent, free, &kinds).await;
             // Canaries may have changed while we waited.
             canaries = st.db.host_canaries(Some(c.agent.id)).await.ok().map(specs);
         }
     }
+    let cancel = cancelled(&st, &c.agent, &req.running).await;
     (
         [(header::CACHE_CONTROL, "no-store")],
-        Json(PollResponse { jobs, canaries }),
+        Json(PollResponse {
+            jobs,
+            canaries,
+            cancel,
+        }),
     )
         .into_response()
 }
 
-async fn claim(st: &AppState, a: &Agent, n: u32) -> Vec<Assignment> {
-    match st.db.claim_agent_jobs(a.id, i64::from(n)).await {
-        Ok(list) => list
-            .into_iter()
-            .map(|j| {
-                tracing::info!(event = "agent.job_assigned", agent = %a.name, job_id = %j.id, kind = %j.kind, scan_target = %j.target, "job sent to agent");
-                Assignment {
-                    id: j.id,
-                    kind: j.kind,
-                    target: j.target,
-                }
-            })
-            .collect(),
-        Err(e) => {
-            tracing::warn!(error = %e, agent = %a.name, "could not claim agent jobs");
-            Vec::new()
+/// Jobs the agent runs that were cancelled here; it stops them.
+async fn cancelled(st: &AppState, a: &Agent, running: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for id in running.iter().take(256) {
+        if let Ok(Some(j)) = st.db.job(&clip(id, 64)).await
+            && j.agent_id == Some(a.id)
+            && j.status == jobs::FINISHED
+            && j.error_code.as_deref() == Some(CANCELLED)
+        {
+            out.push(j.id);
         }
     }
+    out
+}
+
+async fn claim(st: &AppState, a: &Agent, n: u32, kinds: &[String]) -> Vec<Assignment> {
+    let list = match st.db.claim_agent_jobs(a.id, i64::from(n)).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::warn!(error = %e, agent = %a.name, "could not claim agent jobs");
+            return Vec::new();
+        }
+    };
+    let mut out = Vec::with_capacity(list.len());
+    for j in list {
+        if !kinds.contains(&j.kind) {
+            let o = scan::failure(
+                proto::UNSUPPORTED,
+                "This agent is too old for this job type: update the agent.",
+            );
+            scan::finish(st, &j, &a.name, o).await;
+            continue;
+        }
+        tracing::info!(event = "agent.job_assigned", agent = %a.name, job_id = %j.id, kind = %j.kind, scan_target = %j.target, "job sent to agent");
+        out.push(Assignment {
+            id: j.id,
+            kind: j.kind,
+            target: j.target,
+        });
+    }
+    out
 }
 
 /// Jobs we think the agent runs but it does not: lost to an agent restart
@@ -257,8 +326,8 @@ async fn reconcile(st: &AppState, a: &Agent, running: &[String]) {
     for j in ours {
         if !running.iter().any(|r| r == &j.id) && j.started_at.is_some_and(|t| now - t > 60_000) {
             let o = scan::failure(
-                scan::SCAN_FAILED,
-                "The agent lost this job (it restarted or lost the connection).",
+                AGENT_LOST,
+                "The agent lost this job (it restarted or lost the connection); a late result still counts.",
             );
             scan::finish(st, &j, &a.name, o).await;
         }
@@ -273,6 +342,26 @@ async fn result(
 ) -> Response {
     let job = match st.db.job(&id).await {
         Ok(Some(j)) if j.agent_id == Some(c.agent.id) && j.status == jobs::RUNNING => j,
+        // Given up on while the agent was away: take the result after all.
+        Ok(Some(j))
+            if j.agent_id == Some(c.agent.id)
+                && j.status == jobs::FINISHED
+                && j.error_code.as_deref() == Some(AGENT_LOST) =>
+        {
+            match st.db.reopen_lost_job(&j.id, c.agent.id).await {
+                Ok(true) => {
+                    tracing::info!(event = "agent.result_late", agent = %c.agent.name, job_id = %j.id, "late result accepted for a job given up on");
+                    match st.db.job(&id).await {
+                        Ok(Some(j)) => j,
+                        _ => return reply(StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+                    }
+                }
+                Ok(false) => {
+                    return reply(StatusCode::CONFLICT, "job is not running on this agent");
+                }
+                Err(_) => return reply(StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+            }
+        }
         Ok(_) => return reply(StatusCode::CONFLICT, "job is not running on this agent"),
         Err(_) => return reply(StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
     };
@@ -296,8 +385,17 @@ async fn result(
         (None, Some(f)) => failure_outcome(&f),
         (None, None) => scan::failure(scan::SCAN_FAILED, "The agent sent an empty result."),
     };
-    scan::finish(&st, &job, &c.agent.name, o).await;
-    StatusCode::NO_CONTENT.into_response()
+    stored_reply(scan::finish(&st, &job, &c.agent.name, o).await)
+}
+
+/// 503 when the result could not be stored, so the agent keeps it queued and sends it again.
+fn stored_reply(stored: scan::Stored) -> Response {
+    match stored {
+        scan::Stored::Failed => reply(StatusCode::SERVICE_UNAVAILABLE, "result not stored; retry"),
+        scan::Stored::Saved | scan::Stored::AlreadyFinished => {
+            StatusCode::NO_CONTENT.into_response()
+        }
+    }
 }
 
 /// A real-time scan becomes a finished WATCH job; a canary raises an alert.
@@ -373,7 +471,7 @@ async fn events(
                 (None, Some(f)) => failure_outcome(&f),
                 (None, None) => scan::failure(scan::SCAN_FAILED, "The agent sent an empty result."),
             };
-            scan::finish(&st, &job, &c.agent.name, o).await;
+            return stored_reply(scan::finish(&st, &job, &c.agent.name, o).await);
         }
     }
     StatusCode::NO_CONTENT.into_response()
@@ -387,6 +485,10 @@ fn failure_outcome(f: &Failure) -> jobs::Outcome {
         hc::NOT_INSTALLED => scan::failure(hc::NOT_INSTALLED, hc::message(hc::NOT_INSTALLED)),
         hc::FAILED => scan::failure(hc::FAILED, hc::message(hc::FAILED)),
         scan::POLICY_REJECTED => scan::failure(scan::POLICY_REJECTED, scan::PATH_REJECTED),
+        proto::UNSUPPORTED => scan::failure(
+            proto::UNSUPPORTED,
+            "This agent is too old for this job type: update the agent.",
+        ),
         c if c.starts_with("QUARANTINE_") => {
             use crate::quarantine as q;
             let code = [
@@ -452,7 +554,7 @@ pub async fn monitor(st: &AppState) {
                 jobs::RUNNING,
                 |j| j.started_at.unwrap_or(0),
                 0,
-                "The agent went offline during the scan.",
+                "The agent went offline during the scan; a late result still counts.",
             )
             .await;
         }
@@ -481,7 +583,12 @@ async fn fail_where(
     };
     let now = now_ms();
     for j in list.iter().filter(|j| now - at(j) > older_than) {
-        let o = scan::failure(scan::CONFIGURATION_UNAVAILABLE, msg);
+        let code = if status == jobs::RUNNING {
+            AGENT_LOST
+        } else {
+            scan::CONFIGURATION_UNAVAILABLE
+        };
+        let o = scan::failure(code, msg);
         if status == jobs::QUEUED {
             // Not RUNNING, so finish() would skip it; store directly.
             if st

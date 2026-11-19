@@ -44,6 +44,8 @@ pub struct AgentRow {
     slots: i64,
     queued: usize,
     running: usize,
+    /// Why the agent is refused, e.g. "update the agent".
+    hint: String,
 }
 
 /// Shown once after creating an agent or rotating its token.
@@ -60,6 +62,8 @@ struct AgentsPage {
     nav: Nav,
     rows: Vec<AgentRow>,
     enroll: Option<Enroll>,
+    /// Set when the self-signed certificate was replaced recently: pinned agents need the new fingerprint.
+    cert_changed: Option<crate::tls::Replaced>,
 }
 
 async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
@@ -87,8 +91,11 @@ async fn show(st: &AppState, nav: Nav, enroll: Option<Enroll>) -> Response {
             .agent_jobs(a.id, crate::db::jobs::RUNNING)
             .await
             .map_or(0, |l| l.len());
+        let hint = st.agents.version_hint(a.id).unwrap_or_default();
         let state = if !a.enabled {
             "disabled"
+        } else if !hint.is_empty() {
+            "version mismatch"
         } else if a.last_seen_at.is_none() {
             "never connected"
         } else if crate::agent::is_online(&a, now) {
@@ -110,6 +117,7 @@ async fn show(st: &AppState, nav: Nav, enroll: Option<Enroll>) -> Response {
             slots: a.slots,
             queued,
             running,
+            hint,
         });
     }
     let status = if nav.error.is_some() {
@@ -117,7 +125,20 @@ async fn show(st: &AppState, nav: Nav, enroll: Option<Enroll>) -> Response {
     } else {
         StatusCode::OK
     };
-    render(status, &AgentsPage { nav, rows, enroll })
+    let cert_changed = if st.cfg.tls_enabled() {
+        crate::tls::recently_replaced(&st.cfg)
+    } else {
+        None
+    };
+    render(
+        status,
+        &AgentsPage {
+            nav,
+            rows,
+            enroll,
+            cert_changed,
+        },
+    )
 }
 
 async fn result(

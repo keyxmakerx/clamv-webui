@@ -143,6 +143,22 @@ pub const FIELDS: &[Field] = &[
         current: |c| c.session_max_hours.to_string(),
     },
     Field {
+        env: "SSO_SESSION_MINUTES",
+        section: "Sessions",
+        label: "SSO and LDAP sessions (minutes)",
+        help: "Sign in again after this long, so role changes at the provider apply.",
+        kind: Kind::Number { min: 5, max: 43200 },
+        current: |c| c.sso_session_minutes.to_string(),
+    },
+    Field {
+        env: "REQUIRE_ADMIN_2FA",
+        section: "Sessions",
+        label: "Require two-factor sign-in for admins",
+        help: "Admins with a local password must add an authenticator app or passkey first. SSO and LDAP admins use their provider's.",
+        kind: Kind::Bool,
+        current: |c| c.require_admin_2fa.to_string(),
+    },
+    Field {
         env: "COOKIE_SECURE",
         section: "Sessions",
         label: "Secure cookies",
@@ -297,6 +313,8 @@ fn copy(env: &str, dst: &mut Config, src: &Config) {
         "SESSION_IDLE_MINUTES" => dst.session_idle_minutes = src.session_idle_minutes,
         "SESSION_MAX_HOURS" => dst.session_max_hours = src.session_max_hours,
         "COOKIE_SECURE" => dst.cookie_secure = src.cookie_secure,
+        "SSO_SESSION_MINUTES" => dst.sso_session_minutes = src.sso_session_minutes,
+        "REQUIRE_ADMIN_2FA" => dst.require_admin_2fa = src.require_admin_2fa,
         "REQUEST_TIMEOUT_SECS" => dst.request_timeout_secs = src.request_timeout_secs,
         _ => {}
     }

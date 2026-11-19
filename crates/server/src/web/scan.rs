@@ -556,9 +556,10 @@ async fn scan_upload(
                         return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
                     }
                 };
+                let guard = scan::UploadGuard::new(&st, &job, &ep.name);
                 audit_scan(&st, &u, &info, &job, "SCAN_UPLOAD").await;
                 let o = scan_field(&st, &ep, field, &name).await;
-                scan::finish(&st, &job, &ep.name, o).await;
+                guard.finish(o).await;
                 ids.push(job.id);
             }
             _ => {}
@@ -920,10 +921,13 @@ struct JobDetail {
     detections: Vec<(String, String, Option<i64>)>,
     errors: Vec<(String, String)>,
     more_errors: usize,
+    omitted: i64,
     can_rescan: bool,
     error_code: String,
     error_message: String,
     refresh: bool,
+    /// Shows the Cancel button.
+    cancellable: bool,
 }
 
 impl JobDetail {
@@ -987,9 +991,11 @@ async fn job_page(State(st): State<Arc<AppState>>, auth: Auth, Path(id): Path<St
             detections,
             errors,
             more_errors: job.errors.len().saturating_sub(SHOW),
+            omitted: job.results_omitted,
             error_code: job.error_code.clone().unwrap_or_default(),
             error_message: job.error_message.clone().unwrap_or_default(),
             refresh: job.status != jobs::FINISHED,
+            cancellable: crate::cancel::refuse(&job).is_none(),
             can_rescan: can_rescan(&job),
         },
     )

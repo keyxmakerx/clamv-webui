@@ -414,6 +414,9 @@ async fn schedules_claim_once() {
                 endpoint_id: None,
                 agent_id: None,
                 eicar_check: true,
+                exclusions: &[],
+                window: None,
+                time_zone: None,
             })
             .await
             .expect("create");
@@ -1027,5 +1030,53 @@ async fn quarantine_entries_move_through_states() {
                 .expect("after")
                 .is_some()
         );
+    }
+}
+
+/// MySQL/MariaDB TEXT stops at 64 KB; results larger than that must still save.
+#[tokio::test]
+async fn large_results_store_on_every_backend() {
+    use clamv_webui::db::jobs::{self, JobFileError, NewJob, Outcome};
+    for db in databases().await {
+        let kind = db.kind();
+        let job = db
+            .create_job(NewJob {
+                kind: "PATH",
+                target: "/data",
+                endpoint_id: None,
+                schedule_id: None,
+                agent_id: None,
+                submitted_by: Some("t"),
+                transport: "UI",
+                running: true,
+            })
+            .await
+            .expect("job");
+        let long = "x".repeat(300);
+        let mut o = Outcome {
+            verdict: jobs::VIRUS_FOUND,
+            files_scanned: 2500,
+            ..Outcome::default()
+        };
+        for i in 0..1200 {
+            o.detections
+                .insert(format!("/data/{long}/{i:05}"), vec!["Eicar".into()]);
+        }
+        o.errors = (0..1300)
+            .map(|i| JobFileError {
+                path: format!("/data/{long}/e{i:05}"),
+                message: "Access denied".into(),
+            })
+            .collect();
+        assert!(
+            db.finish_job_if(&job.id, jobs::RUNNING, &o)
+                .await
+                .expect("store {kind:?}")
+        );
+        let j = db.job(&job.id).await.expect("q").expect("job");
+        assert_eq!(j.detections.len(), jobs::MAX_STORED_LINES, "{kind:?}");
+        assert_eq!(j.errors.len(), jobs::MAX_STORED_LINES, "{kind:?}");
+        assert_eq!(j.results_omitted, 200 + 300, "{kind:?}");
+        db.close().await;
     }
 }

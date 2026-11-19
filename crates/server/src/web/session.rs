@@ -45,6 +45,11 @@ impl FromRequestParts<Arc<AppState>> for Auth {
                         .get(header::ACCEPT_LANGUAGE)
                         .and_then(|v| v.to_str().ok()),
                 );
+                if let Some((_, u)) = &found
+                    && must_enrol(state, u, parts.uri.path()).await
+                {
+                    return Err(Redirect::to("/account/security?enrol=1").into_response());
+                }
                 Ok(Auth(found.map(|(mut s, u)| {
                     s.lang = lang;
                     (s, u)
@@ -56,6 +61,31 @@ impl FromRequestParts<Arc<AppState>> for Auth {
             }
         }
     }
+}
+
+/// Pages an admin without a second factor can still reach while REQUIRE_ADMIN_2FA is on.
+fn enrol_allowed(path: &str) -> bool {
+    path == "/account/security"
+        || path == "/account/password"
+        || path == "/account/language"
+        || path == "/logout"
+        || path.starts_with("/login")
+        || path.starts_with("/account/2fa/")
+        || path.starts_with("/account/passkeys")
+        || path.starts_with("/account/confirm")
+}
+
+/// REQUIRE_ADMIN_2FA: a local admin with no authenticator app or passkey goes to enrolment.
+async fn must_enrol(st: &AppState, u: &User, path: &str) -> bool {
+    if !st.cfg.require_admin_2fa
+        || u.role != Role::Admin
+        || u.is_external()
+        || u.must_change_password
+        || enrol_allowed(path)
+    {
+        return false;
+    }
+    matches!(st.db.mfa_methods(&u.id).await, Ok((false, 0)))
 }
 
 impl Auth {
@@ -196,6 +226,63 @@ pub async fn resolve_client(
     res
 }
 
+/// With PUBLIC_URL set, refuse requests for any other host name, which shuts
+/// out DNS rebinding (sa4). Health, metrics and agent routes are exempt, as are
+/// loopback names and ALLOWED_HOSTS.
+pub async fn check_host(
+    axum::extract::State(st): axum::extract::State<Arc<AppState>>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let Some(public) = st.cfg.public_url.as_ref().and_then(|u| u.host_str()) else {
+        return next.run(req).await;
+    };
+    let path = req.uri().path();
+    if matches!(
+        path,
+        "/healthz" | "/readyz" | "/metrics" | "/actuator/prometheus"
+    ) || path.starts_with("/agent/")
+    {
+        return next.run(req).await;
+    }
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned)
+        .or_else(|| req.uri().authority().map(|a| a.as_str().to_owned()));
+    if host
+        .as_deref()
+        .is_some_and(|h| host_allowed(public, &st.cfg.allowed_hosts, h))
+    {
+        return next.run(req).await;
+    }
+    tracing::warn!(event = "http.host_refused", host = %host.as_deref().unwrap_or("").chars().take(100).collect::<String>(), "request for an unknown host name refused");
+    (
+        StatusCode::MISDIRECTED_REQUEST,
+        "Unknown host name. Open this app at its PUBLIC_URL.",
+    )
+        .into_response()
+}
+
+/// Host header (with or without port) against PUBLIC_URL's host, the extra names and loopback.
+fn host_allowed(public: &str, extra: &[String], host: &str) -> bool {
+    let name = if host.starts_with('[') {
+        host.split(']')
+            .next()
+            .map_or(host, |s| s.trim_start_matches('['))
+    } else {
+        host.rsplit_once(':').map_or(host, |(n, _)| n)
+    };
+    let name = name.trim_end_matches('.');
+    let public = public.trim_start_matches('[').trim_end_matches(']');
+    name.eq_ignore_ascii_case(public)
+        || matches!(name, "localhost" | "127.0.0.1" | "::1")
+        || extra
+            .iter()
+            .any(|e| !e.trim().is_empty() && name.eq_ignore_ascii_case(e.trim()))
+}
+
 pub fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
         .get_all(header::COOKIE)
@@ -254,6 +341,47 @@ mod tests {
             forwarded_client(&list, ip("10.0.0.2"), None),
             ip("10.0.0.2")
         );
+    }
+
+    #[test]
+    fn host_names_are_checked() {
+        let extra = vec!["clamav.lan".to_owned()];
+        assert!(host_allowed(
+            "clamav.example.com",
+            &extra,
+            "clamav.example.com"
+        ));
+        assert!(host_allowed(
+            "clamav.example.com",
+            &extra,
+            "CLAMAV.example.com:8443"
+        ));
+        assert!(host_allowed(
+            "clamav.example.com",
+            &extra,
+            "clamav.lan:8080"
+        ));
+        assert!(host_allowed("clamav.example.com", &extra, "localhost:8080"));
+        assert!(host_allowed("clamav.example.com", &extra, "[::1]:8080"));
+        assert!(!host_allowed("clamav.example.com", &extra, "evil.example"));
+        assert!(!host_allowed(
+            "clamav.example.com",
+            &extra,
+            "clamav.example.com.evil"
+        ));
+        assert!(!host_allowed("clamav.example.com", &[], ""));
+        assert!(host_allowed("[2001:db8::1]", &[], "[2001:db8::1]:443"));
+    }
+
+    #[test]
+    fn enrolment_pages_stay_reachable() {
+        assert!(enrol_allowed("/account/security"));
+        assert!(enrol_allowed("/account/2fa/setup"));
+        assert!(enrol_allowed("/account/passkeys/options"));
+        assert!(enrol_allowed("/account/confirm/sso"));
+        assert!(!enrol_allowed("/admin/users"));
+        assert!(!enrol_allowed("/dashboard"));
+        assert!(!enrol_allowed("/account/securityx"));
     }
 
     #[test]

@@ -19,7 +19,7 @@ Forked from an earlier Java application, which has been replaced entirely. Licen
 - **Detections page**: every infected file across all hosts, filtered by signature, host, type and folder, with CSV export (up to 50,000 rows).
 - **Search**: the Jobs and Detections pages take free text plus `field:value` terms, for example `sig:Eicar host:nas -path:/games after:7d`. Quotes match exactly, `-` excludes, dates take `YYYY-MM-DD` or `7d`, `12h`, `30m`. Filters are remembered per browser.
 - **Display**: light and dark themes, times shown in your own time zone (or a fixed one) with a 12 or 24 hour clock, set under Account.
-- **Schedules**: cron schedules per path. Each run first scans an EICAR control, so a run against a broken clamd reports a failure, not a clean result.
+- **Schedules**: cron schedules per path, in a time zone of your choice, with an optional scan window (runs start only inside it) and paths to leave out. Each run first scans an EICAR control, so a run against a broken clamd reports a failure, not a clean result.
 - **Watched folders**: files are scanned the moment they are written (Linux inotify), with periodic polling as a safety net.
 - **Canary files**: decoys that raise an alert (log, audit, webhook) the moment anything opens, changes or deletes them, managed per host from the UI, with auditd naming the program and user where the host logs it.
 - **Agents**: run the same image with `agent` on other hosts. Each agent scans its own folders with its own clamd and reports back, so one UI covers every machine. Agents connect out to the server, so they need no open port.
@@ -54,24 +54,27 @@ Lost the admin password? Run `docker compose exec clamv-webui /app/clamv-webui r
 
 ## Agents
 
-1. In **Admin > Agents**, add an agent. The page shows its token once, plus a compose file for the agent host.
+1. Turn on HTTPS on the server (`TLS_SELF_SIGNED=true` is enough). In **Admin > Agents**, add an agent. The page shows its token once, plus a compose file for the agent host.
 2. On that host, save the token as `./agent_token` (`chown 10001`, `chmod 600`) and start `docker-compose.agent.yml` next to a clamd. The agent logs `agent.connected` once it reaches the server, or `agent.unreachable` with the reason.
 3. Pick the agent under **Run on** when you scan a path or add a schedule. Schedules with the EICAR control run that check on the agent too.
 
-The agent enforces its own `SCAN_ROOTS`. Jobs queued for an offline agent wait (and expire after a day). A job the agent loses is marked failed. Online and offline changes are logged as `agent.online` and `agent.offline`.
+The agent enforces its own `SCAN_ROOTS`. Jobs queued for an offline agent wait (and expire after a day); a schedule that queues for one logs `schedule.agent_offline` at once. While the server is away the agent holds results and events and sends them, in order, when it is back; a job the server gave up on (`AGENT_LOST`) still takes a late result. Online and offline changes are logged as `agent.online` and `agent.offline`. An agent on another protocol version shows as **version mismatch** with which side to update. A queued or running scan can be cancelled from its job page, `POST /api/v1/jobs/{id}/cancel` or `clamctl jobs cancel`.
 
 | Variable | Purpose |
 |---|---|
-| `AGENT_SERVER_URL` | The server, as the agent host reaches it |
+| `AGENT_SERVER_URL` | The server, as the agent host reaches it; must be `https://` |
 | `AGENT_TOKEN(_FILE)` | The agent's token |
 | `AGENT_SERVER_FINGERPRINT` | SHA-256 of the server certificate (logged at server start); trust exactly that certificate |
 | `AGENT_CA_FILE` | Or: a PEM CA bundle for the server certificate |
+| `AGENT_ALLOW_PLAINTEXT` | `true` accepts an `http://` server URL (token and results unencrypted); only for a private VPN or mesh |
+| `AGENT_QUEUE_DIR` | Writable folder that keeps unsent results across agent restarts (default: memory; up to 5,000 items or 64 MB) |
+| `CANARY_DIRS` | Folders where the server may have the agent write decoys; elsewhere a canary is only watched |
 | `REALTIME_PATHS` | Folders inside `SCAN_ROOTS` scanned as soon as files are written; results show up as watch jobs on the server |
 | `AGENT_ALLOW(_FILE)` | What this host lets the server ask for: `scan`, `canaries`, `checks`, `timers`, `baseline`, `firewall`, `quarantine` or `all` (default `scan,canaries,checks`); set only on the agent host |
 
 The agent writes its own JSON line for every job it runs (`agent.action`) or refuses (`agent.action_refused`), and limits each kind per hour (scans 600, canaries and checks 60, timers 20, firewall 6, baseline 4, quarantine 120); a refused or limited job fails with `AGENT_REFUSED` or `AGENT_RATE_LIMITED`. Firewall applies and baseline accepts stay off until that host enables them.
 
-`CLAMD_ENDPOINT`, `SCAN_ROOTS`, `SCAN_CONCURRENCY`, `CLAMD_MAX_STREAM_MB`, `CLAMD_CONF_FILE` (its `ExcludePath` rules), `CANARY_FILES`, `QUARANTINE_DIR`, `WATCH_REALTIME` and `LOG_*` apply to the agent as they do to the server. Plain `http://` works but sends the token unencrypted, so use it only over a VPN or mesh.
+`CLAMD_ENDPOINT`, `SCAN_ROOTS`, `SCAN_CONCURRENCY`, `CLAMD_MAX_STREAM_MB`, `CLAMD_CONF_FILE` (its `ExcludePath` rules), `CANARY_FILES`, `QUARANTINE_DIR`, `WATCH_REALTIME` and `LOG_*` apply to the agent as they do to the server. Changing `TLS_SELF_SIGNED_NAMES` makes a new certificate; the server logs `tls.cert_replaced` and Admin > Agents shows the new fingerprint every agent needs. Prometheus gets `clamav_agent_up`, `clamav_agent_last_seen_timestamp`, `clamav_agent_jobs_queued` and friends, one series per agent.
 
 ## Configuration
 
@@ -100,6 +103,7 @@ Every option is an environment variable (or a `--flag`; run `clamv-webui --help`
 | `CLAMD_MAX_STREAM_MB` | `1024` | Upload size limit; raise clamd's `StreamMaxLength` to match (see below) |
 | `SCAN_ROOTS` | empty | Comma-separated paths that path scans, schedules and watches may use; clamd must see them at the same paths |
 | `SCAN_CONCURRENCY` | `2` | Path scans running at once |
+| `SCHEDULE_TZ` | `TZ`, else `UTC` | Default time zone for schedules (IANA name, e.g. `Europe/Berlin`); each schedule can set its own |
 | `UPLOAD_MAX_FILES` | `10` | Files per upload |
 | `WATCH_POLL_SECS` | `60` | Seconds between looks at watched folders |
 | `WATCH_REALTIME` | `true` | Scan files in watched folders as soon as they are written |
@@ -127,11 +131,15 @@ To have alerts name who touched a canary, add the auditd rule the page shows (`-
 |---|---|---|
 | `COOKIE_SECURE` | `false` | Always on with TLS; leave off only on plain HTTP over a private network |
 | `SESSION_IDLE_MINUTES` / `SESSION_MAX_HOURS` | `30` / `12` | Session lifetime |
+| `SSO_SESSION_MINUTES` | `60` | SSO and LDAP sessions end sooner, so role changes at the provider apply |
+| `REQUIRE_ADMIN_2FA` | `false` | Admins with a local password must add an authenticator app or passkey first |
+| `API_BASIC_HTTPS_ONLY` | `false` | Refuse HTTP Basic on the API over plain HTTP (tokens still work) |
 | `REQUEST_TIMEOUT_SECS` | `60` | Per-request timeout for UI and API calls |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | unset | Serve HTTPS with your certificate |
 | `TLS_SELF_SIGNED` / `TLS_SELF_SIGNED_NAMES` | `false` / unset | Generate a certificate in `DATA_DIR/tls` for the listed names or IPs |
 | `TRUSTED_PROXIES` | empty | Reverse proxies (CIDRs) whose `X-Forwarded-For`/`-Proto` are believed; see [docs/REVERSE_PROXY.md](docs/REVERSE_PROXY.md) |
-| `PUBLIC_URL` | unset | The address users open, e.g. `https://clamav.example.com`; passkeys are tied to its host name |
+| `PUBLIC_URL` | unset | The address users open, e.g. `https://clamav.example.com`; passkeys are tied to its host name, and other host names are refused |
+| `ALLOWED_HOSTS` | empty | Extra host names accepted when `PUBLIC_URL` is set (localhost always is) |
 | `SECRET_KEY_FILE` | `DATA_DIR/secret.key` | Key that encrypts stored 2FA secrets; created on first use. Back it up with the database |
 
 ### Alerts (webhook, ntfy, Gotify, Slack, Discord)
@@ -201,7 +209,7 @@ Off until `QUARANTINE_DIR` is set (on the server, or on an agent that also allow
 | `LDAP_URL` | `ldaps://` URL, or `ldap://` with `LDAP_STARTTLS=true`; plain LDAP is refused |
 | `LDAP_BIND_DN`, `LDAP_BIND_PASSWORD(_FILE)` | Service account used to find the user |
 | `LDAP_USER_BASE`, `LDAP_USER_FILTER` | Search base and filter (`{username}` is escaped) |
-| `LDAP_ADMIN_GROUPS`, `LDAP_OPERATOR_GROUPS`, `LDAP_VIEWER_GROUPS` | Group DNs or names; no group means no access |
+| `LDAP_ADMIN_GROUPS`, `LDAP_OPERATOR_GROUPS`, `LDAP_VIEWER_GROUPS` | Group DNs or names; no group means no access. Use full DNs: a short name matches that group in any OU |
 | `LDAP_GROUP_ATTRIBUTE`, `LDAP_CA_FILE` | Optional |
 
 ### Settings page
@@ -216,7 +224,7 @@ Each user picks a language under **Account**; otherwise the browser's language i
 
 - Runs as UID 10001 in a read-only container with all capabilities dropped. Scan roots should be mounted read-only; the app never writes to them unless quarantine is turned on.
 - Path scans resolve symlinks and must stay inside `SCAN_ROOTS`. clamd endpoints are limited to `CLAMD_HOST_ALLOWLIST`.
-- Passwords use Argon2id. Second factors: TOTP seeds are encrypted with `SECRET_KEY_FILE`, codes cannot be replayed, recovery codes are hashed and single-use, five wrong codes end the attempt and ten in 15 minutes lock the account's second step, however many times the password is entered. HTTP Basic on the API is refused for accounts with a second factor (use a token). Passkeys require user verification and are checked for origin, relying party, signature and counter. Admins can reset a user's second factors; `reset-admin` clears the admin's. Sessions are server-side with `SameSite=Strict` cookies, CSRF tokens on every form, login rate limiting, and a per-user limit of 30 scans a minute in the UI and API.
+- Passwords use Argon2id. Second factors: TOTP seeds are encrypted with `SECRET_KEY_FILE`, codes cannot be replayed, recovery codes are hashed and single-use, five wrong codes end the attempt and ten in 15 minutes lock the account's second step, however many times the password is entered. HTTP Basic on the API is refused for accounts with a second factor (use a token). Passkeys require user verification and are checked for origin, relying party, signature and counter. Admins can reset a user's second factors; `reset-admin` clears the admin's. Sessions are server-side with `SameSite=Strict` cookies, CSRF tokens on every form, login rate limiting, and a per-user limit of 30 scans a minute in the UI and API. Sign-in hardening, step-up confirmation and what to do when locked out: [docs/SECURITY.md](docs/SECURITY.md).
 - A strict Content-Security-Policy (no inline script or style) and the usual security headers on every response.
 - API tokens are stored hashed and shown once. Metrics need a bearer token.
 - File names in notifications have bidirectional-override characters replaced, so `cv\u202Efdp.exe` cannot pose as a PDF; Slack text is escaped so names cannot carry mentions or links.
@@ -239,4 +247,8 @@ cargo test                 # SQLite; set TEST_DATABASE_URLS to also test other d
 docker build -t clamv-webui .
 ```
 
-CI builds and tests on every push, checks dependencies with `cargo deny`, runs CodeQL and Trivy, and publishes `ghcr.io/keyxmakerx/clamv-webui:latest`.
+CI builds and tests on every push, checks dependencies with `cargo deny`, runs CodeQL and Trivy, starts the image once, and publishes `ghcr.io/keyxmakerx/clamv-webui:latest` (amd64) plus a short commit tag for rollback.
+
+Releases: set `version` in `Cargo.toml`, merge, then push a tag `vX.Y.Z` on that commit. CI checks the tag matches, publishes `:X.Y.Z` and `:X.Y`, and creates the GitHub release that the dashboard's update notice looks for. Compose files stay on `:latest`.
+
+Schema changes go in a new numbered file under `crates/server/migrations/<backend>/` with a line in `crates/server/migrations.sha256`; files already on `main` never change (CI refuses it).

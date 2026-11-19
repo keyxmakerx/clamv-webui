@@ -152,6 +152,7 @@ impl Db {
                 .bind(id)
                 .execute(&mut *tx)
                 .await?;
+            self.revoke_tokens_of(&mut tx, id).await?;
         }
         tx.commit().await?;
         Ok(())
@@ -174,15 +175,39 @@ impl Db {
             .bind(id)
             .execute(&mut *tx)
             .await?;
+        // API tokens only admins make; they stop when their maker no longer is one.
+        if !(enabled && role == Role::Admin) {
+            self.revoke_tokens_of(&mut tx, id).await?;
+        }
         tx.commit().await?;
         Ok(())
     }
 
     pub async fn delete_user(&self, id: &str) -> Result<bool, DbError> {
+        let mut tx = self.pool().begin().await?;
+        self.revoke_tokens_of(&mut tx, id).await?;
         let r = sqlx::query(self.sql("DELETE FROM users WHERE id = ?"))
             .bind(id)
-            .execute(self.pool())
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         Ok(r.rows_affected() > 0)
+    }
+
+    /// Revoke the API tokens a user made (sa4: tokens do not outlive their creator).
+    async fn revoke_tokens_of(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Any>,
+        user_id: &str,
+    ) -> Result<u64, DbError> {
+        let r = sqlx::query(self.sql(
+            "UPDATE api_tokens SET revoked_at = ? WHERE revoked_at IS NULL \
+             AND created_by = (SELECT username FROM users WHERE id = ?)",
+        ))
+        .bind(now_ms())
+        .bind(user_id)
+        .execute(&mut **tx)
+        .await?;
+        Ok(r.rows_affected())
     }
 }

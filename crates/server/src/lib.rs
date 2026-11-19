@@ -11,6 +11,7 @@ pub mod api;
 pub mod app;
 pub mod auth;
 pub mod canary;
+pub mod cancel;
 pub mod clamdconf;
 pub mod config;
 pub mod cron;

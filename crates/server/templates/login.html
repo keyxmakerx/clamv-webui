@@ -22,7 +22,6 @@
 <div class="alert alert-danger d-none mt-2" role="alert" id="passkey-error"></div>
 {% if let Some(label) = sso %}<div class="text-center muted small my-3">or</div>
 <a class="btn btn-outline-primary w-100" href="/login/oidc">{{ label }}</a>{% endif %}
-{% if first_start %}<p class="muted small mt-3">The one-time <code>admin</code> password is in <code>bootstrap-admin-password</code> in the data folder (<code>./data</code> with the compose files). Delete the file once you have signed in.</p>{% endif %}
 </div></main>
 <script defer src="/js/passkey.js?v={{ crate::web::asset_v() }}"></script>
 {% endblock %}
