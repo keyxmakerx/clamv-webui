@@ -12,7 +12,7 @@ A read-only audit of `main` at `5715cd5` covered every file under `auth/` and th
 - Every signed-in state-changing UI handler checks the session CSRF token, on top of a same-origin check on every unsafe request.
 - Session ids, API tokens, agent tokens and recovery codes are stored as SHA-256 only. TOTP seeds are AES-256-GCM sealed and bound to their user. No log line carries a secret.
 - Passkey and OIDC checks: single-use challenges, origin, RP hash, user verification, counter, PKCE, state bound to the browser, nonce, issuer, audience, algorithm list.
-- API tokens can only scan and read.
+- API tokens act only within the scopes they were given when created, and are stored as SHA-256 only.
 
 Not covered by that audit: a real browser with a hardware key, a running container, and `cargo deny` (CI runs it). Every review so far was done by Claude threads.
 
