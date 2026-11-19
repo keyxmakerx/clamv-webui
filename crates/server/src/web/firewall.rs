@@ -82,6 +82,8 @@ struct FirewallPage {
     rules: Vec<RuleRow>,
     preview: String,
     pending: bool,
+    /// Shown inside the refreshed part, so a background check can show it.
+    confirmed: bool,
     dir: String,
     /// The tool the host writes clamv's plan through.
     backend: &'static str,
@@ -106,6 +108,8 @@ async fn host_name(st: &AppState, host: Option<i64>) -> String {
     }
 }
 
+const CONFIRMED: &str = "Plan confirmed: you can still reach this server.";
+
 async fn page(State(st): State<Arc<AppState>>, auth: Auth, Query(q): Query<HostQ>) -> Response {
     let (s, u) = match auth.require(Role::Admin) {
         Ok(x) => x,
@@ -127,7 +131,7 @@ async fn page(State(st): State<Arc<AppState>>, auth: Auth, Query(q): Query<HostQ
             if live && crate::firewall::waiting(dir, &hash) {
                 crate::firewall::confirm(dir, &hash);
                 tracing::info!(event = "firewall.confirmed", user = %u.username, hash = %hash, "firewall plan confirmed from the browser");
-                nav.success = Some("Plan confirmed: you can still reach this server.".into());
+                nav.success = Some(CONFIRMED.into());
                 clear_pending(&st);
             } else if live {
                 closing = true;
@@ -158,7 +162,11 @@ fn clear_pending(st: &Arc<AppState>) {
     });
 }
 
-async fn show(st: &AppState, nav: Nav, host: Option<i64>) -> Response {
+async fn show(st: &AppState, mut nav: Nav, host: Option<i64>) -> Response {
+    let confirmed = nav.success.as_deref() == Some(CONFIRMED);
+    if confirmed {
+        nav.success = None;
+    }
     let agents = st.db.list_agents().await.unwrap_or_default();
     let mut chips = vec![HostChip {
         value: String::new(),
@@ -284,6 +292,7 @@ async fn show(st: &AppState, nav: Nav, host: Option<i64>) -> Response {
                 crate::firewall::body(&plan.rules)
             ),
             pending,
+            confirmed,
             dir: crate::firewall::DIR.to_owned(),
             backend: s.backend(),
             nav,

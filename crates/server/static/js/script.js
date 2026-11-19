@@ -157,7 +157,9 @@
       return a && a !== document.body && region.contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.nodeName);
     }
     function tick() {
-      if (document.hidden) return; // resumes on visibilitychange
+      // Pause in a hidden tab, except where a check must keep going
+      // (a firewall apply rolls back unless this page confirms it in time).
+      if (document.hidden && !document.querySelector("[data-refresh-region][data-refresh-hidden]")) return;
       fetch(location.href, { headers: { "X-Clamv-Refresh": "1" }, credentials: "same-origin", cache: "no-store" })
         .then(function (r) {
           // Signed out (idle limit or elsewhere): load the page properly.

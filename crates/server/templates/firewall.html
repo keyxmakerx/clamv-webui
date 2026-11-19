@@ -6,7 +6,8 @@
 <div class="filter-chips mb-3">{% for c in chips %}<a class="chip{% if c.active %} active{% endif %}" href="/admin/firewall{% if !c.value.is_empty() %}?host={{ c.value }}{% endif %}"{% if c.active %} aria-current="page"{% endif %}>{{ c.label }}</a>{% endfor %}</div>
 <div id="passkey-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
 <div id="stepup-ok" class="alert alert-success py-2 small d-none" role="status"></div>
-<div id="r-fw" data-refresh-region{% if pending %} data-refresh="5"{% endif %}>
+<div id="r-fw" data-refresh-region{% if pending %} data-refresh="5" data-refresh-hidden{% endif %}>
+{% if confirmed %}<div class="alert alert-success py-2 small" role="status">Plan confirmed: you can still reach this server.</div>{% endif %}
 {% if pending %}<div class="alert alert-warning py-2 small" role="status">Waiting for this server to load the plan; this part of the page updates every 5 s to confirm you still reach it.</div>{% endif %}
 
 <h2 class="h5 mt-3">{{ host_name }}</h2>
