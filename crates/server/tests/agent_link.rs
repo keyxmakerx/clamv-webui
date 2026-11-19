@@ -31,6 +31,10 @@ async fn setup() -> T {
     clamv_webui::app::seed_endpoint(&db, &cli.config)
         .await
         .expect("seed");
+    // review-only: API tokens need their creator to exist as an enabled admin (#7).
+    db.create_user("admin", "x", clamv_webui::auth::Role::Admin, false)
+        .await
+        .expect("admin");
     let st = Arc::new(AppState::new(cli.config.clone(), db));
     T {
         app: router(st.clone(), &cli.config),
