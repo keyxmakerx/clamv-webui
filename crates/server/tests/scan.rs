@@ -1277,3 +1277,169 @@ async fn detections_dashboard_and_search() {
     );
     let _ = std::fs::remove_dir_all(&base);
 }
+
+async fn text(res: axum::response::Response) -> String {
+    String::from_utf8_lossy(
+        &http_body_util::BodyExt::collect(res.into_body())
+            .await
+            .expect("b")
+            .to_bytes(),
+    )
+    .into_owned()
+}
+
+#[tokio::test]
+async fn schedules_offer_presets_and_prefill_the_roots() {
+    let base = std::env::temp_dir().join(format!("palisade-preset-{}", palisade::db::new_id()));
+    std::fs::create_dir_all(base.join("media")).expect("mkdir");
+    let root = std::fs::canonicalize(base.join("media")).expect("real");
+    let roots = root.to_str().expect("utf8").to_owned();
+    let (app, st, c, t) = app(&["--scan-roots", &roots]).await;
+    let html = text(
+        app.clone()
+            .oneshot(page_get("/admin/schedules", &c))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(html.contains("Nightly at 02:00") && html.contains(&format!(">{roots}</textarea>")));
+    // A preset with an empty cron field is used as is.
+    let weekly = format!("_csrf={t}&name=weekly&preset=0+3+*+*+0&cron=&paths={roots}");
+    let html = text(
+        send(app.clone(), form("/admin/schedules", &weekly, &c))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(html.contains("Added weekly."), "{html}");
+    assert!(html.contains("Weekly, Sunday at 03:00"));
+    // A typed cron line wins over the preset.
+    let typed = format!("_csrf={t}&name=typed&preset=0+2+*+*+*&cron=15+4+*+*+*&paths={roots}");
+    send(app.clone(), form("/admin/schedules", &typed, &c))
+        .await
+        .expect("res");
+    let crons: Vec<String> = st
+        .db
+        .list_schedules()
+        .await
+        .expect("list")
+        .into_iter()
+        .map(|s| s.cron)
+        .collect();
+    assert!(crons.contains(&"0 3 * * 0".to_owned()) && crons.contains(&"15 4 * * *".to_owned()));
+    // Custom with nothing typed says what to do.
+    let empty = format!("_csrf={t}&name=e&preset=custom&cron=&paths={roots}");
+    let res = send(app.clone(), form("/admin/schedules", &empty, &c))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    assert!(text(res).await.contains("Pick how often it runs"));
+    let bad = format!("_csrf={t}&name=b&preset=custom&cron=99+*+*+*+*&paths={roots}");
+    let res = send(app.clone(), form("/admin/schedules", &bad, &c))
+        .await
+        .expect("res");
+    assert!(
+        text(res)
+            .await
+            .contains("Pick a preset, or write five fields")
+    );
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[tokio::test]
+async fn watched_folders_scan_now_and_forget_deleted_files() {
+    let base = std::env::temp_dir().join(format!("palisade-wnow-{}", palisade::db::new_id()));
+    let dir = base.join("in");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    std::fs::write(dir.join("a.bin"), b"a").expect("write");
+    std::fs::write(dir.join("b.bin"), b"b").expect("write");
+    let roots = base.to_str().expect("utf8").to_owned();
+    let (app, st, c, t) = app(&["--scan-roots", &roots]).await;
+    let res = send(
+        app.clone(),
+        form(
+            "/admin/watch",
+            &format!("_csrf={t}&path={}", dir.display()),
+            &c,
+        ),
+    )
+    .await
+    .expect("res");
+    assert_eq!(res.status(), StatusCode::OK);
+    let w = st.db.list_watches().await.expect("list").remove(0);
+    let html = text(
+        app.clone()
+            .oneshot(page_get("/admin/watch", &c))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(html.contains(&format!("/admin/watch/{}/scan", w.id)));
+
+    // Scan now queues one path scan of the whole folder and shows its job.
+    let res = app
+        .clone()
+        .oneshot(form(
+            &format!("/admin/watch/{}/scan", w.id),
+            &format!("_csrf={t}"),
+            &c,
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::SEE_OTHER);
+    let to = res.headers()[header::LOCATION]
+        .to_str()
+        .expect("loc")
+        .to_owned();
+    let job = st
+        .db
+        .job(to.trim_start_matches("/jobs/"))
+        .await
+        .expect("q")
+        .expect("job");
+    assert_eq!(
+        (job.kind.as_str(), job.target.as_str()),
+        ("PATH", w.path.as_str())
+    );
+
+    // Records of deleted files are dropped by the daily sweep; present ones stay.
+    let real = std::fs::canonicalize(&dir).expect("real");
+    let a = real.join("a.bin").to_str().expect("utf8").to_owned();
+    let b = real.join("b.bin").to_str().expect("utf8").to_owned();
+    assert!(st.db.processed(&a).await.expect("q").is_some());
+    std::fs::remove_file(dir.join("a.bin")).expect("rm");
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    st.watcher.sweep_soon();
+    palisade::watch::pass(&st).await;
+    assert!(
+        st.db.processed(&a).await.expect("q").is_none(),
+        "deleted file forgotten"
+    );
+    assert!(
+        st.db.processed(&b).await.expect("q").is_some(),
+        "present file kept"
+    );
+    assert_eq!(st.watcher.known_len(), 1, "memory follows the disk");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[tokio::test]
+async fn endpoint_test_checks_eicar_detection() {
+    let (app, st, c, t) = app(&[]).await;
+    let ep = st.db.list_endpoints().await.expect("list").remove(0);
+    let res = send(
+        app.clone(),
+        form(
+            &format!("/admin/endpoints/{}/test", ep.id),
+            &format!("_csrf={t}"),
+            &c,
+        ),
+    )
+    .await
+    .expect("res");
+    let html = text(res).await;
+    assert!(
+        html.contains("flagged the EICAR test file (Eicar-Test-Signature)"),
+        "{html}"
+    );
+}

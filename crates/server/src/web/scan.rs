@@ -205,7 +205,7 @@ async fn scan_path(
 }
 
 /// Why a path scan was not queued.
-enum Queue {
+pub(crate) enum Queue {
     /// Shown to the user as is.
     Refused(&'static str),
     Unavailable,
@@ -213,7 +213,7 @@ enum Queue {
 
 /// Check and queue one path scan, on this server or an agent, the same way
 /// for a new scan and a re-scan.
-async fn queue_path(
+pub(crate) async fn queue_path(
     st: &AppState,
     u: &User,
     info: &RequestInfo,
@@ -350,7 +350,7 @@ fn can_rescan(j: &Job) -> bool {
 }
 
 /// The same per-user scan budget the API uses, so a stolen session cannot flood clamd.
-fn rate_limited(st: &AppState, u: &User, info: &RequestInfo) -> Option<Response> {
+pub(crate) fn rate_limited(st: &AppState, u: &User, info: &RequestInfo) -> Option<Response> {
     if st.scan_rate.allow(&format!("u:{}", u.id)) {
         return None;
     }
@@ -361,7 +361,13 @@ fn rate_limited(st: &AppState, u: &User, info: &RequestInfo) -> Option<Response>
     ))
 }
 
-async fn audit_scan(st: &AppState, u: &User, info: &RequestInfo, job: &Job, action: &'static str) {
+pub(crate) async fn audit_scan(
+    st: &AppState,
+    u: &User,
+    info: &RequestInfo,
+    job: &Job,
+    action: &'static str,
+) {
     st.db
         .audit(AuditEntry {
             username: Some(u.username.clone()),
@@ -606,7 +612,7 @@ fn fmt_duration(ms: Option<i64>) -> String {
     }
 }
 
-fn fmt_size(b: Option<i64>) -> String {
+pub(crate) fn fmt_size(b: Option<i64>) -> String {
     let Some(b) = b else { return String::new() };
     let units = ["B", "KiB", "MiB", "GiB", "TiB"];
     let mut v = b as f64;

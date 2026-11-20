@@ -375,6 +375,7 @@ async fn route_table_by_role() {
         ("/admin/canaries/x/delete", Role::Admin),
         ("/admin/watch/x/enabled", Role::Admin),
         ("/admin/watch/x/delete", Role::Admin),
+        ("/admin/watch/x/scan", Role::Admin),
         ("/admin/integrations/webhook/test", Role::Admin),
         ("/admin/settings/review", Role::Admin),
         ("/admin/settings/apply", Role::Admin),
@@ -617,8 +618,15 @@ async fn admin_adds_an_agent_and_targets_it() {
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     let res = post("/admin/agents".into(), format!("_csrf={t}&name=nas-2")).await;
     let html = body(res).await;
-    assert!(html.contains("Token for nas-2") && html.contains("pal_agent_"));
+    assert!(html.contains("Set up nas-2 on its host") && html.contains("pal_agent_"));
     assert!(html.contains("AGENT_TOKEN_FILE") && html.contains("command: agent"));
+    // Plain HTTP: say agents need HTTPS; the http:// compose is only the opt-in VPN variant.
+    assert!(html.contains("Agents need HTTPS.") && html.contains("TLS_SELF_SIGNED"));
+    assert!(html.contains("AGENT_SERVER_URL: http://nas:8080"));
+    assert!(html.contains("AGENT_ALLOW_PLAINTEXT: "));
+    assert!(html.contains("AGENT_ALLOW: scan,canaries,checks "));
+    // The token goes into a file by pasting, never into a command line.
+    assert!(html.contains("cat &gt; agent_token") && !html.contains("echo pal_agent_"));
     let a = st.db.list_agents().await.expect("list").remove(0);
     let res = app
         .clone()
@@ -626,8 +634,24 @@ async fn admin_adds_an_agent_and_targets_it() {
         .await
         .expect("res");
     let html = body(res).await;
-    assert!(!html.contains("Token for"), "token shown once");
-    assert!(html.contains("never connected"));
+    assert!(
+        !html.contains("Set up nas-2") && !html.contains("enroll-token"),
+        "token shown once"
+    );
+    assert!(
+        html.contains("never connected") && html.contains("docker compose logs palisade-agent")
+    );
+    // A refusal by the agent's own AGENT_ALLOW shows on the page with what to add.
+    st.agents.note_problem(
+        a.id,
+        "Refused a FIREWALL job: add firewall to AGENT_ALLOW on that host if you want to allow it.",
+    );
+    let res = app
+        .clone()
+        .oneshot(get("/admin/agents", Some(&c)))
+        .await
+        .expect("res");
+    assert!(body(res).await.contains("Last problem"));
 
     // Not offered as a target until it has connected and reported its roots.
     let res = post(
@@ -703,6 +727,84 @@ async fn admin_adds_an_agent_and_targets_it() {
             .expect("jobs")
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn agent_setup_uses_public_url_https_and_the_ticked_permissions() {
+    let dir = std::env::temp_dir().join(format!("palisade-ui-tls-{}", palisade::db::new_id()));
+    let data = dir.to_str().expect("utf8").to_owned();
+    let (app, st) = app_with(&[
+        "--public-url",
+        "https://palisade.example.com",
+        "--allowed-hosts",
+        "nas",
+        "--tls-self-signed",
+        "--data-dir",
+        &data,
+    ])
+    .await;
+    let (c, t) = admin_cookie(&st).await;
+    let page = || {
+        Request::get("/admin/agents")
+            .header(header::HOST, "nas:8080")
+            .header(header::COOKIE, &c)
+            .body(Body::empty())
+            .expect("req")
+    };
+    let html = body(app.clone().oneshot(page()).await.expect("res")).await;
+    assert!(
+        html.contains("value=\"https://palisade.example.com\""),
+        "PUBLIC_URL prefilled"
+    );
+    assert!(!html.contains("Agents need HTTPS."));
+    assert!(html.contains("name=\"allow\" value=\"firewall\""));
+
+    let res = app
+        .clone()
+        .oneshot(form(
+            "/admin/agents",
+            &format!("_csrf={t}&choices=1&name=edge&server=&folder=%2Fsrv%2Fmedia&allow=scan&allow=quarantine"),
+            Some(&c),
+        ))
+        .await
+        .expect("res");
+    let html = body(res).await;
+    assert!(
+        html.contains("AGENT_SERVER_URL: https://palisade.example.com "),
+        "{html}"
+    );
+    assert!(html.contains("AGENT_SERVER_FINGERPRINT: "));
+    assert!(html.contains("AGENT_ALLOW: scan,quarantine "));
+    assert!(html.contains("SCAN_ROOTS: /srv/media "));
+    assert!(html.contains("QUARANTINE_DIR: /quarantine"));
+    assert!(!html.contains("AGENT_ALLOW_PLAINTEXT"));
+    assert!(html.contains("data-copy=\"enroll-compose\""));
+
+    // Bad input is refused with what to do, and nothing is created.
+    for (body_s, says) in [
+        ("name=x1&choices=1&allow=root", "Unknown permission."),
+        ("name=x2&choices=1", "Tick at least one"),
+        (
+            "name=x3&allow=scan&server=https%3A%2F%2Fu%3Ap%40h",
+            "Server address",
+        ),
+        ("name=x4&allow=scan&folder=%2Fa%20b", "Folder to scan"),
+    ] {
+        let res = app
+            .clone()
+            .oneshot(form(
+                "/admin/agents",
+                &format!("_csrf={t}&{body_s}"),
+                Some(&c),
+            ))
+            .await
+            .expect("res");
+        assert_eq!(res.status(), StatusCode::SEE_OTHER);
+        let html = body(app.clone().oneshot(page()).await.expect("res")).await;
+        assert!(html.contains(says), "{says}");
+        assert_eq!(st.db.list_agents().await.expect("list").len(), 1, "{says}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[tokio::test]
@@ -1113,6 +1215,35 @@ async fn quarantine_is_off_until_configured_and_needs_a_real_detection() {
         .expect("res");
         assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{d}");
     }
+    // Held files are counted with their total size.
+    for (p, size) in [("/scan/a.exe", 2048), ("/scan/b.exe", 1024)] {
+        let i = st
+            .db
+            .create_quarantine(None, p, "Eicar", "admin")
+            .await
+            .expect("create")
+            .expect("new");
+        st.db
+            .set_quarantine_state(
+                &i.id,
+                palisade::db::quarantine::HELD,
+                None,
+                Some(("ab", size)),
+                "admin",
+            )
+            .await
+            .expect("held");
+    }
+    let res = app
+        .clone()
+        .oneshot(get("/admin/quarantine", Some(&c)))
+        .await
+        .expect("res");
+    let html = body(res).await;
+    assert!(
+        html.contains("<strong>2</strong> file(s) in quarantine, <strong>3.0 KiB</strong>"),
+        "{html}"
+    );
 }
 
 #[tokio::test]

@@ -4,39 +4,48 @@
 <h1 class="h3">{{ nav.t("Agents") }}</h1>
 <p class="muted">{{ nav.t("An agent runs on another host next to its own clamd and scans that host's folders. It connects out to this server, so it needs no open port. Pick it under") }} <em>{{ nav.t("Run on") }}</em> {{ nav.t("when scanning a path or adding a schedule.") }}</p>
 {% if let Some(c) = cert_changed %}<div class="alert alert-warning" role="alert"><strong>{{ nav.t("This server's certificate changed on") }} {{ c.when }}.</strong> {{ nav.t("Agents pinned to the old one cannot connect until their") }} <code>AGENT_SERVER_FINGERPRINT</code> {{ nav.t("is set to") }} <code class="text-break user-select-all">{{ c.fingerprint }}</code>.</div>{% endif %}
-{% if let Some(e) = enroll %}<div class="alert alert-warning" role="alert"><strong>{{ nav.t("Token for") }} {{ e.name }}:</strong>
-<div class="mt-2"><code class="text-break user-select-all">{{ e.secret }}</code></div>
-<div class="small mt-2">{{ nav.t("Save it on the agent host as") }} <code>./agent_token</code>{{ nav.t(", owned by UID 10001 with mode 600, now. Only its hash is kept.") }}</div>
-<div class="small mt-3">{{ nav.t("Compose for the agent host:") }}</div>
-<pre class="small mt-1 mb-0 user-select-all"><code>services:
-  palisade-agent:
-    image: ghcr.io/keyxmakerx/palisade:latest
-    command: agent
-    restart: unless-stopped
-    environment:
-      AGENT_SERVER_URL: {{ e.server }}  # how the agent reaches this server{% if e.fingerprint.is_none() %}
-      # AGENT_ALLOW_PLAINTEXT: "true"  # needed for http://; only on a private VPN or mesh{% endif %}
-      AGENT_TOKEN_FILE: /run/secrets/agent_token
-{% if let Some(fp) = e.fingerprint %}      AGENT_SERVER_FINGERPRINT: {{ fp }}  # pins this server's certificate
-{% endif %}      CLAMD_ENDPOINT: tcp://clamav:3310  # the agent host's clamd; share a network with it or add a clamav service
-      SCAN_ROOTS: /data  # folders this agent may scan; clamd must see the same paths
-    secrets:
-      - agent_token
-    read_only: true
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    volumes:
-      - /data:/data:ro
-secrets:
-  agent_token:
-    file: ./agent_token</code></pre></div>{% endif %}
+{% if let Some(e) = enroll %}<section class="card mt-3 border-warning" id="enroll"><div class="card-body">
+<h2 class="h5">{{ nav.t("Set up") }} {{ e.name }} {{ nav.t("on its host") }}</h2>
+{% if !e.https %}<div class="alert alert-danger small" role="alert"><strong>{{ nav.t("Agents need HTTPS.") }}</strong> {{ nav.t("This server is reached over plain http://, so the agent refuses to connect: its token would travel unencrypted. To turn HTTPS on, add") }} <code>TLS_SELF_SIGNED: "true"</code> {{ nav.t("to the palisade service's environment and restart it. Then open this page over https:// and use New token on this agent: the compose gets the certificate fingerprint.") }}</div>{% endif %}
+<p class="mb-1"><strong>{{ nav.t("Token") }}</strong> <span class="small muted">{{ nav.t("(shown once; only its hash is kept)") }}</span></p>
+<div class="d-flex gap-2 align-items-start"><code id="enroll-token" class="text-break user-select-all">{{ e.secret }}</code><button class="btn btn-sm btn-outline-secondary" type="button" data-copy="enroll-token">{{ nav.t("Copy") }}</button></div>
+<ol class="small mt-3 mb-2">
+<li>{{ nav.t("On the agent host, make a folder and go into it:") }} <code class="user-select-all">mkdir -p palisade-agent &amp;&amp; cd palisade-agent</code></li>
+<li>{{ nav.t("Create the token file: run") }} <code class="user-select-all">(umask 077; cat &gt; agent_token)</code>{{ nav.t(", paste the token, press Enter, then Ctrl-D. This keeps it out of your shell history.") }}</li>
+<li>{{ nav.t("Let the agent read it:") }} <code class="user-select-all">sudo chown 10001:10001 agent_token</code></li>
+{% if e.rotated %}<li>{{ nav.t("Restart the agent:") }} <code class="user-select-all">docker compose restart palisade-agent</code></li>
+{% else %}<li>{{ nav.t("Save the compose below as") }} <code>compose.yaml</code> {{ nav.t("in that folder and run") }} <code class="user-select-all">docker compose up -d</code></li>
+<li>{{ nav.t("Within a minute or two this page shows it online. If not,") }} <code class="user-select-all">docker compose logs palisade-agent</code> {{ nav.t("says what to fix.") }}</li>{% endif %}
+</ol>
+{% if e.https %}
+{% if e.rotated %}<details class="small"><summary>{{ nav.t("Full compose for this host (default choices)") }}</summary>{% endif %}
+<div class="d-flex justify-content-between align-items-center mt-2"><span class="small">{{ nav.t("Compose for the agent host:") }}</span><button class="btn btn-sm btn-outline-secondary" type="button" data-copy="enroll-compose">{{ nav.t("Copy") }}</button></div>
+<pre class="small mt-1 mb-1 user-select-all"><code id="enroll-compose">{{ e.compose }}</code></pre>
+{% if e.pinned %}<p class="small muted mb-0">{{ nav.t("The fingerprint pins this server's own certificate. If agents reach it through a reverse proxy with its own certificate, remove") }} <code>AGENT_SERVER_FINGERPRINT</code>{{ nav.t(": a public CA needs nothing, a private CA needs") }} <code>AGENT_CA_FILE</code>.</p>
+{% else %}<p class="small muted mb-0">{{ nav.t("No fingerprint: the agent checks the certificate against public CAs. For a private CA, mount it and set") }} <code>AGENT_CA_FILE</code>.</p>{% endif %}
+{% if e.rotated %}</details>{% endif %}
+{% else %}
+<details class="small"><summary>{{ nav.t("Private VPN or mesh only: compose for plain HTTP") }}</summary>
+<p class="mt-2 mb-1">{{ nav.t("Only if the link between the hosts is already encrypted (WireGuard, Tailscale). Anyone on the path can read the token and the results.") }}</p>
+<div class="d-flex justify-content-end"><button class="btn btn-sm btn-outline-secondary" type="button" data-copy="enroll-compose">{{ nav.t("Copy") }}</button></div>
+<pre class="small mt-1 mb-0 user-select-all"><code id="enroll-compose">{{ e.plaintext_compose }}</code></pre>
+</details>
+{% endif %}
+</div></section>{% endif %}
 <section class="card mt-3"><div class="card-body">
 <h2 class="h5">{{ nav.t("Add agent") }}</h2>
-<form method="post" action="/admin/agents" class="row g-2 align-items-end">
+{% if no_https %}<div class="alert alert-warning small py-2" role="alert"><strong>{{ nav.t("Agents need HTTPS.") }}</strong> {{ nav.t("This server is plain HTTP. Add") }} <code>TLS_SELF_SIGNED: "true"</code> {{ nav.t("to the palisade service's environment and restart it, then add the agent from the https:// address.") }}</div>{% endif %}
+<form method="post" action="/admin/agents" class="row g-3">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
-<div class="col-md-6"><label class="form-label" for="an">{{ nav.t("Name") }}</label><input class="form-control" id="an" name="name" required maxlength="64" pattern="[A-Za-z0-9._-]+" placeholder="{{ nav.t("backup-nas") }}" autocomplete="off"></div>
+<input type="hidden" name="choices" value="1">
+<div class="col-md-3"><label class="form-label" for="an">{{ nav.t("Name") }}</label><input class="form-control" id="an" name="name" required maxlength="64" pattern="[A-Za-z0-9._-]+" placeholder="{{ nav.t("backup-nas") }}" autocomplete="off"></div>
+<div class="col-md-5"><label class="form-label" for="as">{{ nav.t("Server address, as the agent host reaches it") }}</label><input class="form-control" id="as" name="server" maxlength="255" value="{{ server }}" autocomplete="off">
+<div class="form-text">{{ nav.t("From PUBLIC_URL or this page's address. Change it if the agent host uses another name or a VPN address.") }}</div></div>
+<div class="col-md-4"><label class="form-label" for="af">{{ nav.t("Folder to scan on that host") }}</label><input class="form-control" id="af" name="folder" maxlength="255" value="{{ default_folder }}" autocomplete="off">
+<div class="form-text">{{ nav.t("Mounted at the same path for the agent and its clamd.") }}</div></div>
+<fieldset class="col-12"><legend class="form-label fs-6">{{ nav.t("That host lets this server") }}</legend>
+{% for c in allow_choices %}<div class="form-check"><input class="form-check-input" type="checkbox" id="aa-{{ c.0 }}" name="allow" value="{{ c.0 }}"{% if c.2 %} checked{% endif %}><label class="form-check-label" for="aa-{{ c.0 }}">{{ c.1 }} <code class="small">{{ c.0 }}</code></label></div>{% endfor %}
+<div class="form-text">{{ nav.t("Written into the agent's AGENT_ALLOW. It is enforced on the agent host, so this server can never widen it.") }}</div></fieldset>
 <div class="col-md-3"><button class="btn btn-primary w-100" type="submit">{{ nav.t("Add agent") }}</button></div>
 </form>
 </div></section>
@@ -45,8 +54,8 @@ secrets:
 <thead><tr><th>{{ nav.t("Agent") }}</th><th>{{ nav.t("State") }}</th><th>clamd</th><th>{{ nav.t("Roots") }}</th><th>{{ nav.t("Jobs") }}</th><th><span class="visually-hidden">{{ nav.t("Actions") }}</span></th></tr></thead>
 <tbody>
 {% for r in rows %}<tr>
-<td><strong>{{ r.name }}</strong> <code class="small">{{ r.prefix }}…</code><div class="small muted">{% if !r.version.is_empty() %}v{{ r.version }} · {% endif %}{% if !r.ip.is_empty() %}{{ r.ip }} · {% endif %}{{ nav.t("seen") }} {{ r.last_seen }}</div></td>
-<td>{% if r.state == "online" %}<span class="badge bg-success">{{ nav.t("online") }}</span>{% else if r.state == "offline" %}<span class="badge bg-danger">{{ nav.t("offline") }}</span>{% else if r.state == "version mismatch" %}<span class="badge bg-warning text-dark">{{ nav.t("version mismatch") }}</span><div class="small">{{ r.hint }}</div>{% else %}<span class="badge bg-secondary">{{ r.state }}</span>{% endif %}</td>
+<td><strong>{{ r.name }}</strong> <code class="small">{{ r.prefix }}…</code><div class="small muted">{% if !r.version.is_empty() %}v{{ r.version }} · {% endif %}{% if !r.ip.is_empty() %}{{ r.ip }} · {% endif %}{{ nav.t("seen") }} {{ r.last_seen }}</div>{% if !r.problem.is_empty() %}<div class="small text-danger">{{ nav.t("Last problem") }} {{ r.problem }}</div>{% endif %}</td>
+<td>{% if r.state == "online" %}<span class="badge bg-success">{{ nav.t("online") }}</span>{% else if r.state == "offline" %}<span class="badge bg-danger">{{ nav.t("offline") }}</span>{% else if r.state == "version mismatch" %}<span class="badge bg-warning text-dark">{{ nav.t("version mismatch") }}</span><div class="small">{{ r.hint }}</div>{% else if r.state == "never connected" %}<span class="badge bg-secondary">{{ nav.t("never connected") }}</span><div class="small muted">{{ nav.t("On its host,") }} <code>docker compose logs palisade-agent</code> {{ nav.t("says why.") }}</div>{% else %}<span class="badge bg-secondary">{{ r.state }}</span>{% endif %}</td>
 <td class="small text-break">{{ r.clamd }}</td>
 <td class="small text-break">{% for p in r.roots %}<div><code>{{ p }}</code></div>{% endfor %}</td>
 <td class="small text-nowrap">{{ r.running }}/{{ r.slots }} {{ nav.t("running") }}{% if r.queued > 0 %}<div>{{ r.queued }} {{ nav.t("queued") }}</div>{% endif %}</td>

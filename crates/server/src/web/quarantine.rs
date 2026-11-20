@@ -43,6 +43,9 @@ struct QuarantinePage {
     enabled: bool,
     auto: bool,
     dir: String,
+    /// Files in quarantine now, and their total size.
+    held: usize,
+    held_size: String,
 }
 
 async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
@@ -66,11 +69,11 @@ fn state_label(s: &str) -> &'static str {
 async fn show(st: &AppState, nav: Nav) -> Response {
     let agents = st.db.list_agents().await.unwrap_or_default();
     let server = crate::canary::hostname();
-    let entries = st
-        .db
-        .list_quarantine(500)
-        .await
-        .unwrap_or_default()
+    let items = st.db.list_quarantine(500).await.unwrap_or_default();
+    let held: Vec<_> = items.iter().filter(|i| i.state == q::HELD).collect();
+    let held_bytes: i64 = held.iter().filter_map(|i| i.size_bytes).sum();
+    let held_n = held.len();
+    let entries = items
         .into_iter()
         .map(|i| Entry {
             host: i.agent_id.map_or_else(
@@ -93,10 +96,7 @@ async fn show(st: &AppState, nav: Nav) -> Response {
             when: fmt_ts(i.updated_at),
             by: i.updated_by.unwrap_or_default(),
             sha256: i.sha256.unwrap_or_default(),
-            size: i
-                .size_bytes
-                .map(|b| format!("{:.1} MB", b as f64 / 1_048_576.0))
-                .unwrap_or_default(),
+            size: super::scan::fmt_size(i.size_bytes),
             id: i.id,
             path: i.original_path,
             signature: i.signature,
@@ -120,6 +120,8 @@ async fn show(st: &AppState, nav: Nav) -> Response {
                 .as_ref()
                 .map(|d| d.display().to_string())
                 .unwrap_or_default(),
+            held: held_n,
+            held_size: super::scan::fmt_size(Some(held_bytes)),
         },
     )
 }
