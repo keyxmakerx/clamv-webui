@@ -6,11 +6,11 @@
 {% if status.configured %}{% if let Some(e) = status.error %}<div class="alert alert-warning py-2 small" role="status">{{ nav.t("Last refresh failed:") }} {{ e }}</div>{% endif %}
 {% else %}<section class="card"><div class="card-body">
 <h2 class="h5">{{ nav.t("Connect CrowdSec") }}</h2>
-<p>{{ nav.t("clamv reads CrowdSec's Local API as a watcher, so it sees alerts and decisions and can add or remove bans. Nothing is stored here; a restart reads the LAPI again.") }}</p>
+<p>{{ nav.t("Palisade reads CrowdSec's Local API as a watcher, so it sees alerts and decisions and can add or remove bans. Nothing is stored here; a restart reads the LAPI again.") }}</p>
 <ol class="mb-2">
 <li>{{ nav.t("Put a long random password in a file, e.g.") }} <code>openssl rand -hex 24 &gt; crowdsec_pw</code>.</li>
-<li>{{ nav.t("Add the watcher on the CrowdSec host:") }} <code>cscli machines add clamv-webui --password "$(cat crowdsec_pw)"</code> {{ nav.t("(in Docker, run it with") }} <code>docker exec crowdsec</code>).</li>
-<li>{{ nav.t("Set") }} <code>CROWDSEC_LAPI_URL</code> (e.g. <code>http://crowdsec:8080</code>{{ nav.t(") and") }} <code>CROWDSEC_PASSWORD_FILE</code> {{ nav.t("on clamv, then restart it.") }}</li>
+<li>{{ nav.t("Add the watcher on the CrowdSec host:") }} <code>cscli machines add palisade --password "$(cat crowdsec_pw)"</code> {{ nav.t("(in Docker, run it with") }} <code>docker exec crowdsec</code>).</li>
+<li>{{ nav.t("Set") }} <code>CROWDSEC_LAPI_URL</code> (e.g. <code>http://crowdsec:8080</code>{{ nav.t(") and") }} <code>CROWDSEC_PASSWORD_FILE</code> {{ nav.t("on Palisade, then restart it.") }}</li>
 </ol>
-<p class="small muted mb-0">{{ nav.t("Set") }} <code>CROWDSEC_READ_ONLY=true</code> {{ nav.t("to hide the ban buttons. Deleting alerts needs clamv in CrowdSec's") }} <code>api.server.trusted_ips</code>{{ nav.t(", so clamv doesn't offer it.") }}</p>
+<p class="small muted mb-0">{{ nav.t("Set") }} <code>CROWDSEC_READ_ONLY=true</code> {{ nav.t("to hide the ban buttons. Deleting alerts needs Palisade in CrowdSec's") }} <code>api.server.trusted_ips</code>{{ nav.t(", so Palisade doesn't offer it.") }}</p>
 </div></section>{% endif %}

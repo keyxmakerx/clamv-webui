@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: ClamAV Web UI - Stable API
+  title: Palisade - Stable API
   version: 1.2.0-mcp
   description: |
     First-party, versioned API. Bearer credentials must be transmitted over HTTPS.

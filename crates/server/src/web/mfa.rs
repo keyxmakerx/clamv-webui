@@ -21,8 +21,8 @@ use crate::db::audit::AuditEntry;
 use crate::db::sessions::Session;
 use crate::db::users::User;
 
-pub const MFA_COOKIE: &str = "clamv_mfa";
-const ISSUER: &str = "ClamAV Web UI";
+pub const MFA_COOKIE: &str = "palisade_mfa";
+const ISSUER: &str = "Palisade";
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()

@@ -1,5 +1,5 @@
 {% extends "shell.html" %}
-{% block title %}{{ nav.t("Integrations · ClamAV Web UI") }}{% endblock %}
+{% block title %}{{ nav.t("Integrations · Palisade") }}{% endblock %}
 {% block content %}
 <h1 class="h3">{{ nav.t("Integrations") }}</h1>
 <section class="card mt-3"><div class="card-body">
@@ -25,7 +25,7 @@
 {% if metrics %}<p>{{ nav.t("Metrics are served at") }} <code>/metrics</code> {{ nav.t("(also") }} <code>/actuator/prometheus</code>{{ nav.t(") with") }} <code>Authorization: Bearer</code> {{ nav.t("and the configured") }} <code>METRICS_TOKEN</code>.</p>
 {% else %}<p class="muted">{{ nav.t("Off. Set") }} <code>METRICS_TOKEN</code> {{ nav.t("(or") }} <code>METRICS_TOKEN_FILE</code>{{ nav.t(") to serve") }} <code>/metrics</code>{{ nav.t(". Use at least 16 random characters.") }}</p>{% endif %}
 <ul class="mb-0">
-<li><a href="/admin/integrations/files/grafana-clamav-webui.json">{{ nav.t("Grafana dashboard") }}</a></li>
+<li><a href="/admin/integrations/files/grafana-palisade.json">{{ nav.t("Grafana dashboard") }}</a></li>
 <li><a href="/admin/integrations/files/clamav-alerts.yml">{{ nav.t("Prometheus alert rules") }}</a></li>
 <li><a href="/admin/integrations/files/prometheus.yml.example">{{ nav.t("Prometheus scrape config example") }}</a></li>
 </ul>

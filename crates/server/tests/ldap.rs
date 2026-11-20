@@ -6,17 +6,17 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use clamv_webui::app::{AppState, router};
-use clamv_webui::auth::Role;
-use clamv_webui::auth::ldap::{Ldap, LdapError};
-use clamv_webui::config::Cli;
-use clamv_webui::db::Db;
 use clap::Parser;
+use palisade::app::{AppState, router};
+use palisade::auth::Role;
+use palisade::auth::ldap::{Ldap, LdapError};
+use palisade::config::Cli;
+use palisade::db::Db;
 use tower::ServiceExt;
 
 fn cli(url: &str, ca: &str, extra: &[&str]) -> Cli {
     let mut a = vec![
-        "clamv-webui",
+        "palisade",
         "--clamd-endpoint",
         "tcp://127.0.0.1:1",
         "--ldap-url",

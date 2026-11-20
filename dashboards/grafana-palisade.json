@@ -1,7 +1,7 @@
 {
   "id": null,
-  "uid": "clamav-webui",
-  "title": "ClamAV Web UI",
+  "uid": "palisade",
+  "title": "Palisade",
   "tags": [
     "clamav",
     "security",

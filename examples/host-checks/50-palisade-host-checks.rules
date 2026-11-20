@@ -1,0 +1,20 @@
+// Palisade may start its own host-check and firewall units and switch their timers, nothing else.
+polkit.addRule(function (action, subject) {
+  if (action.id !== "org.freedesktop.systemd1.manage-units" || subject.user !== "palisade") {
+    return polkit.Result.NOT_HANDLED;
+  }
+  var unit = action.lookup("unit");
+  var verb = action.lookup("verb");
+  var run = ["palisade-aide-check.service", "palisade-aide-accept.service",
+             "palisade-rkhunter-check.service", "palisade-rkhunter-propupd.service",
+             "palisade-firewall-snapshot.service", "palisade-firewall-apply.service",
+             "palisade-firewall-remove.service", "palisade-timer-set.service"];
+  var timers = ["palisade-aide-check.timer", "palisade-rkhunter-check.timer"];
+  if (run.indexOf(unit) >= 0 && verb === "start") {
+    return polkit.Result.YES;
+  }
+  if (timers.indexOf(unit) >= 0 && (verb === "start" || verb === "stop")) {
+    return polkit.Result.YES;
+  }
+  return polkit.Result.NO;
+});

@@ -1,0 +1,11 @@
+# Palisade: daily rkhunter check; Palisade turns it on or off, Palisade sets its time with a drop-in.
+[Unit]
+Description=Palisade host check: rkhunter, daily
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

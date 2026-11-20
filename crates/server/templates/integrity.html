@@ -1,5 +1,5 @@
 {% extends "shell.html" %}
-{% block title %}{{ nav.t("Host Checks · ClamAV Web UI") }}{% endblock %}
+{% block title %}{{ nav.t("Host Checks · Palisade") }}{% endblock %}
 {% block content %}
 <h1 class="h3">{{ nav.t("Host checks") }}</h1>
 <h2 class="h5 mt-3">{{ nav.t("AIDE and rkhunter") }}</h2>
@@ -18,7 +18,7 @@
 </tbody></table>
 </div></section>
 <h2 class="h5 mt-4">{{ nav.t("Managed checks") }}</h2>
-<p class="muted">{{ nav.t("clamv can start AIDE and rkhunter itself without root: each host installs fixed, sandboxed systemd units and a polkit rule once (") }}<code>host-setup</code>{{ nav.t("), and clamv may only start those units and switch their timers. Accepting a new baseline asks for your passkey every time.") }}</p>
+<p class="muted">{{ nav.t("Palisade can start AIDE and rkhunter itself without root: each host installs fixed, sandboxed systemd units and a polkit rule once (") }}<code>host-setup</code>{{ nav.t("), and Palisade may only start those units and switch their timers. Accepting a new baseline asks for your passkey every time.") }}</p>
 <div id="passkey-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
 <div id="stepup-ok" class="alert alert-success py-2 small d-none" role="status"></div>
 <section class="card mt-2"><div class="card-body table-responsive">
@@ -39,9 +39,9 @@
 </tr>{% endfor %}
 </tbody></table>
 <details class="small"><summary class="muted">{{ nav.t("How to set a host up") }}</summary>
-<ol class="mb-0 mt-1"><li>{{ nav.t("On the host, run") }} <code>docker run --rm --user 0 -v /:/host ghcr.io/keyxmakerx/clamv-webui:latest host-setup</code>{{ nav.t(". It adds a") }} <code>clamv</code> {{ nav.t("user with clamv's container uid (10001), the units and the polkit rule.") }}</li>
-<li>{{ nav.t("Mount the host's") }} <code>/run/dbus/system_bus_socket</code> {{ nav.t("read-only into the clamv or agent container.") }}</li>
-<li>{{ nav.t("Reports land where clamv already reads them (") }}<code>/var/log/aide/aide.log</code>, <code>/var/log/rkhunter.log</code>).</li></ol></details>
+<ol class="mb-0 mt-1"><li>{{ nav.t("On the host, run") }} <code>docker run --rm --user 0 -v /:/host ghcr.io/keyxmakerx/palisade:latest host-setup</code>{{ nav.t(". It adds a") }} <code>palisade</code> {{ nav.t("user with Palisade's container uid (10001), the units and the polkit rule.") }}</li>
+<li>{{ nav.t("Mount the host's") }} <code>/run/dbus/system_bus_socket</code> {{ nav.t("read-only into the Palisade or agent container.") }}</li>
+<li>{{ nav.t("Reports land where Palisade already reads them (") }}<code>/var/log/aide/aide.log</code>, <code>/var/log/rkhunter.log</code>).</li></ol></details>
 </div></section>
 <h2 class="h5 mt-4">{{ nav.t("Falco, last 30 days") }}</h2>
 <p class="muted">{{ nav.t("Each host's Falco writes JSON alerts to") }} <code>{{ falco_path }}</code> {{ nav.t("(set") }} <code>json_output: true</code> {{ nav.t("and") }} <code>file_output</code>{{ nav.t("); mount it read-only and alerts arrive within seconds. Error and worse also notify.") }}</p>

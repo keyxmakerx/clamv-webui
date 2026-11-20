@@ -1,4 +1,4 @@
-//! `clamv-webui healthcheck`: the image has no curl, so the binary probes itself.
+//! `palisade healthcheck`: the image has no curl, so the binary probes itself.
 
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::process::ExitCode;

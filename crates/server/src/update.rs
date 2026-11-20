@@ -4,7 +4,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-const RELEASES: &str = "https://api.github.com/repos/keyxmakerx/clamv-webui/releases/latest";
+const RELEASES: &str = "https://api.github.com/repos/keyxmakerx/palisade/releases/latest";
 
 /// A release newer than the running build.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,7 +51,7 @@ async fn fetch() -> Result<Option<Release>, String> {
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::limited(3))
-        .user_agent(concat!("clamv-webui/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("palisade/", env!("CARGO_PKG_VERSION")))
         .tls_backend_preconfigured(
             crate::webhook::client_tls(None).map_err(|e| format!("tls: {e}"))?,
         )
@@ -73,7 +73,7 @@ async fn fetch() -> Result<Option<Release>, String> {
     let tag = v["tag_name"].as_str().unwrap_or_default();
     let url = v["html_url"].as_str().unwrap_or_default();
     if !newer(tag, env!("CARGO_PKG_VERSION"))
-        || !url.starts_with("https://github.com/keyxmakerx/clamv-webui/")
+        || !url.starts_with("https://github.com/keyxmakerx/palisade/")
     {
         return Ok(None);
     }

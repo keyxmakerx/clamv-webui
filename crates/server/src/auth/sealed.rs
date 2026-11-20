@@ -114,7 +114,7 @@ mod tests {
 
     #[test]
     fn round_trip_and_context_binding() {
-        let p = std::env::temp_dir().join(format!("clamv-key-{}", crate::db::new_id()));
+        let p = std::env::temp_dir().join(format!("palisade-key-{}", crate::db::new_id()));
         let s = Sealer::new(p.clone());
         let c = s.seal(b"seed", "user-1").expect("seal");
         assert!(c.starts_with("v1:"));

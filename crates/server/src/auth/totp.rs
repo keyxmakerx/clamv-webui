@@ -187,8 +187,8 @@ mod tests {
         assert_eq!(codes.len(), RECOVERY_CODES);
         assert_eq!(normalize_recovery(&codes[0].to_uppercase()).len(), 12);
         assert!(
-            otpauth_uri("ClamAV Web UI", "ad min", &s)
-                .starts_with("otpauth://totp/ClamAV%20Web%20UI:ad%20min?secret=")
+            otpauth_uri("Palisade", "ad min", &s)
+                .starts_with("otpauth://totp/Palisade:ad%20min?secret=")
         );
         assert!(
             qr_data_uri("otpauth://totp/x?secret=AA")

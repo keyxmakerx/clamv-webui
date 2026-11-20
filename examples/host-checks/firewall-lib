@@ -1,7 +1,7 @@
-# Shared by clamv's firewall units: write a checked plan through nftables, ufw or firewalld.
-# Sourced, never run. Only ever touches rules clamv made: its own nft table, ufw rules
-# commented "clamv", and the firewalld rich rules it recorded in $state.
-state=/var/lib/clamv-firewall
+# Shared by Palisade's firewall units: write a checked plan through nftables, ufw or firewalld.
+# Sourced, never run. Only ever touches rules Palisade made: its own nft table, ufw rules
+# commented "palisade", and the firewalld rich rules it recorded in $state.
+state=/var/lib/palisade-firewall
 
 # Which tool owns this host's firewall: an active ufw, a running firewalld, else plain nftables.
 backend() {
@@ -29,7 +29,7 @@ plan_rules() {
 
 ufw_clear() {
   while :; do
-    n=$(ufw status numbered 2>/dev/null | awk -F'[][]' '/# clamv$/ { n = $2 + 0 } END { if (n) print n }')
+    n=$(ufw status numbered 2>/dev/null | awk -F'[][]' '/# palisade$/ { n = $2 + 0 } END { if (n) print n }')
     [ -n "$n" ] || return 0
     ufw --force delete "$n" >/dev/null || return 1
   done
@@ -38,13 +38,13 @@ ufw_clear() {
 # Denies go in first and allows after, both at the top, so allows sit above denies and above the host's own rules.
 ufw_load() {
   plan_rules "$1" | awk '$1 == "deny"' | while read -r _ proto port; do
-    ufw prepend deny proto "$proto" to any port "$port" comment clamv >/dev/null || exit 1
+    ufw prepend deny proto "$proto" to any port "$port" comment palisade >/dev/null || exit 1
   done || return 1
   # With IPv6 off in ufw, it does not filter IPv6 at all, so IPv6 sources are left out.
   v6=4
   grep -q '^IPV6=yes' /etc/default/ufw 2>/dev/null && v6=6
   plan_rules "$1" | awk -v v6="$v6" '$1 == "allow" && ($4 == 4 || v6 == 6)' | while read -r _ proto port _ cidr; do
-    ufw prepend allow proto "$proto" from "$cidr" to any port "$port" comment clamv >/dev/null || exit 1
+    ufw prepend allow proto "$proto" from "$cidr" to any port "$port" comment palisade >/dev/null || exit 1
   done
 }
 
@@ -68,14 +68,14 @@ fwd_each() {
 }
 
 nft_load() {
-  { echo "table inet clamv {}"; echo "delete table inet clamv"; echo "table inet clamv {"; cat "$1"; echo "}"; } | nft -f -
+  { echo "table inet palisade {}"; echo "delete table inet palisade"; echo "table inet palisade {"; cat "$1"; echo "}"; } | nft -f -
 }
 
 nft_clear() {
-  nft delete table inet clamv 2>/dev/null || :
+  nft delete table inet palisade 2>/dev/null || :
 }
 
-# Take away everything clamv wrote, through every tool it may have used.
+# Take away everything Palisade wrote, through every tool it may have used.
 clear_all() {
   nft_clear
   if command -v ufw >/dev/null 2>&1; then ufw_clear; fi

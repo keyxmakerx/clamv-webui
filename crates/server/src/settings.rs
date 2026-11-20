@@ -283,7 +283,7 @@ fn args(stored: &[(String, String)]) -> Vec<String> {
 pub fn check(stored: &[(String, String)]) -> Result<Config, String> {
     let mut argv: Vec<String> = std::env::args().take(1).collect();
     if argv.is_empty() {
-        argv.push("clamv-webui".into());
+        argv.push("palisade".into());
     }
     argv.extend(args(stored));
     let cli = Cli::try_parse_from(argv).map_err(|e| e.kind().to_string())?;

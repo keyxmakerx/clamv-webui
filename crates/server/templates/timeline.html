@@ -1,5 +1,5 @@
 {% extends "shell.html" %}
-{% block title %}{{ nav.t("Timeline · ClamAV Web UI") }}{% endblock %}
+{% block title %}{{ nav.t("Timeline · Palisade") }}{% endblock %}
 {% block content %}
 <div class="page-head"><h1 class="h3">{{ nav.t("Timeline") }}</h1>
 <nav class="seg" aria-label="{{ nav.t("Time range") }}">{% let opts = [("24h", nav.t("24 h")), ("7d", nav.t("7 days")), ("30d", nav.t("30 days"))] %}{% for (v, l) in opts %}<a class="seg-btn{% if range == *v %} active{% endif %}" href="/timeline?range={{ v }}{% if !host.is_empty() %}&amp;host={{ host_q }}{% endif %}"{% if range == *v %} aria-current="page"{% endif %}>{{ l }}</a>{% endfor %}</nav></div>

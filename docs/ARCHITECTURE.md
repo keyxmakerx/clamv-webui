@@ -1,10 +1,10 @@
 # Architecture
 
-How clamv-webui is put together, for anyone changing it. What it does and how to run it are in the [README](../README.md); every setting is in [CONFIGURATION.md](CONFIGURATION.md).
+How Palisade is put together, for anyone changing it. What it does and how to run it are in the [README](../README.md); every setting is in [CONFIGURATION.md](CONFIGURATION.md).
 
 ## The short version
 
-clamv-webui is one Rust binary that talks to ClamAV's `clamd` over its socket protocol. Run with `serve`, it is the web UI, the JSON API and every background task, with its state in a SQL database. Run with `agent` on another host, the same binary becomes a headless worker: it connects out to the server, takes jobs, scans with its own clamd and reports back. It never accepts connections.
+Palisade is one Rust binary that talks to ClamAV's `clamd` over its socket protocol. Run with `serve`, it is the web UI, the JSON API and every background task, with its state in a SQL database. Run with `agent` on another host, the same binary becomes a headless worker: it connects out to the server, takes jobs, scans with its own clamd and reports back. It never accepts connections.
 
 ```mermaid
 flowchart LR
@@ -13,7 +13,7 @@ flowchart LR
     clamctl([clamctl / MCP])
     prom([Prometheus])
   end
-  subgraph server["clamv-webui serve"]
+  subgraph server["palisade serve"]
     web[Web UI<br/>askama pages]
     api["/api/v1"]
     agentapi["/agent/v1"]
@@ -24,7 +24,7 @@ flowchart LR
   roots1[/SCAN_ROOTS<br/>read-only/]
   hooks([Webhook, Discord, Slack,<br/>ntfy, Gotify])
   subgraph host2["another host"]
-    agent["clamv-webui agent"]
+    agent["palisade agent"]
     clamd2[clamd]
     roots2[/its SCAN_ROOTS/]
   end
@@ -131,10 +131,10 @@ Agents are this binary on another host, next to that host's clamd. They exist so
 These read what the host already produces and feed the Timeline, Coverage page and alerts. Each runs on the server for itself and on every agent.
 
 - **Canaries**: decoy files watched with inotify (watching never opens them). Any access is an ERROR log, an audit entry and an alert. With an auditd rule, the alert names the program and user.
-- **Integrity**: AIDE and rkhunter report files, mounted read-only. Every new run is stored and a run with findings alerts. With `host-setup`, clamv can also start the fixed check units and switch their timers through polkit, still unprivileged.
+- **Integrity**: AIDE and rkhunter report files, mounted read-only. Every new run is stored and a run with findings alerts. With `host-setup`, Palisade can also start the fixed check units and switch their timers through polkit, still unprivileged.
 - **Falco**: follows the JSON alert file; Error and worse notify, throttled per rule and host.
 - **CrowdSec**: signs in to a Local API as a watcher and keeps alerts and decisions in memory (nothing in the database). Admins add or remove bans; very wide ranges and their own address are refused.
-- **Firewall**: reads each host's nftables through a snapshot unit and writes only its own table through an apply unit. The unit tests the plan in an empty network namespace and rolls back after 90 s unless clamv reconnects.
+- **Firewall**: reads each host's nftables through a snapshot unit and writes only its own table through an apply unit. The unit tests the plan in an empty network namespace and rolls back after 90 s unless Palisade reconnects.
 - **Timeline**: merges all of the above with detections. Two different sensors on one host within an hour make an incident, logged and notified once.
 
 ## Alerts and observability

@@ -1,5 +1,5 @@
 {% extends "shell.html" %}
-{% block title %}{{ nav.t("Agents · ClamAV Web UI") }}{% endblock %}
+{% block title %}{{ nav.t("Agents · Palisade") }}{% endblock %}
 {% block content %}
 <h1 class="h3">{{ nav.t("Agents") }}</h1>
 <p class="muted">{{ nav.t("An agent runs on another host next to its own clamd and scans that host's folders. It connects out to this server, so it needs no open port. Pick it under") }} <em>{{ nav.t("Run on") }}</em> {{ nav.t("when scanning a path or adding a schedule.") }}</p>
@@ -9,8 +9,8 @@
 <div class="small mt-2">{{ nav.t("Save it on the agent host as") }} <code>./agent_token</code>{{ nav.t(", owned by UID 10001 with mode 600, now. Only its hash is kept.") }}</div>
 <div class="small mt-3">{{ nav.t("Compose for the agent host:") }}</div>
 <pre class="small mt-1 mb-0 user-select-all"><code>services:
-  clamv-agent:
-    image: ghcr.io/keyxmakerx/clamv-webui:latest
+  palisade-agent:
+    image: ghcr.io/keyxmakerx/palisade:latest
     command: agent
     restart: unless-stopped
     environment:

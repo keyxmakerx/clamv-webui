@@ -17,7 +17,7 @@ use crate::auth::external::ProvisionError;
 use crate::auth::oidc::CALLBACK_PATH;
 use crate::db::audit::AuditEntry;
 
-const STATE_COOKIE: &str = "clamv_oidc";
+const STATE_COOKIE: &str = "palisade_oidc";
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()

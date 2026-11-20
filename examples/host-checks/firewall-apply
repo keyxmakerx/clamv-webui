@@ -1,15 +1,15 @@
 #!/bin/sh
-# Load clamv's checked plan through nftables, ufw or firewalld; refuse anything else; roll back unless clamv confirms.
+# Load Palisade's checked plan through nftables, ufw or firewalld; refuse anything else; roll back unless Palisade confirms.
 set -u
-dir=/var/lib/clamv/firewall
-# Work on root-only copies in the unit's RuntimeDirectory, so clamv cannot swap files mid-check.
-run=/run/clamv-firewall
+dir=/var/lib/palisade/firewall
+# Work on root-only copies in the unit's RuntimeDirectory, so Palisade cannot swap files mid-check.
+run=/run/palisade-firewall
 plan=$run/plan.nft
 full=$run/full.nft
 status() {
   printf '%s %s %s %s\n' "$1" "$(date +%s)" "$2" "${3:--}" >"$run/status" && mv -f "$run/status" "$dir/status"
 }
-# Read the plan through one open descriptor, and only if clamv itself owns that file:
+# Read the plan through one open descriptor, and only if Palisade itself owns that file:
 # a link to somebody else's file is never read, however it is swapped.
 [ -f "$dir/plan.nft" ] && [ ! -L "$dir/plan.nft" ] || { status refused "-"; exit 1; }
 exec 3<"$dir/plan.nft"
@@ -18,7 +18,7 @@ owner=$(stat -c %u "$dir")
 head -c 65536 <&3 >"$plan"
 exec 3<&-
 hash=$(sha256sum "$plan" | cut -d' ' -f1)
-# Only the lines clamv's generator writes: one input chain that lets listed networks reach a port and drops the rest.
+# Only the lines Palisade's generator writes: one input chain that lets listed networks reach a port and drops the rest.
 allowed='^(  chain input \{|    type filter hook input priority -5; policy accept;|    ct state established,related accept|    iif "lo" accept|    (tcp|udp) dport [0-9]{1,5} ip saddr \{ [0-9./, ]+ \} accept|    (tcp|udp) dport [0-9]{1,5} ip6 saddr \{ [0-9a-f:./, ]+ \} accept|    (tcp|udp) dport [0-9]{1,5} drop|  \})$'
 if grep -Evq "$allowed" "$plan"; then
   status refused "$hash"; exit 1
@@ -30,11 +30,11 @@ fi
 if ! awk '{ n = gsub(/\{/, "{"); m = gsub(/\}/, "}"); d += n - m; if (d < 0) bad = 1 } END { exit (bad || d != 0) }' "$plan"; then
   status refused "$hash"; exit 1
 fi
-{ echo "table inet clamv {}"; echo "delete table inet clamv"; echo "table inet clamv {"; cat "$plan"; echo "}"; } >"$full"
+{ echo "table inet palisade {}"; echo "delete table inet palisade"; echo "table inet palisade {"; cat "$plan"; echo "}"; } >"$full"
 # Load it in an empty network namespace first: it must parse and create exactly one table, ours.
 tables=$(unshare --net sh -c "nft -f '$full' && nft list tables" 2>/dev/null) || { status refused "$hash"; exit 1; }
-[ "$tables" = "table inet clamv" ] || { status refused "$hash"; exit 1; }
-. /usr/local/libexec/clamv/firewall-lib
+[ "$tables" = "table inet palisade" ] || { status refused "$hash"; exit 1; }
+. /usr/local/libexec/palisade/firewall-lib
 how=$(backend)
 prev=$state/applied.nft
 rm -f "$dir/confirm"

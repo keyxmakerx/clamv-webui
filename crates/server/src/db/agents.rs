@@ -7,7 +7,7 @@ use super::{Db, DbError, now_ms};
 use crate::auth::token::{hash_secret, random_secret};
 
 /// Agent secrets start with this, so they are easy to spot in a leak scan.
-pub const SECRET_PREFIX: &str = "clamv_agent_";
+pub const SECRET_PREFIX: &str = "pal_agent_";
 
 #[derive(Debug, Clone)]
 pub struct Agent {

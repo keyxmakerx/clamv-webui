@@ -9,11 +9,11 @@ use axum::http::{HeaderMap, Request, StatusCode, header};
 use axum::routing::{get, post};
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
-use clamv_webui::app::{AppState, router};
-use clamv_webui::auth::Role;
-use clamv_webui::config::Cli;
-use clamv_webui::db::Db;
 use clap::Parser;
+use palisade::app::{AppState, router};
+use palisade::auth::Role;
+use palisade::config::Cli;
+use palisade::db::Db;
 use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -80,7 +80,7 @@ async fn token(
     }
     let code = get("code");
     let parts: Vec<&str> = code.split('|').collect();
-    let now = clamv_webui::db::now_ms() / 1000;
+    let now = palisade::db::now_ms() / 1000;
     let groups: Vec<&str> = parts[1].split(',').filter(|g| !g.is_empty()).collect();
     let claims = json!({
         "iss": idp.base, "aud": "cid", "sub": parts[2], "exp": now + 300, "iat": now,
@@ -132,7 +132,7 @@ async fn idp() -> Arc<Idp> {
 
 async fn app(idp: &Idp) -> (Router, Arc<AppState>) {
     let cli = Cli::parse_from([
-        "clamv-webui",
+        "palisade",
         "--clamd-endpoint",
         "tcp://127.0.0.1:1",
         "--oidc-issuer",
@@ -240,7 +240,7 @@ async fn sso_maps_groups_to_roles_and_denies_by_default() {
         .collect();
     let session = cookies
         .iter()
-        .find(|c| c.starts_with("clamv_session=") && !c.starts_with("clamv_session=;"))
+        .find(|c| c.starts_with("palisade_session=") && !c.starts_with("palisade_session=;"))
         .expect("session cookie")
         .split(';')
         .next()
@@ -355,9 +355,9 @@ async fn sso_maps_groups_to_roles_and_denies_by_default() {
 #[test]
 fn bad_oidc_config_is_rejected() {
     let parse = |extra: &[&str]| {
-        let mut a = vec!["clamv-webui"];
+        let mut a = vec!["palisade"];
         a.extend_from_slice(extra);
-        clamv_webui::auth::oidc::Oidc::from_config(&Cli::parse_from(a).config)
+        palisade::auth::oidc::Oidc::from_config(&Cli::parse_from(a).config)
     };
     assert!(parse(&[]).expect("off").is_none());
     let base = [

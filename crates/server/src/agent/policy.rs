@@ -20,7 +20,7 @@ pub enum Perm {
     Timers,
     /// Accept an AIDE baseline or update rkhunter's properties.
     Baseline,
-    /// Apply or remove clamv's firewall table.
+    /// Apply or remove Palisade's firewall table.
     Firewall,
     Quarantine,
 }

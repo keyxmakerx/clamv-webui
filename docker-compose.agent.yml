@@ -1,8 +1,8 @@
-# Agent: scans this host's folders with its own clamd and reports to a clamv-webui server.
+# Agent: scans this host's folders with its own clamd and reports to a palisade server.
 services:
-  clamv-agent:
-    image: ghcr.io/keyxmakerx/clamv-webui:latest
-    container_name: clamv-agent
+  palisade-agent:
+    image: ghcr.io/keyxmakerx/palisade:latest
+    container_name: palisade-agent
     command: agent
     restart: unless-stopped
     mem_limit: 256m  # caps memory if sign-ins or scans spike
@@ -37,8 +37,8 @@ services:
       # - /var/log/audit:/var/log/audit:ro  # lets canary alerts name who touched them
       # - /var/log/falco:/var/log/falco:ro  # Falco JSON alerts (json_output + file_output)
       # - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro  # managed AIDE/rkhunter and firewall (after host-setup)
-      # - /var/lib/clamv/firewall:/var/lib/clamv/firewall  # firewall snapshots and plans (after host-setup)
-      # - /var/lib/clamv/timers:/var/lib/clamv/timers  # AIDE/rkhunter timer times (after host-setup)
+      # - /var/lib/palisade/firewall:/var/lib/palisade/firewall  # firewall snapshots and plans (after host-setup)
+      # - /var/lib/palisade/timers:/var/lib/palisade/timers  # AIDE/rkhunter timer times (after host-setup)
 
 secrets:
   agent_token:

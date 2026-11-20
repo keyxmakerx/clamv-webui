@@ -1,4 +1,4 @@
-//! `clamv-webui agent`: take jobs from a server and scan with the local clamd.
+//! `palisade agent`: take jobs from a server and scan with the local clamd.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -45,7 +45,7 @@ struct Agent {
     conf: crate::clamdconf::Cache,
     canaries: tokio::sync::watch::Sender<Vec<crate::canary::Spec>>,
     canary_states: std::sync::Mutex<Option<crate::canary::States>>,
-    /// clamv host-check units on this host, read every 5 minutes and after each action.
+    /// Palisade host-check units on this host, read every 5 minutes and after each action.
     host_units: std::sync::Mutex<Option<crate::hostchecks::UnitStates>>,
     /// A firewall plan the host is waiting to hear we still reach the server for.
     firewall_pending: std::sync::Mutex<Option<(String, std::time::Instant)>>,
@@ -111,7 +111,7 @@ fn build(cfg: Config) -> anyhow::Result<Agent> {
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
         .timeout(super::POLL_HOLD + Duration::from_secs(35))
-        .user_agent(concat!("clamv-webui-agent/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("palisade-agent/", env!("CARGO_PKG_VERSION")))
         .tls_backend_preconfigured(tls.clone())
         .build()?;
     let fresh = reqwest::Client::builder()
@@ -119,7 +119,7 @@ fn build(cfg: Config) -> anyhow::Result<Agent> {
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(15))
         .pool_max_idle_per_host(0)
-        .user_agent(concat!("clamv-webui-agent/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("palisade-agent/", env!("CARGO_PKG_VERSION")))
         .tls_backend_preconfigured(tls)
         .build()?;
     let limits = clamd::Limits {

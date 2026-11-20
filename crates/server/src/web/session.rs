@@ -13,7 +13,7 @@ use crate::auth::Role;
 use crate::db::sessions::Session;
 use crate::db::users::User;
 
-pub const COOKIE: &str = "clamv_session";
+pub const COOKIE: &str = "palisade_session";
 
 /// The signed-in user for this request, if any.
 pub struct Auth(pub Option<(Session, User)>);
@@ -131,7 +131,7 @@ fn peer_ip(parts_ext: &axum::http::Extensions) -> IpAddr {
 
 /// Whether a trusted proxy reported HTTPS for this request (headers only; see `resolve_client`).
 pub fn forwarded_https(st: &AppState, h: &HeaderMap) -> bool {
-    !st.trusted_proxies.is_empty() && h.get("x-clamv-forwarded-https").is_some()
+    !st.trusted_proxies.is_empty() && h.get("x-palisade-forwarded-https").is_some()
 }
 
 fn trusted(list: &[crate::webhook::Cidr], ip: IpAddr) -> bool {
@@ -167,7 +167,7 @@ pub async fn resolve_client(
     next: axum::middleware::Next,
 ) -> Response {
     // Never accept this marker from outside.
-    req.headers_mut().remove("x-clamv-forwarded-https");
+    req.headers_mut().remove("x-palisade-forwarded-https");
     let peer = peer_ip(req.extensions());
     let mut https = false;
     if trusted(&st.trusted_proxies, peer) {
@@ -193,7 +193,7 @@ pub async fn resolve_client(
         if https {
             req.extensions_mut().insert(ForwardedHttps);
             req.headers_mut().insert(
-                "x-clamv-forwarded-https",
+                "x-palisade-forwarded-https",
                 axum::http::HeaderValue::from_static("1"),
             );
         }
@@ -389,7 +389,7 @@ mod tests {
         let mut h = HeaderMap::new();
         h.insert(
             header::COOKIE,
-            "a=1; clamv_session=abc; b=2".parse().expect("hv"),
+            "a=1; palisade_session=abc; b=2".parse().expect("hv"),
         );
         assert_eq!(cookie(&h, COOKIE).as_deref(), Some("abc"));
         assert_eq!(cookie(&h, "zzz"), None);

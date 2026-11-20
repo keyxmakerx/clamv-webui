@@ -5,21 +5,21 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use clamv_webui::app::{AppState, router};
-use clamv_webui::config::Cli;
-use clamv_webui::db::Db;
 use clap::Parser;
+use palisade::app::{AppState, router};
+use palisade::config::Cli;
+use palisade::db::Db;
 use tower::ServiceExt;
 
 /// Generated per run so no credential literal lives in the source.
 fn pw() -> &'static str {
     static PW: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    PW.get_or_init(clamv_webui::auth::token::random_secret)
+    PW.get_or_init(palisade::auth::token::random_secret)
 }
 
 fn new_pw() -> &'static str {
     static PW: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    PW.get_or_init(clamv_webui::auth::token::random_secret)
+    PW.get_or_init(palisade::auth::token::random_secret)
 }
 
 async fn app() -> (Router, Arc<AppState>) {
@@ -27,12 +27,12 @@ async fn app() -> (Router, Arc<AppState>) {
 }
 
 async fn app_with(extra: &[&str]) -> (Router, Arc<AppState>) {
-    let mut args = vec!["clamv-webui", "--clamd-endpoint", "tcp://127.0.0.1:1"];
+    let mut args = vec!["palisade", "--clamd-endpoint", "tcp://127.0.0.1:1"];
     args.extend_from_slice(extra);
     let cli = Cli::parse_from(args);
     let db = Db::open("sqlite::memory:", 1).await.expect("db");
     let dir = std::env::temp_dir();
-    clamv_webui::auth::bootstrap::ensure_admin(&db, &dir, Some(pw()))
+    palisade::auth::bootstrap::ensure_admin(&db, &dir, Some(pw()))
         .await
         .expect("bootstrap");
     // Behave like a first start with a generated password: change it on first sign-in.
@@ -44,7 +44,7 @@ async fn app_with(extra: &[&str]) -> (Router, Arc<AppState>) {
     db.set_password(&admin.id, &admin.password_hash, true, false)
         .await
         .expect("flag");
-    clamv_webui::app::seed_endpoint(&db, &cli.config)
+    palisade::app::seed_endpoint(&db, &cli.config)
         .await
         .expect("seed");
     let st = Arc::new(AppState::new(cli.config.clone(), db));
@@ -137,7 +137,7 @@ async fn wrong_password_then_lockout() {
                 "/login",
                 &format!(
                     "username=admin&password={}",
-                    clamv_webui::auth::token::random_secret()
+                    palisade::auth::token::random_secret()
                 ),
                 None,
             ))
@@ -165,7 +165,7 @@ async fn unknown_user_looks_like_wrong_password() {
             "/login",
             &format!(
                 "username=nobody&password={}",
-                clamv_webui::auth::token::random_secret()
+                palisade::auth::token::random_secret()
             ),
             None,
         ))
@@ -316,7 +316,7 @@ async fn assets_and_404() {
 /// Every page, every role: the route table is explicit and tested (audit lesson 8).
 #[tokio::test]
 async fn route_table_by_role() {
-    use clamv_webui::auth::{Role, password};
+    use palisade::auth::{Role, password};
     let (app, st) = app().await;
     let pages: &[(&str, Role)] = &[
         ("/dashboard", Role::Viewer),
@@ -384,7 +384,7 @@ async fn route_table_by_role() {
         ("/admin/agents/x/delete", Role::Admin),
     ];
     for role in [Role::Viewer, Role::Operator, Role::Admin] {
-        let h = password::hash(&clamv_webui::auth::token::random_secret()).expect("hash");
+        let h = password::hash(&palisade::auth::token::random_secret()).expect("hash");
         let u = st
             .db
             .create_user(&format!("t-{role}"), &h, role, false)
@@ -395,7 +395,7 @@ async fn route_table_by_role() {
             .create_session(&u.id, 3_600_000, None, None)
             .await
             .expect("session");
-        let c = format!("clamv_session={raw}");
+        let c = format!("palisade_session={raw}");
         for (path, need) in pages {
             let res = app.clone().oneshot(get(path, Some(&c))).await.expect("res");
             let want = if role.allows(*need) {
@@ -431,7 +431,7 @@ async fn route_table_by_role() {
 
 #[tokio::test]
 async fn last_admin_cannot_be_removed() {
-    use clamv_webui::auth::Role;
+    use palisade::auth::Role;
     let (app, st) = app().await;
     let admin = st
         .db
@@ -448,7 +448,7 @@ async fn last_admin_cannot_be_removed() {
         .create_session(&admin.id, 3_600_000, None, None)
         .await
         .expect("session");
-    let c = format!("clamv_session={raw}");
+    let c = format!("palisade_session={raw}");
     let res = send(
         app.clone(),
         form(
@@ -486,7 +486,7 @@ async fn admin_cookie(st: &AppState) -> (String, String) {
         .create_session(&admin.id, 3_600_000, None, None)
         .await
         .expect("session");
-    (format!("clamv_session={raw}"), s.csrf_token)
+    (format!("palisade_session={raw}"), s.csrf_token)
 }
 
 #[tokio::test]
@@ -567,7 +567,7 @@ async fn admin_issues_and_revokes_tokens() {
     .expect("res");
     assert_eq!(res.status(), StatusCode::OK);
     let html = body(res).await;
-    assert!(html.contains("New token secret") && html.contains("cvw_"));
+    assert!(html.contains("New token secret") && html.contains("pal_"));
     let list = st.db.list_tokens().await.expect("list");
     assert_eq!(
         list[0].scopes,
@@ -617,7 +617,7 @@ async fn admin_adds_an_agent_and_targets_it() {
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     let res = post("/admin/agents".into(), format!("_csrf={t}&name=nas-2")).await;
     let html = body(res).await;
-    assert!(html.contains("Token for nas-2") && html.contains("clamv_agent_"));
+    assert!(html.contains("Token for nas-2") && html.contains("pal_agent_"));
     assert!(html.contains("AGENT_TOKEN_FILE") && html.contains("command: agent"));
     let a = st.db.list_agents().await.expect("list").remove(0);
     let res = app
@@ -639,7 +639,7 @@ async fn admin_adds_an_agent_and_targets_it() {
     st.db
         .heartbeat_agent(
             a.id,
-            &clamv_webui::db::agents::Heartbeat {
+            &palisade::db::agents::Heartbeat {
                 ip: "100.82.0.9",
                 version: "t",
                 clamd_version: None,
@@ -674,7 +674,7 @@ async fn admin_adds_an_agent_and_targets_it() {
     assert!(body(res).await.contains("Added remote."));
     let s = st.db.list_schedules().await.expect("list").remove(0);
     assert_eq!((s.agent_id, s.endpoint_id), (Some(a.id), None));
-    let n = clamv_webui::schedule::run(&st, &s, "manual")
+    let n = palisade::schedule::run(&st, &s, "manual")
         .await
         .expect("run");
     assert_eq!(n, 1);
@@ -774,10 +774,10 @@ async fn settings_are_reviewed_then_saved() {
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     // Stored values reach the config on the next start.
     let rows = st.db.list_settings().await.expect("list");
-    let cfg = clamv_webui::settings::overlay(st.cfg.clone(), &rows);
+    let cfg = palisade::settings::overlay(st.cfg.clone(), &rows);
     assert_eq!(cfg.scan_concurrency, 5);
     // Clearing a field goes back to the default.
-    let rev = clamv_webui::db::settings::revision(&rows);
+    let rev = palisade::db::settings::revision(&rows);
     let res = post(
         "/admin/settings/apply",
         format!("_csrf={t}&_revision={rev}&SCAN_CONCURRENCY="),
@@ -789,7 +789,7 @@ async fn settings_are_reviewed_then_saved() {
 
 #[tokio::test]
 async fn reset_admin_recovers_a_locked_out_admin() {
-    use clamv_webui::auth::Role;
+    use palisade::auth::Role;
     let (app, st) = app().await;
     let admin = st
         .db
@@ -801,8 +801,8 @@ async fn reset_admin_recovers_a_locked_out_admin() {
         .set_role_enabled(&admin.id, Role::Viewer, false)
         .await
         .expect("break it");
-    let dir = std::env::temp_dir().join(format!("cvw-reset-{}", clamv_webui::db::new_id()));
-    let file = clamv_webui::auth::bootstrap::reset_admin(&st.db, &dir)
+    let dir = std::env::temp_dir().join(format!("cvw-reset-{}", palisade::db::new_id()));
+    let file = palisade::auth::bootstrap::reset_admin(&st.db, &dir)
         .await
         .expect("reset");
     let pw = std::fs::read_to_string(&file)
@@ -847,7 +847,7 @@ fn urlencode(s: &str) -> String {
 #[tokio::test]
 async fn static_assets_are_versioned_compressed_and_revalidated() {
     let (app, _st) = app().await;
-    let v = clamv_webui::web::asset_v();
+    let v = palisade::web::asset_v();
     let res = app
         .clone()
         .oneshot(
@@ -894,7 +894,7 @@ async fn static_assets_are_versioned_compressed_and_revalidated() {
 
 #[tokio::test]
 async fn admin_manages_canaries_per_host() {
-    let base = std::env::temp_dir().join(format!("clamv-ui-can-{}", clamv_webui::db::new_id()));
+    let base = std::env::temp_dir().join(format!("palisade-ui-can-{}", palisade::db::new_id()));
     std::fs::create_dir_all(base.join("media")).expect("mkdir");
     std::fs::create_dir_all(base.join("share")).expect("mkdir");
     let roots = base.join("media").to_str().expect("utf8").to_owned();
@@ -936,7 +936,7 @@ async fn admin_manages_canaries_per_host() {
     assert_eq!(res.status(), StatusCode::OK);
     let html = body(res).await;
     assert!(html.contains("edge-1") && html.contains("/home/ops/vpn.conf"));
-    assert!(html.contains("-k clamv_canary"), "auditd rule offered");
+    assert!(html.contains("-k palisade_canary"), "auditd rule offered");
     let dup = post(format!(
         "_csrf={t}&host={}&path=/home/ops/vpn.conf",
         agent.id
@@ -973,7 +973,7 @@ async fn admin_manages_canaries_per_host() {
 
 #[tokio::test]
 async fn this_servers_aide_report_is_read_and_shown() {
-    let dir = std::env::temp_dir().join(format!("clamv-aide-{}", clamv_webui::db::new_id()));
+    let dir = std::env::temp_dir().join(format!("palisade-aide-{}", palisade::db::new_id()));
     std::fs::create_dir_all(&dir).expect("mkdir");
     let log = dir.join("aide.log");
     std::fs::write(
@@ -985,7 +985,7 @@ async fn this_servers_aide_report_is_read_and_shown() {
     let none_s = dir.join("rkhunter.log").to_str().expect("utf8").to_owned();
     let (app, st) = app_with(&["--aide-log", &log_s, "--rkhunter-log", &none_s]).await;
     let (c, _) = admin_cookie(&st).await;
-    clamv_webui::integrity::spawn(st.clone());
+    palisade::integrity::spawn(st.clone());
     let mut found = false;
     for _ in 0..50 {
         if !st.db.recent_integrity(5).await.expect("q").is_empty() {
@@ -1149,7 +1149,7 @@ async fn last_seen(st: &AppState) -> i64 {
 async fn background_refresh_does_not_extend_the_session() {
     let (app, st) = app().await;
     let (c, _) = admin_cookie(&st).await;
-    let old = clamv_webui::db::now_ms() - 5 * 60_000;
+    let old = palisade::db::now_ms() - 5 * 60_000;
     sqlx::query("UPDATE sessions SET last_seen_at = ?")
         .bind(old)
         .execute(st.db.pool())
@@ -1157,7 +1157,7 @@ async fn background_refresh_does_not_extend_the_session() {
         .expect("age the session");
     let req = Request::get("/dashboard")
         .header(header::COOKIE, &c)
-        .header("x-clamv-refresh", "1")
+        .header("x-palisade-refresh", "1")
         .body(Body::empty())
         .expect("req");
     let res = app.clone().oneshot(req).await.expect("res");
@@ -1278,7 +1278,7 @@ async fn audit_log_filters_pages_and_exports() {
     let (c, _) = admin_cookie(&st).await;
     for i in 0..60 {
         st.db
-            .audit(clamv_webui::db::audit::AuditEntry {
+            .audit(palisade::db::audit::AuditEntry {
                 username: Some("ops".into()),
                 action: if i % 2 == 0 { "TEST_EVEN" } else { "TEST_ODD" },
                 outcome: "OK",

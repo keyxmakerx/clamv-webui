@@ -1,5 +1,5 @@
 //! Firewall page: each host's rules with their owners (read-only), what
-//! listens, and clamv's own plan, applied with a passkey.
+//! listens, and Palisade's own plan, applied with a passkey.
 
 use std::sync::Arc;
 
@@ -28,7 +28,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/admin/firewall/refresh", post(refresh))
 }
 
-/// How long the host waits for clamv to confirm (the apply script waits 90 s).
+/// How long the host waits for Palisade to confirm (the apply script waits 90 s).
 const CONFIRM_MS: i64 = 85_000;
 
 pub struct HostChip {
@@ -85,7 +85,7 @@ struct FirewallPage {
     /// Shown inside the refreshed part, so a background check can show it.
     confirmed: bool,
     dir: String,
-    /// The tool the host writes clamv's plan through.
+    /// The tool the host writes Palisade's plan through.
     backend: &'static str,
 }
 
@@ -186,7 +186,7 @@ async fn show(st: &AppState, mut nav: Nav, host: Option<i64>) -> Response {
         .tables
         .iter()
         .map(|t| t.owner)
-        .filter(|o| *o != "host" && *o != "clamv")
+        .filter(|o| *o != "host" && *o != "palisade")
         .collect();
     owners.sort_unstable();
     owners.dedup();
@@ -288,7 +288,7 @@ async fn show(st: &AppState, mut nav: Nav, host: Option<i64>) -> Response {
                 })
                 .collect(),
             preview: format!(
-                "table inet clamv {{\n{}}}",
+                "table inet palisade {{\n{}}}",
                 crate::firewall::body(&plan.rules)
             ),
             pending,
@@ -490,7 +490,7 @@ async fn refresh(State(st): State<Arc<AppState>>, auth: Auth, Form(f): Form<Host
     result(&st, &s, &me, host, r).await
 }
 
-/// Remove clamv's table from a host; called after a passkey confirmation, since it reopens every port the plan narrowed.
+/// Remove Palisade's table from a host; called after a passkey confirmation, since it reopens every port the plan narrowed.
 pub(super) async fn remove_table(
     st: &Arc<AppState>,
     me: &User,
@@ -504,10 +504,10 @@ pub(super) async fn remove_table(
             .map_err(|e| crate::hostchecks::message(e.code).to_owned())?,
         Some(id) => queue(st, id, &Op::Remove, &me.username).await?,
     }
-    tracing::warn!(event = "firewall.removed", user = %me.username, host = %name, "clamv's firewall table removed with a passkey");
+    tracing::warn!(event = "firewall.removed", user = %me.username, host = %name, "Palisade's firewall table removed with a passkey");
     audit(st, me, info, "FIREWALL_REMOVE", name.clone()).await;
     Ok(format!(
-        "Removing clamv's table on {name}. Rules owned by anything else stay as they are."
+        "Removing Palisade's table on {name}. Rules owned by anything else stay as they are."
     ))
 }
 
@@ -540,7 +540,7 @@ fn lockout(
             && !allows_me(r)
         {
             return Err(format!(
-                "That plan blocks clamv's own port {port} for your address {me}; you would lose this page."
+                "That plan blocks Palisade's own port {port} for your address {me}; you would lose this page."
             ));
         }
     }

@@ -2,7 +2,7 @@
 //! (an ERROR log line, an audit entry and the webhook).
 //!
 //! Each host watches CANARY_FILES plus the canaries an admin added for it in
-//! the UI. Where auditd logs a `clamv_canary` rule, the alert names who did it.
+//! the UI. Where auditd logs a `palisade_canary` rule, the alert names who did it.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -81,7 +81,7 @@ pub struct Spec {
 }
 
 /// The audit rule key the alert enrichment looks for.
-pub const AUDIT_KEY: &str = "clamv_canary";
+pub const AUDIT_KEY: &str = "palisade_canary";
 const AUDIT_LOG: &str = "/var/log/audit/audit.log";
 
 /// The auditd rule an admin adds on the host for one canary.
@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn audit_records_name_the_actor() {
         let log = "type=SYSCALL msg=audit(1700000000.100:41): arch=c000003e syscall=257 success=yes exit=3 pid=999 auid=4294967295 uid=0 comm=\"cron\" exe=\"/usr/sbin/cron\" key=\"other\"\n\
-type=SYSCALL msg=audit(1700000001.200:42): arch=c000003e syscall=257 success=yes exit=3 ppid=1 pid=4242 auid=1000 uid=1000 gid=1000 comm=\"cat\" exe=\"/usr/bin/cat\" key=\"clamv_canary\"\n\
+type=SYSCALL msg=audit(1700000001.200:42): arch=c000003e syscall=257 success=yes exit=3 ppid=1 pid=4242 auid=1000 uid=1000 gid=1000 comm=\"cat\" exe=\"/usr/bin/cat\" key=\"palisade_canary\"\n\
 type=CWD msg=audit(1700000001.200:42): cwd=\"/home/u\"\n\
 type=PATH msg=audit(1700000001.200:42): item=0 name=\"/srv/share/passwords.xlsx\" inode=12 nametype=NORMAL\n";
         assert_eq!(
@@ -400,7 +400,7 @@ type=PATH msg=audit(1700000001.200:42): item=0 name=\"/srv/share/passwords.xlsx\
 
     #[tokio::test]
     async fn runner_follows_list_changes_and_creates_decoys() {
-        let d = std::env::temp_dir().join(format!("clamv-canary-run-{}", crate::db::new_id()));
+        let d = std::env::temp_dir().join(format!("palisade-canary-run-{}", crate::db::new_id()));
         std::fs::create_dir_all(&d).expect("mkdir");
         let f = d.join("keys.txt");
         let (tx, rx) = watch::channel(Vec::new());

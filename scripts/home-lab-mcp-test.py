@@ -102,7 +102,7 @@ def main():
     client = MCP(args.clamctl, root)
     try:
         result = client.call("initialize", {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "clamav-home-lab-test", "version": "1"}})
-        require(result.get("serverInfo", {}).get("name") == "clamav-webui", "Unexpected MCP server identity.")
+        require(result.get("serverInfo", {}).get("name") == "palisade", "Unexpected MCP server identity.")
         client.send("notifications/initialized", {})
         tools = client.call("tools/list", {})
         require({t["name"] for t in tools["tools"]} == {"clamav_scan_file", "clamav_scan_path", "clamav_get_job", "clamav_check_health", "clamav_list_endpoints", "clamav_list_agents", "clamav_cancel_job"}, "Tool discovery mismatch.")

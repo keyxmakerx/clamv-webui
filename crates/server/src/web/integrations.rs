@@ -40,9 +40,9 @@ struct Page {
 
 const FILES: [(&str, &str, &str); 3] = [
     (
-        "grafana-clamav-webui.json",
+        "grafana-palisade.json",
         "application/json",
-        include_str!("../../../../dashboards/grafana-clamav-webui.json"),
+        include_str!("../../../../dashboards/grafana-palisade.json"),
     ),
     (
         "clamav-alerts.yml",

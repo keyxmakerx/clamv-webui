@@ -18,7 +18,7 @@ pub const SCOPES: [&str; 8] = [
 ];
 
 /// Every secret starts with this, so leaked tokens are easy to spot and grep.
-pub const SECRET_PREFIX: &str = "cvw_";
+pub const SECRET_PREFIX: &str = "pal_";
 
 #[derive(Debug, Clone)]
 pub struct ApiToken {

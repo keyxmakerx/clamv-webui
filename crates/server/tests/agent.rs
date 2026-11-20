@@ -5,11 +5,11 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use clamv_webui::app::{AppState, router};
-use clamv_webui::config::Cli;
-use clamv_webui::db::Db;
-use clamv_webui::db::jobs::{self, Job, NewJob};
 use clap::Parser;
+use palisade::app::{AppState, router};
+use palisade::config::Cli;
+use palisade::db::Db;
+use palisade::db::jobs::{self, Job, NewJob};
 use tower::ServiceExt;
 
 mod common;
@@ -22,9 +22,9 @@ struct Server {
 }
 
 async fn server() -> Server {
-    let cli = Cli::parse_from(["clamv-webui", "--clamd-endpoint", "tcp://127.0.0.1:1"]);
+    let cli = Cli::parse_from(["palisade", "--clamd-endpoint", "tcp://127.0.0.1:1"]);
     let db = Db::open("sqlite::memory:", 1).await.expect("db");
-    clamv_webui::app::seed_endpoint(&db, &cli.config)
+    palisade::app::seed_endpoint(&db, &cli.config)
         .await
         .expect("seed");
     let st = Arc::new(AppState::new(cli.config.clone(), db));
@@ -49,7 +49,7 @@ fn agent_cli(url: &str, token: &str, clamd: u16, root: &str) -> Cli {
 fn agent_cli_with(url: &str, token: &str, clamd: u16, root: &str, extra: &[&str]) -> Cli {
     let clamd = format!("tcp://127.0.0.1:{clamd}");
     let mut args = vec![
-        "clamv-webui",
+        "palisade",
         "agent",
         "--listen",
         "127.0.0.1:0",
@@ -103,7 +103,7 @@ async fn wait_done(st: &AppState, id: &str) -> Job {
 async fn agent_runs_jobs_and_reports_back() {
     let srv = server().await;
     let clamd = fake_clamd().await;
-    let root = std::env::temp_dir().join(format!("clamv-agent-{}", clamv_webui::db::new_id()));
+    let root = std::env::temp_dir().join(format!("palisade-agent-{}", palisade::db::new_id()));
     std::fs::create_dir_all(root.join("media")).expect("mkdir");
     let root_s = root.to_str().expect("utf8").to_owned();
     let (agent, token) = srv
@@ -116,7 +116,7 @@ async fn agent_runs_jobs_and_reports_back() {
     // Queued before the agent connects: it waits.
     let early = queue(&srv.st, "PATH", &format!("{root_s}/media"), agent.id).await;
     // The server's own dispatcher must never take an agent job.
-    clamv_webui::scan::start(srv.st.clone()).await;
+    palisade::scan::start(srv.st.clone()).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert_eq!(
         srv.st
@@ -130,7 +130,7 @@ async fn agent_runs_jobs_and_reports_back() {
     );
 
     let cli = agent_cli(&srv.url, &token, clamd, &root_s);
-    let handle = tokio::spawn(clamv_webui::agent::client::run(cli.config));
+    let handle = tokio::spawn(palisade::agent::client::run(cli.config));
 
     let j = wait_done(&srv.st, &early.id).await;
     assert_eq!(j.verdict.as_deref(), Some(jobs::VIRUS_FOUND));
@@ -188,7 +188,7 @@ async fn agent_endpoints_check_who_is_calling() {
         async move { app.oneshot(r).await.expect("res").status() }
     };
     assert_eq!(
-        status(poll("clamv_agent_nope", HELLO)).await,
+        status(poll("pal_agent_nope", HELLO)).await,
         StatusCode::UNAUTHORIZED
     );
     assert_eq!(
@@ -295,10 +295,10 @@ async fn jobs_lost_by_an_agent_are_failed() {
 /// Over HTTPS with a self-signed certificate, the agent trusts exactly the pinned one.
 #[tokio::test]
 async fn agent_pins_the_server_certificate() {
-    let dir = std::env::temp_dir().join(format!("clamv-agent-tls-{}", clamv_webui::db::new_id()));
+    let dir = std::env::temp_dir().join(format!("palisade-agent-tls-{}", palisade::db::new_id()));
     let data = dir.to_str().expect("utf8").to_owned();
     let cli = Cli::parse_from([
-        "clamv-webui",
+        "palisade",
         "--clamd-endpoint",
         "tcp://127.0.0.1:1",
         "--data-dir",
@@ -309,8 +309,8 @@ async fn agent_pins_the_server_certificate() {
     ]);
     let db = Db::open("sqlite::memory:", 1).await.expect("db");
     let st = Arc::new(AppState::new(cli.config.clone(), db));
-    let (tls, cert) = clamv_webui::tls::config(&cli.config).await.expect("tls");
-    let fp = clamv_webui::tls::fingerprint(&cert).expect("fp");
+    let (tls, cert) = palisade::tls::config(&cli.config).await.expect("tls");
+    let fp = palisade::tls::fingerprint(&cert).expect("fp");
     let std_l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
     let url = format!(
         "https://127.0.0.1:{}",
@@ -330,7 +330,7 @@ async fn agent_pins_the_server_certificate() {
     let wrong = ["00"; 32].join(":");
     let mut c = agent_cli(&url, &token, clamd, &data);
     c.config.agent_server_fingerprint = Some(wrong);
-    let h = tokio::spawn(clamv_webui::agent::client::run(c.config));
+    let h = tokio::spawn(palisade::agent::client::run(c.config));
     tokio::time::sleep(Duration::from_millis(800)).await;
     h.abort();
     assert!(
@@ -346,7 +346,7 @@ async fn agent_pins_the_server_certificate() {
 
     // No pin and no CA: the self-signed certificate is refused too.
     let c = agent_cli(&url, &token, clamd, &data);
-    let h = tokio::spawn(clamv_webui::agent::client::run(c.config));
+    let h = tokio::spawn(palisade::agent::client::run(c.config));
     tokio::time::sleep(Duration::from_millis(800)).await;
     h.abort();
     assert!(
@@ -361,7 +361,7 @@ async fn agent_pins_the_server_certificate() {
 
     let mut c = agent_cli(&url, &token, clamd, &data);
     c.config.agent_server_fingerprint = Some(fp.to_lowercase());
-    let h = tokio::spawn(clamv_webui::agent::client::run(c.config));
+    let h = tokio::spawn(palisade::agent::client::run(c.config));
     let mut seen = false;
     for _ in 0..100 {
         if st
@@ -388,11 +388,11 @@ async fn agent_pins_the_server_certificate() {
 async fn agent_scans_in_real_time_and_reports_canaries() {
     let srv = server().await;
     let clamd = fake_clamd().await;
-    let root = std::env::temp_dir().join(format!("clamv-agrt-{}", clamv_webui::db::new_id()));
+    let root = std::env::temp_dir().join(format!("palisade-agrt-{}", palisade::db::new_id()));
     std::fs::create_dir_all(root.join("drop")).expect("mkdir");
     let root_s = root.to_str().expect("utf8").to_owned();
     let drop_s = format!("{root_s}/drop");
-    let decoy = std::env::temp_dir().join(format!("clamv-agdecoy-{}", clamv_webui::db::new_id()));
+    let decoy = std::env::temp_dir().join(format!("palisade-agdecoy-{}", palisade::db::new_id()));
     std::fs::write(&decoy, b"decoy").expect("write");
     let (agent, token) = srv
         .st
@@ -403,7 +403,7 @@ async fn agent_scans_in_real_time_and_reports_canaries() {
     let mut cli = agent_cli(&srv.url, &token, clamd, &root_s);
     cli.config.realtime_paths = vec![drop_s.clone().into()];
     cli.config.canary_files = vec![decoy.clone()];
-    let h = tokio::spawn(clamv_webui::agent::client::run(cli.config));
+    let h = tokio::spawn(palisade::agent::client::run(cli.config));
     // Wait until the agent has reported its roots.
     for _ in 0..100 {
         let a = srv.st.db.agent(agent.id).await.expect("q").expect("a");
@@ -469,7 +469,7 @@ async fn agent_scans_in_real_time_and_reports_canaries() {
 async fn canaries_set_in_the_ui_reach_the_agent() {
     let srv = server().await;
     let clamd = fake_clamd().await;
-    let base = std::env::temp_dir().join(format!("clamv-agent-can-{}", clamv_webui::db::new_id()));
+    let base = std::env::temp_dir().join(format!("palisade-agent-can-{}", palisade::db::new_id()));
     std::fs::create_dir_all(base.join("media")).expect("mkdir");
     std::fs::create_dir_all(base.join("share")).expect("mkdir");
     let root_s = base.join("media").to_str().expect("utf8").to_owned();
@@ -496,7 +496,7 @@ async fn canaries_set_in_the_ui_reach_the_agent() {
         .expect("add");
     let mut cli = agent_cli(&srv.url, &token, clamd, &root_s);
     cli.config.canary_dirs = vec![base.join("share")];
-    let handle = tokio::spawn(clamv_webui::agent::client::run(cli.config));
+    let handle = tokio::spawn(palisade::agent::client::run(cli.config));
 
     // The agent writes the decoy, arms it and says so on a later poll.
     let mut armed = false;
@@ -641,7 +641,7 @@ async fn two_sensors_on_one_host_make_one_incident() {
         .oneshot(call("/agent/v1/poll", HELLO.to_owned()))
         .await
         .expect("res"));
-    let now = clamv_webui::db::now_ms();
+    let now = palisade::db::now_ms();
     let scan = r#"{"type":"scan","path":"/data/dl/x.exe","report":{"ok":0,"detections":[{"path":"/data/dl/x.exe","text":"Win.Trojan.Agent-1"}]}}"#;
     ok(srv
         .app
@@ -659,8 +659,8 @@ async fn two_sensors_on_one_host_make_one_incident() {
         .oneshot(call("/agent/v1/events", falco))
         .await
         .expect("res"));
-    clamv_webui::timeline::check(&srv.st).await;
-    clamv_webui::timeline::check(&srv.st).await;
+    palisade::timeline::check(&srv.st).await;
+    palisade::timeline::check(&srv.st).await;
     let incidents = srv.st.db.audit_by_action("INCIDENT", 0).await.expect("q");
     assert_eq!(incidents.len(), 1, "notified once");
     assert!(incidents[0].1.starts_with("nas-6|") && incidents[0].1.ends_with("ClamAV+Falco"));
@@ -670,7 +670,7 @@ async fn two_sensors_on_one_host_make_one_incident() {
 async fn host_checks_run_only_allow_listed_units() {
     let srv = server().await;
     let clamd = fake_clamd().await;
-    let root = std::env::temp_dir().join(format!("clamv-agent-{}", clamv_webui::db::new_id()));
+    let root = std::env::temp_dir().join(format!("palisade-agent-{}", palisade::db::new_id()));
     std::fs::create_dir_all(&root).expect("mkdir");
     let root_s = root.to_str().expect("utf8").to_owned();
     let (agent, token) = srv
@@ -682,8 +682,8 @@ async fn host_checks_run_only_allow_listed_units() {
     let ok = queue(&srv.st, "HOSTCHECK", "aide.check", agent.id).await;
     let bad = queue(&srv.st, "HOSTCHECK", "/bin/sh -c id", agent.id).await;
     let cli = agent_cli(&srv.url, &token, clamd, &root_s);
-    let handle = tokio::spawn(clamv_webui::agent::client::run(cli.config));
-    // No systemd for clamv in tests: the allow-listed one fails with a host-check reason.
+    let handle = tokio::spawn(palisade::agent::client::run(cli.config));
+    // No systemd for Palisade in tests: the allow-listed one fails with a host-check reason.
     let j = wait_done(&srv.st, &ok.id).await;
     assert!(
         j.error_code
@@ -712,7 +712,7 @@ async fn host_checks_run_only_allow_listed_units() {
 async fn firewall_jobs_go_through_the_fixed_units_only() {
     let srv = server().await;
     let clamd = fake_clamd().await;
-    let root = std::env::temp_dir().join(format!("clamv-agent-{}", clamv_webui::db::new_id()));
+    let root = std::env::temp_dir().join(format!("palisade-agent-{}", palisade::db::new_id()));
     std::fs::create_dir_all(&root).expect("mkdir");
     let root_s = root.to_str().expect("utf8").to_owned();
     let (agent, token) = srv
@@ -730,8 +730,8 @@ async fn firewall_jobs_go_through_the_fixed_units_only() {
     )
     .await;
     let cli = agent_cli(&srv.url, &token, clamd, &root_s);
-    let handle = tokio::spawn(clamv_webui::agent::client::run(cli.config));
-    // No systemd for clamv in tests: the snapshot fails with a host-check reason.
+    let handle = tokio::spawn(palisade::agent::client::run(cli.config));
+    // No systemd for Palisade in tests: the snapshot fails with a host-check reason.
     let j = wait_done(&srv.st, &snap.id).await;
     assert!(
         j.error_code
@@ -774,7 +774,7 @@ async fn firewall_jobs_go_through_the_fixed_units_only() {
 async fn agents_refuse_what_their_host_does_not_allow() {
     let srv = server().await;
     let clamd = fake_clamd().await;
-    let root = std::env::temp_dir().join(format!("clamv-agent-{}", clamv_webui::db::new_id()));
+    let root = std::env::temp_dir().join(format!("palisade-agent-{}", palisade::db::new_id()));
     std::fs::create_dir_all(&root).expect("mkdir");
     let root_s = root.to_str().expect("utf8").to_owned();
     let (agent, token) = srv
@@ -793,7 +793,7 @@ async fn agents_refuse_what_their_host_does_not_allow() {
     )
     .await;
     let cli = agent_cli(&srv.url, &token, clamd, &root_s);
-    let handle = tokio::spawn(clamv_webui::agent::client::run(cli.config));
+    let handle = tokio::spawn(palisade::agent::client::run(cli.config));
     for id in [&fw.id, &base.id, &qj.id] {
         let j = wait_done(&srv.st, id).await;
         assert_eq!(j.error_code.as_deref(), Some("AGENT_REFUSED"), "{j:?}");
@@ -809,10 +809,10 @@ async fn agents_refuse_what_their_host_does_not_allow() {
 
 #[tokio::test]
 async fn quarantine_moves_only_infected_files_on_agents_that_allow_it() {
-    use clamv_webui::db::quarantine as q;
+    use palisade::db::quarantine as q;
     let srv = server().await;
     let clamd = fake_clamd().await;
-    let base = std::env::temp_dir().join(format!("clamv-agent-{}", clamv_webui::db::new_id()));
+    let base = std::env::temp_dir().join(format!("palisade-agent-{}", palisade::db::new_id()));
     let root = base.join("root");
     let qdir = base.join("q");
     std::fs::create_dir_all(&root).expect("mkdir");
@@ -852,7 +852,7 @@ async fn quarantine_moves_only_infected_files_on_agents_that_allow_it() {
             &qdir_s,
         ],
     );
-    let handle = tokio::spawn(clamv_webui::agent::client::run(cli.config));
+    let handle = tokio::spawn(palisade::agent::client::run(cli.config));
     let j = wait_done(&srv.st, &jobs[0].1.id).await;
     assert!(j.error_code.is_none(), "{j:?}");
     let held = srv

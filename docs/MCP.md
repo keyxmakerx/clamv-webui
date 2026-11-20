@@ -1,4 +1,4 @@
-# ClamAV Web UI MCP server
+# Palisade MCP server
 
 The Web UI can sit behind an HTTPS reverse proxy; see
 [Behind a reverse proxy](REVERSE_PROXY.md). Keep the public HTTPS URL in the

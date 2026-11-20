@@ -1,9 +1,9 @@
 #!/bin/sh
-# Write what this host's firewall looks like, for clamv to read; changes nothing.
-# Reads nothing from $dir: clamv owns that folder and could point any name in it at another file.
-dir=/var/lib/clamv/firewall
+# Write what this host's firewall looks like, for Palisade to read; changes nothing.
+# Reads nothing from $dir: Palisade owns that folder and could point any name in it at another file.
+dir=/var/lib/palisade/firewall
 out=$dir/snapshot.txt
-tmp=/run/clamv-firewall/snapshot.txt
+tmp=/run/palisade-firewall/snapshot.txt
 {
   if command -v nft >/dev/null 2>&1; then
     echo "### nft"

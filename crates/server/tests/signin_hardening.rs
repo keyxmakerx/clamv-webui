@@ -5,24 +5,24 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use clamv_webui::app::{AppState, router};
-use clamv_webui::config::Cli;
-use clamv_webui::db::Db;
 use clap::Parser;
 use http_body_util::BodyExt;
+use palisade::app::{AppState, router};
+use palisade::config::Cli;
+use palisade::db::Db;
 use tower::ServiceExt;
 
 fn pw() -> &'static str {
     static PW: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    PW.get_or_init(clamv_webui::auth::token::random_secret)
+    PW.get_or_init(palisade::auth::token::random_secret)
 }
 
 async fn app(extra: &[&str]) -> (Router, Arc<AppState>) {
-    let mut args = vec!["clamv-webui", "--clamd-endpoint", "tcp://127.0.0.1:1"];
+    let mut args = vec!["palisade", "--clamd-endpoint", "tcp://127.0.0.1:1"];
     args.extend_from_slice(extra);
     let cli = Cli::parse_from(args);
     let db = Db::open("sqlite::memory:", 1).await.expect("db");
-    clamv_webui::auth::bootstrap::ensure_admin(&db, &std::env::temp_dir(), Some(pw()))
+    palisade::auth::bootstrap::ensure_admin(&db, &std::env::temp_dir(), Some(pw()))
         .await
         .expect("bootstrap");
     let admin = db
@@ -109,7 +109,7 @@ async fn signed_in(app: &Router) -> (String, String) {
 async fn making_an_admin_needs_a_fresh_confirmation() {
     let (app, st) = app(&[]).await;
     let (session, csrf) = signed_in(&app).await;
-    let new_pw = clamv_webui::auth::token::random_secret();
+    let new_pw = palisade::auth::token::random_secret();
     let body = format!("_csrf={csrf}&username=second&role=ADMIN&password={new_pw}");
     let res = app
         .clone()
@@ -233,16 +233,16 @@ async fn unknown_host_names_are_refused_with_public_url() {
 #[tokio::test]
 async fn tokens_stop_with_their_creator() {
     let (_, st) = app(&[]).await;
-    let pw2 = clamv_webui::auth::password::hash(&clamv_webui::auth::token::random_secret())
-        .expect("hash");
+    let pw2 =
+        palisade::auth::password::hash(&palisade::auth::token::random_secret()).expect("hash");
     let u = st
         .db
-        .create_user("ops", &pw2, clamv_webui::auth::Role::Admin, false)
+        .create_user("ops", &pw2, palisade::auth::Role::Admin, false)
         .await
         .expect("user");
     let (secret, _) = st
         .db
-        .create_token(clamv_webui::db::tokens::NewToken {
+        .create_token(palisade::db::tokens::NewToken {
             label: "ci",
             scopes: &["scan".to_owned()],
             endpoint_ids: None,
@@ -254,7 +254,7 @@ async fn tokens_stop_with_their_creator() {
         .expect("token");
     assert!(st.db.token_by_secret(&secret).await.expect("q").is_some());
     st.db
-        .set_role_enabled(&u.id, clamv_webui::auth::Role::Admin, false)
+        .set_role_enabled(&u.id, palisade::auth::Role::Admin, false)
         .await
         .expect("disable");
     assert!(st.db.token_by_secret(&secret).await.expect("q").is_none());
