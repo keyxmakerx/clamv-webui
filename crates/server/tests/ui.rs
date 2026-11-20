@@ -567,7 +567,7 @@ async fn admin_issues_and_revokes_tokens() {
     .expect("res");
     assert_eq!(res.status(), StatusCode::OK);
     let html = body(res).await;
-    assert!(html.contains("New token secret") && html.contains("cvw_"));
+    assert!(html.contains("New token secret") && html.contains("pal_"));
     let list = st.db.list_tokens().await.expect("list");
     assert_eq!(
         list[0].scopes,
@@ -617,7 +617,7 @@ async fn admin_adds_an_agent_and_targets_it() {
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
     let res = post("/admin/agents".into(), format!("_csrf={t}&name=nas-2")).await;
     let html = body(res).await;
-    assert!(html.contains("Token for nas-2") && html.contains("palisade_agent_"));
+    assert!(html.contains("Token for nas-2") && html.contains("pal_agent_"));
     assert!(html.contains("AGENT_TOKEN_FILE") && html.contains("command: agent"));
     let a = st.db.list_agents().await.expect("list").remove(0);
     let res = app

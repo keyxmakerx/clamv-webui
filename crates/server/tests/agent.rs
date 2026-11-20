@@ -188,7 +188,7 @@ async fn agent_endpoints_check_who_is_calling() {
         async move { app.oneshot(r).await.expect("res").status() }
     };
     assert_eq!(
-        status(poll("palisade_agent_nope", HELLO)).await,
+        status(poll("pal_agent_nope", HELLO)).await,
         StatusCode::UNAUTHORIZED
     );
     assert_eq!(

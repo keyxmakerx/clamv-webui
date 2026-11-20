@@ -137,7 +137,7 @@ fn reply(status: StatusCode, msg: &'static str) -> Response {
         .into_response()
 }
 
-/// The calling agent, from `Authorization: Bearer palisade_agent_...`.
+/// The calling agent, from `Authorization: Bearer pal_agent_...`.
 pub struct Caller {
     agent: Agent,
     ip: std::net::IpAddr,

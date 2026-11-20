@@ -224,7 +224,7 @@ async fn tokens_are_scoped_and_restricted() {
         (s, b["error"].as_str()),
         (StatusCode::UNAUTHORIZED, Some("invalid_token"))
     );
-    let (s, _, _) = call(&t.app, get("/api/v1/auth", "Bearer cvw_not-a-real-token")).await;
+    let (s, _, _) = call(&t.app, get("/api/v1/auth", "Bearer pal_not-a-real-token")).await;
     assert_eq!(s, StatusCode::UNAUTHORIZED);
 }
 
@@ -292,7 +292,7 @@ async fn admin_session_issues_tokens() {
     assert_eq!(st, StatusCode::CREATED, "{b}");
     let secret = b["secret"].as_str().expect("secret").to_owned();
     assert_eq!(b["token"]["label"], "cli");
-    assert!(secret.starts_with("cvw_"));
+    assert!(secret.starts_with("pal_"));
     let (st, _, _) = call(&t.app, get("/api/v1/jobs", &format!("Bearer {secret}"))).await;
     assert_eq!(st, StatusCode::OK);
     let (_, _, list) = call(

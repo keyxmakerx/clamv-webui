@@ -376,7 +376,7 @@ async fn tokens_and_audit_pages() {
             .expect("q")
             .expect("found");
         assert_eq!(found.id, t.id, "{kind:?}");
-        assert!(db.token_by_secret("cvw_nope").await.expect("q").is_none());
+        assert!(db.token_by_secret("pal_nope").await.expect("q").is_none());
         assert!(db.revoke_token(t.id).await.expect("revoke"));
         assert!(!db.revoke_token(t.id).await.expect("revoke twice"));
         assert!(
@@ -524,7 +524,7 @@ async fn agents_claim_heartbeat_and_delete() {
             "{kind:?}"
         );
         assert!(
-            db.agent_by_secret("palisade_agent_x")
+            db.agent_by_secret("pal_agent_x")
                 .await
                 .expect("q")
                 .is_none()
