@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -20,6 +21,10 @@ const RETRY_ERROR_MS: i64 = 3_600_000;
 const MAX_NEW_PER_PASS: usize = 200;
 const MAX_DEPTH: usize = 8;
 const MAX_ENTRIES: usize = 200_000;
+/// How often records of deleted files are dropped from processed_files.
+const SWEEP_EVERY_MS: i64 = 24 * 3_600_000;
+/// Most records dropped per folder in one sweep; the rest go next time.
+const MAX_SWEEP: usize = 20_000;
 
 /// Verdicts kept in processed_files.
 pub const SEEN_BASELINE: &str = "BASELINE";
@@ -29,9 +34,28 @@ pub const SEEN_LIMIT: &str = "LIMIT";
 #[derive(Default)]
 pub struct Watcher {
     known: Mutex<HashMap<String, (i64, i64)>>,
+    /// When processed_files was last swept for deleted files (0: never).
+    swept_at: AtomicI64,
 }
 
 impl Watcher {
+    /// Let the next pass also drop records of files that are gone.
+    pub fn sweep_soon(&self) {
+        self.swept_at.store(0, Ordering::Relaxed);
+    }
+
+    /// Forget files no longer on disk, so the map does not grow forever.
+    fn keep_only(&self, seen: &HashSet<String>) {
+        if let Ok(mut m) = self.known.lock() {
+            m.retain(|k, _| seen.contains(k));
+        }
+    }
+
+    /// How many files are remembered.
+    pub fn known_len(&self) -> usize {
+        self.known.lock().map(|m| m.len()).unwrap_or(0)
+    }
+
     fn is_known(&self, path: &str, stamp: (i64, i64)) -> bool {
         self.known
             .lock()
@@ -94,6 +118,11 @@ pub fn raw_path(target: &str) -> Option<PathBuf> {
 
 /// Regular files under `root`, depth-limited, without following symlinks.
 pub fn walk(root: &Path) -> Vec<(String, (i64, i64))> {
+    walk_all(root).0
+}
+
+/// Like `walk`, and whether the whole folder was seen (not cut off at MAX_ENTRIES).
+fn walk_all(root: &Path) -> (Vec<(String, (i64, i64))>, bool) {
     let mut out = Vec::new();
     let mut stack: Vec<(PathBuf, usize)> = vec![(root.to_path_buf(), 0)];
     let mut seen = 0usize;
@@ -105,7 +134,7 @@ pub fn walk(root: &Path) -> Vec<(String, (i64, i64))> {
             seen += 1;
             if seen > MAX_ENTRIES {
                 tracing::warn!(event = "watch.truncated", root = %root.display(), limit = MAX_ENTRIES, "watched folder has too many entries; the rest are skipped");
-                return out;
+                return (out, false);
             }
             let Ok(ft) = entry.file_type() else { continue };
             let path = entry.path();
@@ -120,7 +149,7 @@ pub fn walk(root: &Path) -> Vec<(String, (i64, i64))> {
             }
         }
     }
-    out
+    (out, true)
 }
 
 /// Store the result of a WATCH scan.
@@ -163,7 +192,12 @@ pub async fn pass(st: &AppState) -> usize {
         .into_iter()
         .collect();
     let now = now_ms();
+    let sweep = now - st.watcher.swept_at.load(Ordering::Relaxed) >= SWEEP_EVERY_MS;
     let mut queued = 0;
+    // Every file seen this pass; with `complete`, anything else remembered is gone.
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut complete = true;
+    let mut walked: Vec<String> = Vec::new();
     'outer: for w in watches {
         let root = match scan::resolve_path(&st.cfg.scan_roots, &w.path).await {
             Ok(r) => r,
@@ -176,9 +210,15 @@ pub async fn pass(st: &AppState) -> usize {
             tracing::warn!(event = "watch.no_endpoint", path = %w.path, "no enabled clamd endpoint for watched folder");
             continue;
         };
-        let files = tokio::task::spawn_blocking(move || walk(&root))
+        let root_text = root.to_str().map(str::to_owned);
+        let (files, whole) = tokio::task::spawn_blocking(move || walk_all(&root))
             .await
             .unwrap_or_default();
+        seen.extend(files.iter().map(|(k, _)| k.clone()));
+        match root_text {
+            Some(r) if whole => walked.push(r),
+            _ => complete = false,
+        }
         let conf = st
             .clamd_conf
             .load(st.cfg.clamd_conf_file.as_deref())
@@ -194,6 +234,7 @@ pub async fn pass(st: &AppState) -> usize {
                     event = "watch.backlog",
                     "more new files waiting; continuing next pass"
                 );
+                complete = false;
                 break 'outer;
             }
             if inflight.contains(&path) || now - stamp.0 < SETTLE_MS {
@@ -202,6 +243,15 @@ pub async fn pass(st: &AppState) -> usize {
             if queue_file(st, ep.id, &path, stamp, now).await {
                 queued += 1;
             }
+        }
+    }
+    if complete {
+        st.watcher.keep_only(&seen);
+    }
+    if sweep {
+        st.watcher.swept_at.store(now, Ordering::Relaxed);
+        for root in &walked {
+            forget_deleted(st, root, &seen, now, &inflight).await;
         }
     }
     if queued > 0 {
@@ -213,6 +263,35 @@ pub async fn pass(st: &AppState) -> usize {
         st.runner.poke();
     }
     queued
+}
+
+/// Drop records of files under `root` that the walk no longer found.
+async fn forget_deleted(
+    st: &AppState,
+    root: &str,
+    seen: &HashSet<String>,
+    before: i64,
+    inflight: &HashSet<String>,
+) {
+    let limit = i64::try_from(MAX_ENTRIES * 2).unwrap_or(i64::MAX);
+    let Ok(rows) = st.db.processed_under(root, before, limit).await else {
+        return;
+    };
+    let mut n = 0usize;
+    for p in rows
+        .iter()
+        .filter(|p| !seen.contains(*p) && !inflight.contains(*p))
+    {
+        if n >= MAX_SWEEP {
+            break;
+        }
+        if st.db.forget_processed(p).await.is_ok() {
+            n += 1;
+        }
+    }
+    if n > 0 {
+        tracing::info!(event = "watch.pruned", root = %root, files = n, "forgot deleted files");
+    }
 }
 
 /// Queue a WATCH job for `path` unless it is already handled. True when queued.

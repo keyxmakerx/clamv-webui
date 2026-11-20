@@ -20,7 +20,7 @@
 <form method="post" action="/scan/path" class="row g-2 align-items-end">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
 <div class="col-md-3"><label class="form-label" for="pe">{{ nav.t("Run on") }}</label><select class="form-select" id="pe" name="endpoint">{% if !roots.is_empty() %}<optgroup label="This server">{% for e in endpoints %}<option value="{% if !e.is_default %}{{ e.id }}{% endif %}"{% if e.is_default %} selected{% endif %}>{{ e.name }}{% if e.is_default %} {{ nav.t("(default)") }}{% endif %}</option>{% endfor %}</optgroup>{% endif %}{% if !agents.is_empty() %}<optgroup label="Agents">{% for a in agents %}<option value="a:{{ a.id }}">{{ a.name }}{% if !a.online %} {{ nav.t("(offline)") }}{% endif %}</option>{% endfor %}</optgroup>{% endif %}</select></div>
-<div class="col-md-7"><label class="form-label" for="pp">{{ nav.t("Path") }}</label><input class="form-control" id="pp" name="path" required maxlength="4096" value="{{ path }}" placeholder="{% if let Some(r) = roots.first() %}{{ r }}{% endif %}" autocomplete="off"></div>
+<div class="col-md-7"><label class="form-label" for="pp">{{ nav.t("Path") }}</label><input class="form-control" id="pp" name="path" required maxlength="4096" value="{{ path }}" list="scan-roots" placeholder="{% if let Some(r) = roots.first() %}{{ r }}{% endif %}" autocomplete="off"><datalist id="scan-roots">{% for r in roots %}<option value="{{ r }}">{% endfor %}</datalist></div>
 <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">{{ nav.t("Queue scan") }}</button></div>
 </form>{% endif %}
 </div></section>

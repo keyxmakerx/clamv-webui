@@ -375,6 +375,7 @@ async fn route_table_by_role() {
         ("/admin/canaries/x/delete", Role::Admin),
         ("/admin/watch/x/enabled", Role::Admin),
         ("/admin/watch/x/delete", Role::Admin),
+        ("/admin/watch/x/scan", Role::Admin),
         ("/admin/integrations/webhook/test", Role::Admin),
         ("/admin/settings/review", Role::Admin),
         ("/admin/settings/apply", Role::Admin),
@@ -1214,6 +1215,35 @@ async fn quarantine_is_off_until_configured_and_needs_a_real_detection() {
         .expect("res");
         assert_eq!(res.status(), StatusCode::BAD_REQUEST, "{d}");
     }
+    // Held files are counted with their total size.
+    for (p, size) in [("/scan/a.exe", 2048), ("/scan/b.exe", 1024)] {
+        let i = st
+            .db
+            .create_quarantine(None, p, "Eicar", "admin")
+            .await
+            .expect("create")
+            .expect("new");
+        st.db
+            .set_quarantine_state(
+                &i.id,
+                palisade::db::quarantine::HELD,
+                None,
+                Some(("ab", size)),
+                "admin",
+            )
+            .await
+            .expect("held");
+    }
+    let res = app
+        .clone()
+        .oneshot(get("/admin/quarantine", Some(&c)))
+        .await
+        .expect("res");
+    let html = body(res).await;
+    assert!(
+        html.contains("<strong>2</strong> file(s) in quarantine, <strong>3.0 KiB</strong>"),
+        "{html}"
+    );
 }
 
 #[tokio::test]

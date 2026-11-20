@@ -34,7 +34,7 @@
 <label class="form-label mt-2" for="ea-{{ e.id }}">{{ nav.t("Address") }}</label><input class="form-control form-control-sm" id="ea-{{ e.id }}" name="address" required maxlength="512" value="{{ e.address }}" autocomplete="off">
 <div class="mt-2"><button class="btn btn-sm btn-primary" type="submit">{{ nav.t("Save") }}</button></div>
 </form></details>
-<form method="post" action="/admin/endpoints/{{ e.id }}/test"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-secondary" type="submit">{{ nav.t("Test") }}</button></form>
+<form method="post" action="/admin/endpoints/{{ e.id }}/test"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-secondary" type="submit" title="{{ nav.t("Checks that clamd answers and flags the harmless EICAR test file") }}">{{ nav.t("Test") }}</button></form>
 {% if !e.is_default %}<form method="post" action="/admin/endpoints/{{ e.id }}/default"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-secondary" type="submit">{{ nav.t("Make default") }}</button></form>
 <form method="post" action="/admin/endpoints/{{ e.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">{{ nav.t("Delete") }}</button></form>{% endif %}
 </div></td>

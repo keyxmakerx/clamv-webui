@@ -76,6 +76,30 @@ pub async fn probe(st: &AppState, e: &Endpoint) -> Status {
     }
 }
 
+/// Stream the harmless EICAR test file to clamd: the signature it reports, or what is wrong.
+pub async fn eicar_test(st: &AppState, e: &Endpoint) -> Result<String, String> {
+    let ep = e
+        .parsed()
+        .map_err(|_| "its address is invalid.".to_owned())?;
+    let client = st.clamd(ep);
+    let eicar = crate::schedule::eicar();
+    match tokio::time::timeout(Duration::from_secs(15), client.instream(&eicar[..])).await {
+        Ok(Ok(r)) => match r.detections.first() {
+            Some(d) => Ok(d.signature.clone()),
+            None if !r.errors.is_empty() => Err(format!(
+                "it could not scan the EICAR test file: {}.",
+                r.errors[0].message
+            )),
+            None => Err(
+                "it did not flag the EICAR test file: its signatures may still be downloading or are missing. Check the clamav container's log and test again in a few minutes."
+                    .into(),
+            ),
+        },
+        Ok(Err(err)) => Err(format!("it could not scan the EICAR test file: {err}.")),
+        Err(_) => Err("scanning the EICAR test file timed out.".into()),
+    }
+}
+
 /// Probe every endpoint at once; keeps list order.
 pub async fn probe_all(st: &Arc<AppState>, list: Vec<Endpoint>) -> Vec<EndpointView> {
     let mut set = tokio::task::JoinSet::new();
@@ -437,16 +461,29 @@ async fn test(
     };
     e.enabled = true;
     match probe(&st, &e).await {
-        Status::Up(v) => {
-            result(
+        Status::Up(v) => match eicar_test(&st, &e).await {
+            Ok(sig) => result(
                 &st,
                 &s,
                 &me,
                 None,
-                Some(format!("{} answered: {v}", e.name)),
+                Some(format!(
+                    "{} answered: {v}. It flagged the EICAR test file ({sig}), so scanning works.",
+                    e.name
+                )),
             )
-            .await
-        }
+            .await,
+            Err(m) => {
+                result(
+                    &st,
+                    &s,
+                    &me,
+                    Some(format!("{} answered ({v}), but {m}", e.name)),
+                    None,
+                )
+                .await
+            }
+        },
         Status::Down(m) => {
             result(
                 &st,
