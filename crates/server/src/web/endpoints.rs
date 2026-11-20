@@ -274,7 +274,7 @@ async fn create(
             &st,
             &s,
             &me,
-            Some("That host is not on CLAMD_HOST_ALLOWLIST (when it is empty, only CLAMD_ENDPOINT's host is allowed).".into()),
+            Some("That host is not allowed: add it to CLAMD_HOST_ALLOWLIST on the palisade service and restart (when it is empty, only CLAMD_ENDPOINT's host is allowed).".into()),
             None,
         )
         .await;
@@ -523,7 +523,7 @@ async fn edit(
     };
     if !st.endpoint_allowed(&ep) {
         tracing::warn!(event = "clamd.endpoint_denied", endpoint = %ep, user = %me.username, "endpoint not on CLAMD_HOST_ALLOWLIST");
-        return fail("That host is not on CLAMD_HOST_ALLOWLIST (when it is empty, only CLAMD_ENDPOINT's host is allowed).".into()).await;
+        return fail("That host is not allowed: add it to CLAMD_HOST_ALLOWLIST on the palisade service and restart (when it is empty, only CLAMD_ENDPOINT's host is allowed).".into()).await;
     }
     let address = ep.to_string();
     match st.db.update_endpoint(id, name, &address).await {

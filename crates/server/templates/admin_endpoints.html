@@ -7,7 +7,7 @@
 <form method="post" action="/admin/endpoints" class="row g-2 align-items-end">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
 <div class="col-md-3"><label class="form-label" for="en">{{ nav.t("Name") }}</label><input class="form-control" id="en" name="name" required maxlength="64" autocomplete="off"></div>
-<div class="col-md-5"><label class="form-label" for="ea">{{ nav.t("Address") }}</label><input class="form-control" id="ea" name="address" required maxlength="512" placeholder="{{ nav.t("tcp://clamav:3310") }}" autocomplete="off"></div>
+<div class="col-md-5"><label class="form-label" for="ea">{{ nav.t("Address") }}</label><input class="form-control" id="ea" name="address" required maxlength="512" placeholder="{{ nav.t("tcp://clamav:3310") }}" autocomplete="off"><div class="form-text">tcp://host:3310 {{ nav.t("or") }} unix:///run/clamav/clamd.sock</div></div>
 <div class="col-md-2"><label class="form-check-label small"><input class="form-check-input" type="checkbox" name="make_default" value="1"> {{ nav.t("make default") }}</label></div>
 <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">{{ nav.t("Add") }}</button></div>
 </form>

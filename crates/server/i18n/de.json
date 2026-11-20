@@ -314,6 +314,7 @@
   "Off. Add a code from your phone to every password sign-in.": "Aus. Fügen Sie jeder Passwort-Anmeldung einen Code von Ihrem Telefon hinzu.",
   "Off. Set": "Aus. Setzen Sie",
   "Older": "Älter",
+  "On an agent, decoys are written only inside that host's CANARY_DIRS and the agent needs canaries in AGENT_ALLOW; elsewhere the file must already exist and is only watched.": "On an agent, decoys are written only inside that host's CANARY_DIRS and the agent needs canaries in AGENT_ALLOW; elsewhere the file must already exist and is only watched.",
   "On its host,": "On its host,",
   "On the agent host, make a folder and go into it:": "On the agent host, make a folder and go into it:",
   "On the host, add this rule and mount": "Fügen Sie auf dem Host diese Regel hinzu und binden Sie ein:",

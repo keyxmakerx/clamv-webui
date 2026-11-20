@@ -116,13 +116,16 @@ pub fn raw_path(target: &str) -> Option<PathBuf> {
     }
 }
 
+/// A walked file: its key and (mtime ms, size).
+pub type Found = (String, (i64, i64));
+
 /// Regular files under `root`, depth-limited, without following symlinks.
-pub fn walk(root: &Path) -> Vec<(String, (i64, i64))> {
+pub fn walk(root: &Path) -> Vec<Found> {
     walk_all(root).0
 }
 
 /// Like `walk`, and whether the whole folder was seen (not cut off at MAX_ENTRIES).
-fn walk_all(root: &Path) -> (Vec<(String, (i64, i64))>, bool) {
+fn walk_all(root: &Path) -> (Vec<Found>, bool) {
     let mut out = Vec::new();
     let mut stack: Vec<(PathBuf, usize)> = vec![(root.to_path_buf(), 0)];
     let mut seen = 0usize;

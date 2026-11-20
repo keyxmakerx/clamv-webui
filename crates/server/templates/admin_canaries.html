@@ -11,6 +11,7 @@
 {% for (v, l) in hosts %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div>
 <div class="col-md-5"><label class="form-label" for="cp">{{ nav.t("File") }}</label><input class="form-control" id="cp" name="path" required maxlength="1024" placeholder="{{ nav.t("/srv/share/finance/passwords.xlsx") }}" autocomplete="off"></div>
 <div class="col-md-2"><label class="form-check-label small"><input class="form-check-input" type="checkbox" name="create" value="1" checked> {{ nav.t("write a decoy if missing") }}</label></div>
+<div class="col-12 form-text mt-1">{{ nav.t("On an agent, decoys are written only inside that host's CANARY_DIRS and the agent needs canaries in AGENT_ALLOW; elsewhere the file must already exist and is only watched.") }}</div>
 <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">{{ nav.t("Add") }}</button></div>
 </form>
 </div></section>
