@@ -3,6 +3,7 @@
 //! when clamd still finds it infected at that moment, only from inside SCAN_ROOTS,
 //! and only after a full, verified copy; restoring or deleting needs a passkey.
 
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -20,6 +21,30 @@ pub const READ_ONLY: &str = "QUARANTINE_READ_ONLY";
 pub const EXISTS: &str = "QUARANTINE_EXISTS";
 pub const REJECTED: &str = "QUARANTINE_REJECTED";
 pub const FAILED: &str = "QUARANTINE_FAILED";
+
+/// Create QUARANTINE_DIR (mode 0700) if it is set but missing, so a fresh volume works
+/// without a manual step. Returns a warning to log when it cannot be used.
+pub fn prepare_dir(dir: Option<&Path>) -> Option<String> {
+    let dir = dir?;
+    if dir.is_dir() {
+        return None;
+    }
+    let made = std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir);
+    match made {
+        Ok(()) => {
+            tracing::info!(event = "quarantine.dir_created", dir = %dir.display(), "created the quarantine folder");
+            None
+        }
+        Err(e) => Some(format!(
+            "QUARANTINE_DIR {}: {e}; quarantine stays off until the folder exists and is writable by uid {}",
+            dir.display(),
+            crate::config::run_as()
+        )),
+    }
+}
 
 /// Step-up actions, confirmed with a passkey like host baseline changes.
 pub const RESTORE: &str = "quarantine.restore";
@@ -589,6 +614,21 @@ mod tests {
         assert!(!valid_id("../../etc/passwd"));
         assert!(!valid_id(""));
         assert!(stored(Path::new("/q"), "a/b").is_none());
+    }
+
+    #[test]
+    fn missing_quarantine_dir_is_created_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!("palisade-qd-{}", crate::db::new_id()));
+        let dir = base.join("data/quarantine");
+        assert!(prepare_dir(None).is_none());
+        assert!(prepare_dir(Some(&dir)).is_none());
+        let mode = std::fs::metadata(&dir).expect("made").permissions().mode();
+        assert_eq!(mode & 0o777, 0o700);
+        assert!(prepare_dir(Some(&dir)).is_none(), "existing folder is fine");
+        std::fs::write(base.join("file"), b"x").expect("file");
+        assert!(prepare_dir(Some(&base.join("file/q"))).is_some());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[tokio::test]

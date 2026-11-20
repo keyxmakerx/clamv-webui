@@ -82,7 +82,7 @@ pub struct Spec {
 
 /// The audit rule key the alert enrichment looks for.
 pub const AUDIT_KEY: &str = "palisade_canary";
-const AUDIT_LOG: &str = "/var/log/audit/audit.log";
+pub const AUDIT_LOG: &str = "/var/log/audit/audit.log";
 
 /// The auditd rule an admin adds on the host for one canary.
 pub fn audit_rule(path: &str) -> String {

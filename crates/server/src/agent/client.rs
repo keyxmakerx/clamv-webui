@@ -162,6 +162,9 @@ fn build(cfg: Config) -> anyhow::Result<Agent> {
 }
 
 pub async fn run(cfg: Config) -> anyhow::Result<()> {
+    if let Some(w) = crate::quarantine::prepare_dir(cfg.quarantine_dir.as_deref()) {
+        tracing::warn!(event = "config.warning", "{w}");
+    }
     let a = Arc::new(build(cfg)?);
     spawn_health(a.clone()).await?;
     tracing::info!(event = "agent.started", server = %a.base, clamd = %a.cfg.clamd_endpoint, roots = ?a.cfg.scan_roots, slots = a.cfg.scan_concurrency.max(1), version = env!("CARGO_PKG_VERSION"), "agent started");

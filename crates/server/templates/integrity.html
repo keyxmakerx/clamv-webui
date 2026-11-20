@@ -4,7 +4,7 @@
 <h1 class="h3">{{ nav.t("Host checks") }}</h1>
 <h2 class="h5 mt-3">{{ nav.t("AIDE and rkhunter") }}</h2>
 <p class="muted">{{ nav.t("AIDE and rkhunter runs from every host. Each host runs them on its own timer or from Managed checks below; this server and the agents read") }} <code>{{ aide }}</code> {{ nav.t("and") }} <code>{{ rkhunter }}</code> {{ nav.t("(mount them read-only) and report each new run.") }}</p>
-<section class="card mt-3"><div class="card-body table-responsive">
+{% if runs.is_empty() %}{% let g = crate::web::setup::guide("integrity") %}{% include "_empty.html" %}{% else %}<section class="card mt-3"><div class="card-body table-responsive">
 <table class="table table-sm align-top">
 <thead><tr><th>{{ nav.t("Ran") }}</th><th>{{ nav.t("Host") }}</th><th>{{ nav.t("Tool") }}</th><th>{{ nav.t("Result") }}</th></tr></thead>
 <tbody>
@@ -14,9 +14,9 @@
 <td class="small">{{ r.tool }}</td>
 <td>{% if r.ok %}<span class="badge bg-success">{{ nav.t("clean") }}</span>{% else %}<span class="badge bg-danger">{{ nav.t("changes") }}</span>{% endif %} <span class="small">{{ r.summary }}</span>
 {% if !r.findings.is_empty() %}<details class="small mt-1"><summary>{{ r.findings.len() }} {{ nav.t("finding(s)") }}</summary><ul class="mb-0">{% for f in r.findings %}<li class="text-break"><code>{{ f }}</code></li>{% endfor %}</ul></details>{% endif %}</td>
-</tr>{% else %}<tr><td colspan="4" class="muted">{{ nav.t("No runs yet. Mount the AIDE or rkhunter report into this container or an agent.") }}</td></tr>{% endfor %}
+</tr>{% endfor %}
 </tbody></table>
-</div></section>
+</div></section>{% endif %}
 <h2 class="h5 mt-4">{{ nav.t("Managed checks") }}</h2>
 <p class="muted">{{ nav.t("Palisade can start AIDE and rkhunter itself without root: each host installs fixed, sandboxed systemd units and a polkit rule once (") }}<code>host-setup</code>{{ nav.t("), and Palisade may only start those units and switch their timers. Accepting a new baseline asks for your passkey every time.") }}</p>
 <div id="passkey-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
@@ -45,7 +45,7 @@
 </div></section>
 <h2 class="h5 mt-4">{{ nav.t("Falco, last 30 days") }}</h2>
 <p class="muted">{{ nav.t("Each host's Falco writes JSON alerts to") }} <code>{{ falco_path }}</code> {{ nav.t("(set") }} <code>json_output: true</code> {{ nav.t("and") }} <code>file_output</code>{{ nav.t("); mount it read-only and alerts arrive within seconds. Error and worse also notify.") }}</p>
-<section class="card mt-2"><div class="card-body table-responsive">
+{% if falco.is_empty() && !falco_mounted %}{% let g = crate::web::setup::guide("falco") %}{% include "_empty.html" %}{% else %}<section class="card mt-2"><div class="card-body table-responsive">
 <table class="table table-sm align-top">
 <thead><tr><th>{{ nav.t("When") }}</th><th>{{ nav.t("Host") }}</th><th>{{ nav.t("Priority") }}</th><th>{{ nav.t("Rule") }}</th></tr></thead>
 <tbody>
@@ -56,6 +56,6 @@
 <td><strong class="small">{{ f.rule }}</strong><div class="small muted text-break">{{ f.output }}</div></td>
 </tr>{% else %}<tr><td colspan="4" class="muted">{{ nav.t("No Falco alerts.") }}</td></tr>{% endfor %}
 </tbody></table>
-</div></section>
+</div></section>{% endif %}
 {% if nav.is_admin %}<script defer src="/js/passkey.js?v={{ crate::web::asset_v() }}"></script>{% endif %}
 {% endblock %}

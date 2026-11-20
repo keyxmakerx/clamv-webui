@@ -17,17 +17,19 @@
 <p class="muted small">{{ nav.t("Full URLs are kept secret.") }}</p>
 <form method="post" action="/admin/integrations/webhook/test"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-outline-primary" type="submit">{{ nav.t("Send test message") }}</button></form>
 {% else %}
-<p class="muted mb-0">{{ nav.t("Not configured. Set") }} <code>WEBHOOK_URL</code> {{ nav.t("(or") }} <code>WEBHOOK_URL_FILE</code>{{ nav.t(") to up to five comma-separated URLs. Discord is detected; put") }} <code>ntfy+</code>, <code>gotify+</code> {{ nav.t("or") }} <code>slack+</code> {{ nav.t("in front for those. Private, loopback and CGNAT addresses need") }} <code>WEBHOOK_ALLOWED_CIDRS</code>.</p>
+<p class="muted mb-0">No alert destination yet, so detections only show up here.</p>
 {% endif %}
 </div></section>
+{% if targets.is_empty() %}{% let g = crate::web::setup::guide("alerts") %}{% include "_empty.html" %}{% endif %}
 <section class="card mt-3"><div class="card-body">
 <h2 class="h5">{{ nav.t("Prometheus and Grafana") }}</h2>
 {% if metrics %}<p>{{ nav.t("Metrics are served at") }} <code>/metrics</code> {{ nav.t("(also") }} <code>/actuator/prometheus</code>{{ nav.t(") with") }} <code>Authorization: Bearer</code> {{ nav.t("and the configured") }} <code>METRICS_TOKEN</code>.</p>
-{% else %}<p class="muted">{{ nav.t("Off. Set") }} <code>METRICS_TOKEN</code> {{ nav.t("(or") }} <code>METRICS_TOKEN_FILE</code>{{ nav.t(") to serve") }} <code>/metrics</code>{{ nav.t(". Use at least 16 random characters.") }}</p>{% endif %}
+{% else %}<p class="muted">Off: <code>/metrics</code> answers 404 until a token is set (see below).</p>{% endif %}
 <ul class="mb-0">
 <li><a href="/admin/integrations/files/grafana-palisade.json">{{ nav.t("Grafana dashboard") }}</a></li>
 <li><a href="/admin/integrations/files/clamav-alerts.yml">{{ nav.t("Prometheus alert rules") }}</a></li>
 <li><a href="/admin/integrations/files/prometheus.yml.example">{{ nav.t("Prometheus scrape config example") }}</a></li>
 </ul>
 </div></section>
+{% if !metrics %}{% let g = crate::web::setup::guide("metrics") %}{% include "_empty.html" %}{% endif %}
 {% endblock %}

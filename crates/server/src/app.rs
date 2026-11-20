@@ -322,6 +322,9 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     for w in startup_warnings(&cfg) {
         tracing::warn!(event = "config.warning", "{w}");
     }
+    if let Some(w) = crate::quarantine::prepare_dir(cfg.quarantine_dir.as_deref()) {
+        tracing::warn!(event = "config.warning", "{w}");
+    }
     let url = cfg.database_url()?;
     let db = Db::open(&url, cfg.database_max_connections)
         .await
@@ -469,7 +472,7 @@ pub fn prepare_data_dir(dir: &std::path::Path) -> anyhow::Result<()> {
 
 /// Where `auth::bootstrap` writes a generated admin password.
 pub fn bootstrap_file(data_dir: &std::path::Path) -> std::path::PathBuf {
-    data_dir.join("bootstrap-admin-password")
+    crate::auth::bootstrap::file(data_dir)
 }
 
 /// A one-time admin password file is useless once `admin` has chosen its own password (or is

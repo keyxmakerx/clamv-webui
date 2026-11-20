@@ -5,7 +5,7 @@
 <p class="muted">{{ nav.t("Every") }} {{ poll }} {{ nav.t("s, new or changed files are queued for scanning. Files changed in the last minute wait until they settle. Symlinks are not followed.") }}</p>
 <section class="card mt-3"><div class="card-body">
 <h2 class="h5">{{ nav.t("Watch a folder") }}</h2>
-{% if roots.is_empty() %}<p class="muted">{{ nav.t("Set") }} <code>SCAN_ROOTS</code> {{ nav.t("to watch folders.") }}</p>{% else %}
+{% if roots.is_empty() %}<p class="muted mb-0">Folders can only be watched inside <code>SCAN_ROOTS</code>, which is not set yet.</p>{% else %}
 <form method="post" action="/admin/watch" class="row g-3 align-items-end">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
 <div class="col-md-5"><label class="form-label" for="wp">{{ nav.t("Folder") }}</label><input class="form-control" id="wp" name="path" required maxlength="4096" list="watch-roots" placeholder="{% if let Some(r) = roots.first() %}{{ r }}/downloads{% endif %}" autocomplete="off"><datalist id="watch-roots">{% for r in roots %}<option value="{{ r }}">{% endfor %}</datalist>
@@ -16,6 +16,7 @@
 <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">{{ nav.t("Watch") }}</button></div>
 </form>{% endif %}
 </div></section>
+{% if roots.is_empty() %}{% let g = crate::web::setup::guide("scan-roots") %}{% include "_empty.html" %}{% endif %}
 <section class="card mt-3"><div class="card-body table-responsive">
 <table class="table table-sm align-middle">
 <thead><tr><th>{{ nav.t("Folder") }}</th><th>{{ nav.t("Endpoint") }}</th><th>{{ nav.t("Added") }}</th><th><span class="visually-hidden">{{ nav.t("Actions") }}</span></th></tr></thead>

@@ -436,7 +436,7 @@ async fn read_only_wrong_password_and_unset() {
 
     let (app, _st, c) = app_with(&[]).await;
     let page = body(app.oneshot(get_req("/crowdsec", &c)).await.expect("res")).await;
-    assert!(page.contains("Connect CrowdSec"));
+    assert!(page.contains("Not set up yet: CrowdSec") && page.contains("CROWDSEC_LAPI_URL"));
 }
 
 #[tokio::test]

@@ -248,10 +248,12 @@
   function copyText(btn) {
     var el = document.getElementById(btn.getAttribute("data-copy"));
     if (!el) return;
-    var label = btn.textContent;
+    // Keep the button's own markup (icon and label) to put back afterwards.
+    var label = btn.innerHTML;
     var done = function (ok) {
       btn.textContent = ok ? "Copied" : "Select and copy";
-      setTimeout(function () { btn.textContent = label; }, 1500);
+      btn.classList.add("copied");
+      setTimeout(function () { btn.innerHTML = label; btn.classList.remove("copied"); }, 1500);
     };
     // Without a secure context the clipboard API is missing: select the text instead.
     var selectIt = function () {
@@ -295,6 +297,14 @@
       var c = ev.target.closest("[data-copy]");
       if (c) copyText(c);
     });
+    // A link to a Setup row (#key) opens that row.
+    function openHash() {
+      var id = location.hash.slice(1);
+      var d = id && document.getElementById(id);
+      if (d && d.tagName === "DETAILS") d.open = true;
+    }
+    window.addEventListener("hashchange", openHash);
+    openHash();
     initPrefs();
     stackTables(document);
     initRefresh();

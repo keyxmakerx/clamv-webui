@@ -70,7 +70,7 @@
 <details class="confirm"><summary class="btn btn-sm btn-outline-warning">{{ nav.t("New token") }}</summary><div class="confirm-box"><p>{{ nav.t("Issue a new token for") }} {{ r.name }}{{ nav.t("? The running agent drops off at once until you install the new token on its host.") }}</p><form method="post" action="/admin/agents/{{ r.id }}/rotate"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-danger" type="submit">{{ nav.t("Issue new token") }}</button></form></div></details>
 <details class="confirm"><summary class="btn btn-sm btn-outline-danger">{{ nav.t("Remove") }}</summary><div class="confirm-box"><p>{{ nav.t("Remove") }} {{ r.name }}{{ nav.t("? Its token stops working at once. This can't be undone.") }}</p><form method="post" action="/admin/agents/{{ r.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-danger" type="submit">{{ nav.t("Remove agent") }}</button></form></div></details>
 </div></td>
-</tr>{% else %}<tr><td colspan="6" class="muted">{{ nav.t("No agents yet.") }}</td></tr>{% endfor %}
+</tr>{% else %}<tr><td colspan="6">{% let g = crate::web::setup::guide("agents") %}{% include "_empty.html" %}</td></tr>{% endfor %}
 </tbody></table>
 </div></section>
 {% endblock %}

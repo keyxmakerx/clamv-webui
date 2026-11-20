@@ -1,0 +1,8 @@
+{# "Not set up yet" panel for a feature page. Needs `g` (a guide from crate::web::setup) and `nav`. #}
+<section class="card empty-state mt-3"><div class="card-body">
+<h2 class="h5"><i class="fas fa-plug" aria-hidden="true"></i> Not set up yet: {{ g.title }}</h2>
+<p>{{ g.gives }}</p>
+{% if nav.is_admin %}{% let snip_suffix = "-empty" %}{% include "_setup_fix.html" %}
+<p class="small mt-2 mb-0"><a href="/admin/setup#{{ g.key }}">See it on the Setup checklist</a></p>
+{% else %}<p class="small muted mb-0">An admin can turn this on; the Setup page shows them how.</p>{% endif %}
+</div></section>

@@ -11,6 +11,8 @@ use palisade::config::Cli;
 use palisade::db::Db;
 use tower::ServiceExt;
 
+mod common;
+
 /// Generated per run so no credential literal lives in the source.
 fn pw() -> &'static str {
     static PW: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -246,7 +248,8 @@ async fn first_login_forces_password_change_then_works() {
         ))
         .await
         .expect("res");
-    assert_eq!(res.headers()[header::LOCATION], "/dashboard");
+    // Setup is not done (clamd is unreachable), so the admin lands there first.
+    assert_eq!(res.headers()[header::LOCATION], "/admin/setup");
     let c = session_cookie(&res);
     let res = app
         .clone()
@@ -342,6 +345,7 @@ async fn route_table_by_role() {
         ("/admin/clamd-config", Role::Admin),
         ("/admin/firewall", Role::Admin),
         ("/admin/quarantine", Role::Admin),
+        ("/admin/setup", Role::Admin),
     ];
     let posts: &[(&str, Role)] = &[
         ("/admin/users", Role::Admin),
@@ -383,6 +387,7 @@ async fn route_table_by_role() {
         ("/admin/agents/x/enabled", Role::Admin),
         ("/admin/agents/x/rotate", Role::Admin),
         ("/admin/agents/x/delete", Role::Admin),
+        ("/admin/setup/dismiss", Role::Admin),
     ];
     for role in [Role::Viewer, Role::Operator, Role::Admin] {
         let h = password::hash(&palisade::auth::token::random_secret()).expect("hash");
@@ -1452,4 +1457,334 @@ async fn audit_log_filters_pages_and_exports() {
     assert!(csv.starts_with("at,user,action,outcome,details,job_id,ip\n"));
     assert_eq!(csv.matches("TEST_EVEN").count(), 30);
     assert!(csv.contains("\"'=item 0\""), "cells cannot become formulas");
+}
+
+/// A signed-in user with `role`: (cookie, CSRF token).
+async fn session_as(st: &AppState, role: palisade::auth::Role) -> (String, String) {
+    let h = palisade::auth::password::hash(&palisade::auth::token::random_secret()).expect("hash");
+    let u = st
+        .db
+        .create_user(&format!("u-{role}"), &h, role, false)
+        .await
+        .expect("user");
+    let (raw, s) = st
+        .db
+        .create_session(&u.id, 3_600_000, None, None)
+        .await
+        .expect("session");
+    (format!("palisade_session={raw}"), s.csrf_token)
+}
+
+#[tokio::test]
+async fn setup_page_shows_what_works_and_how_to_fix_the_rest() {
+    let metrics = palisade::auth::token::random_secret();
+    let watcher = palisade::auth::token::random_secret();
+    let (app, st) = app_with(&[
+        "--metrics-token",
+        &metrics,
+        "--crowdsec-lapi-url",
+        "http://127.0.0.1:1",
+        "--crowdsec-password",
+        &watcher,
+        "--scan-roots",
+        "/nonexistent-palisade-root",
+    ])
+    .await;
+    let (c, _) = admin_cookie(&st).await;
+    let res = app
+        .clone()
+        .oneshot(get("/admin/setup", Some(&c)))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::OK);
+    let html = body(res).await;
+    // clamd never answered since start: the friendly first-start state, not "broken".
+    assert!(html.contains("still downloading signatures"), "{html}");
+    assert!(html.contains(">in progress<"));
+    assert!(html.contains("/nonexistent-palisade-root does not exist in the container"));
+    assert!(html.contains(">broken<"));
+    assert!(html.contains(">needs attention<"));
+    assert!(html.contains(">not set up (optional)<"));
+    assert!(html.contains("This page came over plain HTTP"));
+    assert!(html.contains("No scheduled scans yet"));
+    assert!(html.contains("/metrics is on"));
+    assert!(html.contains("Connecting to http://127.0.0.1:1"));
+    // Exact compose lines, each with a one-line comment, and a docs link.
+    assert!(
+        html.contains("      CROWDSEC_LAPI_URL: http://crowdsec:8080  # your CrowdSec Local API")
+    );
+    assert!(
+        html.contains("      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro  # ")
+    );
+    assert!(html.contains("id=\"clamd\"") && html.contains("docs/CONFIGURATION.md#crowdsec"));
+    // Secret values never show, only that they are set.
+    assert!(!html.contains(&metrics) && !html.contains(&watcher));
+    // Nobody else may see it.
+    for role in [palisade::auth::Role::Viewer, palisade::auth::Role::Operator] {
+        let (c, _) = session_as(&st, role).await;
+        let res = app
+            .clone()
+            .oneshot(get("/admin/setup", Some(&c)))
+            .await
+            .expect("res");
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    }
+}
+
+#[tokio::test]
+async fn setup_sees_a_working_clamd() {
+    let port = common::fake_clamd().await;
+    let ep = format!("tcp://127.0.0.1:{port}");
+    let cli = Cli::parse_from(["palisade", "--clamd-endpoint", &ep]);
+    let db = Db::open("sqlite::memory:", 1).await.expect("db");
+    palisade::auth::bootstrap::ensure_admin(&db, &std::env::temp_dir(), Some(pw()))
+        .await
+        .expect("bootstrap");
+    palisade::app::seed_endpoint(&db, &cli.config)
+        .await
+        .expect("seed");
+    let st = Arc::new(AppState::new(cli.config.clone(), db));
+    let app = router(st.clone(), &cli.config);
+    let (c, _) = admin_cookie(&st).await;
+    let html = body(
+        app.oneshot(get("/admin/setup", Some(&c)))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(html.contains(&format!("clamd at {ep} answers: ClamAV 1.4.0.")));
+    assert!(html.contains("(database 27000)"));
+    assert!(!html.contains("still downloading signatures"));
+}
+
+#[tokio::test]
+async fn admins_see_a_setup_banner_until_they_hide_it() {
+    let (app, st) = app().await;
+    let (c, t) = admin_cookie(&st).await;
+    let html = body(
+        app.clone()
+            .oneshot(get("/dashboard", Some(&c)))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(html.contains("things need attention") && html.contains("href=\"/admin/setup\""));
+
+    // Viewers and operators see nothing new.
+    for role in [palisade::auth::Role::Viewer, palisade::auth::Role::Operator] {
+        let (vc, _) = session_as(&st, role).await;
+        let html = body(
+            app.clone()
+                .oneshot(get("/dashboard", Some(&vc)))
+                .await
+                .expect("res"),
+        )
+        .await;
+        assert!(!html.contains("need attention") && !html.contains("/admin/setup"));
+    }
+
+    // Hiding needs the form token, then lasts until something new comes up.
+    let res = app
+        .clone()
+        .oneshot(form("/admin/setup/dismiss", "", Some(&c)))
+        .await
+        .expect("res");
+    assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    let res = send(
+        app.clone(),
+        form("/admin/setup/dismiss", &format!("_csrf={t}"), Some(&c)),
+    )
+    .await
+    .expect("res");
+    let html = body(res).await;
+    assert!(html.contains("Hidden until something new needs attention"));
+    assert!(!html.contains("things need attention"));
+    // The Setup page still lists everything.
+    let html = body(
+        app.clone()
+            .oneshot(get("/admin/setup", Some(&c)))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(html.contains(">needs attention<"));
+    // Hiding is per admin.
+    let (c2, _) = session_as(&st, palisade::auth::Role::Admin).await;
+    let html = body(
+        app.oneshot(get("/dashboard", Some(&c2)))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(html.contains("things need attention"));
+}
+
+#[tokio::test]
+async fn first_admin_sign_in_explains_the_password_file_and_lands_on_setup() {
+    let dir = std::env::temp_dir().join(format!("palisade-first-{}", palisade::db::new_id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let (app, st) = app_with(&["--data-dir", dir.to_str().expect("utf8")]).await;
+    let file = palisade::auth::bootstrap::reset_admin(&st.db, &dir)
+        .await
+        .expect("reset");
+    let one_time = std::fs::read_to_string(&file)
+        .expect("file")
+        .trim()
+        .to_owned();
+
+    let html = body(app.clone().oneshot(get("/login", None)).await.expect("res")).await;
+    assert!(html.contains("First sign-in?"));
+    assert!(html.contains(&file.display().to_string()));
+    assert!(html.contains("BOOTSTRAP_ADMIN_PASSWORD"));
+    assert!(
+        !html.contains(&one_time),
+        "the password itself is never shown"
+    );
+    assert!(!html.contains("cat "), "no command that prints it either");
+
+    let res = app
+        .clone()
+        .oneshot(form(
+            "/login",
+            &format!("username=admin&password={}", urlencode(&one_time)),
+            None,
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.headers()[header::LOCATION], "/account/password");
+    let c = session_cookie(&res);
+    let page = body(
+        app.clone()
+            .oneshot(get("/account/password", Some(&c)))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(page.contains("one-time password from <code>bootstrap-admin-password</code>"));
+    let csrf = csrf_from(&page);
+    let res = app
+        .clone()
+        .oneshot(form(
+            "/account/password",
+            &format!(
+                "_csrf={csrf}&current={}&new={n}&confirm={n}",
+                urlencode(&one_time),
+                n = new_pw()
+            ),
+            Some(&c),
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.headers()[header::LOCATION], "/login?changed");
+    assert!(!file.exists(), "the used one-time password file is removed");
+    let html = body(app.clone().oneshot(get("/login", None)).await.expect("res")).await;
+    assert!(!html.contains("First sign-in?"));
+
+    // Setup is not done, so the admin lands there instead of an empty dashboard...
+    let login = || {
+        form(
+            "/login",
+            &format!("username=admin&password={}", new_pw()),
+            None,
+        )
+    };
+    let res = app.clone().oneshot(login()).await.expect("res");
+    assert_eq!(res.headers()[header::LOCATION], "/admin/setup");
+    let c = session_cookie(&res);
+    let page = body(
+        app.clone()
+            .oneshot(get("/admin/setup", Some(&c)))
+            .await
+            .expect("res"),
+    )
+    .await;
+    let res = app
+        .clone()
+        .oneshot(form(
+            "/admin/setup/dismiss",
+            &format!("_csrf={}&next=setup", csrf_from(&page)),
+            Some(&c),
+        ))
+        .await
+        .expect("res");
+    assert_eq!(res.headers()[header::LOCATION], "/admin/setup");
+    // ...until they hide it.
+    let res = app.oneshot(login()).await.expect("res");
+    assert_eq!(res.headers()[header::LOCATION], "/dashboard");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn unconfigured_features_explain_how_to_turn_them_on() {
+    let (app, st) = app().await;
+    let (c, _) = admin_cookie(&st).await;
+    for (path, title, line) in [
+        (
+            "/crowdsec",
+            "Not set up yet: CrowdSec",
+            "CROWDSEC_LAPI_URL: http://crowdsec:8080",
+        ),
+        (
+            "/admin/quarantine",
+            "Not set up yet: Quarantine",
+            "QUARANTINE_DIR: /app/data/quarantine",
+        ),
+        (
+            "/admin/integrations",
+            "Not set up yet: Alerts",
+            "WEBHOOK_URL_FILE: /run/secrets/webhook_url",
+        ),
+        (
+            "/admin/integrations",
+            "Not set up yet: Prometheus metrics",
+            "METRICS_TOKEN_FILE: /run/secrets/metrics_token",
+        ),
+        (
+            "/admin/agents",
+            "Not set up yet: Remote agents",
+            "/admin/setup#agents",
+        ),
+        (
+            "/admin/canaries",
+            "Not set up yet: Canary files",
+            "/admin/setup#canaries",
+        ),
+        (
+            "/admin/watch",
+            "Not set up yet: Folders to scan",
+            "SCAN_ROOTS: /scan",
+        ),
+        (
+            "/integrity",
+            "Not set up yet: AIDE and rkhunter reports",
+            "/var/log/aide:/var/log/aide:ro",
+        ),
+        (
+            "/admin/firewall",
+            "Not set up yet: Managed host checks and firewall",
+            "host-setup",
+        ),
+    ] {
+        let res = app.clone().oneshot(get(path, Some(&c))).await.expect("res");
+        assert_eq!(res.status(), StatusCode::OK, "{path}");
+        let html = body(res).await;
+        assert!(html.contains(title), "{path}: {title}");
+        assert!(html.contains(line), "{path}: {line}");
+    }
+    let html = body(
+        app.clone()
+            .oneshot(get("/coverage", Some(&c)))
+            .await
+            .expect("res"),
+    )
+    .await;
+    assert!(html.contains("href=\"/admin/setup#crowdsec\""));
+
+    // An operator learns what it is, but not the deployment's config.
+    let (oc, _) = session_as(&st, palisade::auth::Role::Operator).await;
+    let html = body(app.oneshot(get("/crowdsec", Some(&oc))).await.expect("res")).await;
+    assert!(
+        html.contains("Not set up yet: CrowdSec") && html.contains("An admin can turn this on")
+    );
+    assert!(!html.contains("CROWDSEC_LAPI_URL: http") && !html.contains("/admin/setup"));
 }
