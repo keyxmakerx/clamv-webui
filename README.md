@@ -75,7 +75,7 @@ cargo test                 # SQLite; set TEST_DATABASE_URLS to also test the oth
 docker build -t palisade .
 ```
 
-CI publishes `ghcr.io/keyxmakerx/palisade:latest` from `main`. Release steps and migration rules are in [Configuration](docs/CONFIGURATION.md#building-and-releases).
+`ghcr.io/keyxmakerx/palisade:latest` is the newest release; `:edge` follows `main`. Release steps and migration rules are in [Configuration](docs/CONFIGURATION.md#building-and-releases).
 
 ## License
 

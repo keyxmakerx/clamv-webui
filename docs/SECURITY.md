@@ -46,6 +46,7 @@ What counts as confirmation: a current authenticator code (if you have one), els
 
 - An authenticator app or passkey added here is asked for after SSO sign-in too, as it already was after LDAP.
 - SSO and LDAP sessions last `SSO_SESSION_MINUTES` (default 60), after which the user signs in again and roles from the provider apply. A role removed at the provider therefore takes effect within that time.
+- A passkey alone signs an SSO user in only after the provider: they sign in there first and the passkey is the second step. An LDAP user's passkey sign-in looks the account up again through the service account and the user filter; removed, filtered out, disabled (Active Directory) or without a matching group is refused, and the role follows the groups. If the directory is down, passkey sign-in waits for it.
 - For LDAP groups, use full DNs. A short name matches a group of that name in any OU.
 
 ## Admins and tokens

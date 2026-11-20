@@ -537,6 +537,69 @@ async fn passkeys_register_sign_in_and_second_step() {
     let audit = st.db.audit_page(0, 50).await.expect("audit").0;
     assert!(audit.iter().any(|a| a.action == "PASSKEY_ADD"));
     assert!(audit.iter().any(|a| a.action == "LOGIN_PASSKEY"));
+
+    // An SSO or LDAP user's passkey alone no longer signs in: the provider is
+    // asked again (here none can be, so it is refused), and no session starts.
+    let admin = st
+        .db
+        .user_by_username("admin")
+        .await
+        .expect("q")
+        .expect("admin");
+    for (source, principal) in [
+        ("OIDC", "sso:test-principal"),
+        ("LDAP", "ldap:test-principal"),
+    ] {
+        st.db
+            .link_identity(principal, &admin.id, source, "https://idp.example", "sub-1")
+            .await
+            .expect("link");
+        let opt: serde_json::Value = serde_json::from_str(
+            &text(
+                app.clone()
+                    .oneshot(json(
+                        "/login/passkey/options",
+                        &serde_json::json!({"mode": "login"}),
+                        "",
+                    ))
+                    .await
+                    .expect("res"),
+            )
+            .await,
+        )
+        .expect("json");
+        let (cd, ad, sig) = k.sign(
+            opt["publicKey"]["challenge"].as_str().expect("c"),
+            origin,
+            rp,
+        );
+        let res = app
+            .clone()
+            .oneshot(json(
+                "/login/passkey",
+                &serde_json::json!({
+                    "handle": opt["handle"], "id": b64u(&k.cred_id),
+                    "clientDataJson": b64u(&cd), "authenticatorData": b64u(&ad), "signature": b64u(&sig)
+                }),
+                "",
+            ))
+            .await
+            .expect("res");
+        assert_eq!(res.status(), StatusCode::FORBIDDEN, "{source}");
+        assert!(
+            !cookies(&res)
+                .iter()
+                .any(|c| c.starts_with("palisade_session=") && c.len() > 20),
+            "{source}: no session"
+        );
+        assert!(text(res).await.contains("single sign-on"), "{source}");
+    }
+    let audit = st.db.audit_page(0, 50).await.expect("audit").0;
+    assert!(
+        audit
+            .iter()
+            .any(|a| a.action == "LOGIN_PASSKEY" && a.outcome.as_deref() == Some("DENIED"))
+    );
 }
 
 #[tokio::test]
