@@ -1,8 +1,9 @@
 {% extends "shell.html" %}
 {% block title %}{{ nav.t("Detections · Palisade") }}{% endblock %}
-{% block content %}
-<div class="page-head"><h1 class="h3">{{ nav.t("Detections") }}</h1><span class="muted small">{{ total }} {{ nav.t("infected file(s)") }}</span>
-<a class="btn btn-sm btn-outline-secondary ms-auto" href="/detections.csv?{{ query_string }}"><i class="fas fa-file-csv" aria-hidden="true"></i> {{ nav.t("Export CSV") }}</a></div>
+{% block content %}<div class="ops-page">
+<div class="page-head"><div class="page-head-text"><h1 class="page-title">{{ nav.t("Detections") }}</h1>
+<p class="page-sub">{{ nav.t("Every infected file ClamAV reported, newest first. Filter by signature, host, type or folder.") }} <span class="page-count">{{ total }} {{ nav.t("infected file(s)") }}</span></p></div>
+<div class="page-actions"><a class="btn btn-outline-secondary" href="/detections.csv?{{ query_string }}"><i class="fas fa-file-csv" aria-hidden="true"></i> {{ nav.t("Export CSV") }}</a></div></div>
 <form method="get" action="/detections" class="filter-bar" data-remember="detections">
 <div class="filter-search"><i class="fas fa-search" aria-hidden="true"></i>
 <input class="form-control" type="search" name="q" value="{{ q }}" maxlength="512" placeholder="{{ nav.t("Search: trojan  folder:/data/downloads  sig=Eicar-Test-Signature  -path:.cache  since:7d") }}" aria-label="{{ nav.t("Search detections") }}">
@@ -11,44 +12,44 @@
 <select class="form-select form-select-sm" name="range" aria-label="{{ nav.t("Time range") }}"><option value="">{{ nav.t("Any time") }}</option>{% let opts = [("1h", nav.t("Last hour")), ("24h", nav.t("Last 24 h")), ("7d", nav.t("Last 7 days")), ("30d", nav.t("Last 30 days"))] %}{% for (v, l) in opts %}<option value="{{ v }}"{% if range == *v %} selected{% endif %}>{{ l }}</option>{% endfor %}</select>
 <button class="btn btn-sm btn-primary" type="submit">{{ nav.t("Apply") }}</button>
 <a class="btn btn-sm btn-outline-secondary" href="/detections?reset=1" data-forget="detections">{{ nav.t("Clear") }}</a>
-{% for (label, href) in active %}<a class="chip" href="{{ href }}" title="{{ nav.t("Remove this filter") }}">{{ label }} <i class="fas fa-times" aria-hidden="true"></i></a>{% endfor %}
+{% for (label, href) in active %}<a class="chip chip-active" href="{{ href }}" title="{{ nav.t("Remove this filter") }}">{{ label }} <i class="fas fa-times" aria-hidden="true"></i></a>{% endfor %}
 </div>
 <div class="search-help d-none" id="det-help"><code>word</code> {{ nav.t("matches path or signature ·") }} <code>path:</code> {{ nav.t("path contains ·") }} <code>folder:</code> {{ nav.t("inside a folder ·") }} <code>sig:</code> {{ nav.t("contains,") }} <code>sig=</code> {{ nav.t("exact ·") }} <code>type=WATCH</code> · <code>host=nas-2</code> · <code>after:</code>/<code>before:</code> {{ nav.t("dates ·") }} <code>since:24h</code> · <code>-</code> {{ nav.t("negates") }}</div>
 </form>
-{% for w in warnings %}<div class="alert alert-warning py-1 small mt-2" role="status">{{ w }}</div>{% endfor %}
-<div class="det-layout mt-3">
+{% for w in warnings %}<div class="callout callout-warn callout-sm" role="status"><i class="fas fa-exclamation-triangle callout-icon" aria-hidden="true"></i><div class="callout-body">{{ w }}</div></div>{% endfor %}
+<div class="det-layout">
 <aside class="facets" aria-label="{{ nav.t("Quick filters") }}">
-<section class="card"><div class="card-body"><h2 class="h6">{{ nav.t("Signature") }}</h2>
-{% for fa in sig_facets %}<a class="facet{% if fa.active %} active{% endif %}" href="{{ fa.href }}"><span class="text-break">{{ fa.label }}</span><span class="facet-n">{{ fa.count }}</span></a>{% else %}<p class="small muted mb-0">{{ nav.t("None") }}</p>{% endfor %}
+<section class="card facet-card"><h2 class="facet-title">{{ nav.t("Signature") }}</h2><div class="facet-list">
+{% for fa in sig_facets %}<a class="facet{% if fa.active %} active{% endif %}" href="{{ fa.href }}"{% if fa.active %} aria-current="true"{% endif %}><span class="text-break">{{ fa.label }}</span><span class="facet-n">{{ fa.count }}</span></a>{% else %}<p class="facet-none">{{ nav.t("None") }}</p>{% endfor %}
 </div></section>
-<section class="card mt-2"><div class="card-body"><h2 class="h6">{{ nav.t("Host") }}</h2>
-{% for fa in host_facets %}<a class="facet{% if fa.active %} active{% endif %}" href="{{ fa.href }}"><span>{{ fa.label }}</span><span class="facet-n">{{ fa.count }}</span></a>{% else %}<p class="small muted mb-0">{{ nav.t("None") }}</p>{% endfor %}
+<section class="card facet-card"><h2 class="facet-title">{{ nav.t("Host") }}</h2><div class="facet-list">
+{% for fa in host_facets %}<a class="facet{% if fa.active %} active{% endif %}" href="{{ fa.href }}"{% if fa.active %} aria-current="true"{% endif %}><span>{{ fa.label }}</span><span class="facet-n">{{ fa.count }}</span></a>{% else %}<p class="facet-none">{{ nav.t("None") }}</p>{% endfor %}
 </div></section>
-<section class="card mt-2"><div class="card-body"><h2 class="h6">{{ nav.t("Type") }}</h2>
-{% for fa in kind_facets %}<a class="facet{% if fa.active %} active{% endif %}" href="{{ fa.href }}"><span>{{ fa.label }}</span><span class="facet-n">{{ fa.count }}</span></a>{% else %}<p class="small muted mb-0">{{ nav.t("None") }}</p>{% endfor %}
+<section class="card facet-card"><h2 class="facet-title">{{ nav.t("Type") }}</h2><div class="facet-list">
+{% for fa in kind_facets %}<a class="facet{% if fa.active %} active{% endif %}" href="{{ fa.href }}"{% if fa.active %} aria-current="true"{% endif %}><span>{{ fa.label }}</span><span class="facet-n">{{ fa.count }}</span></a>{% else %}<p class="facet-none">{{ nav.t("None") }}</p>{% endfor %}
 </div></section>
-<section class="card mt-2"><div class="card-body"><h2 class="h6">{{ nav.t("Folder") }}</h2>
-{% for fa in folder_facets %}<a class="facet" href="{{ fa.href }}"><span class="text-break">{{ fa.label }}</span><span class="facet-n">{{ fa.count }}</span></a>{% else %}<p class="small muted mb-0">{{ nav.t("None") }}</p>{% endfor %}
+<section class="card facet-card"><h2 class="facet-title">{{ nav.t("Folder") }}</h2><div class="facet-list">
+{% for fa in folder_facets %}<a class="facet" href="{{ fa.href }}"><span class="text-break">{{ fa.label }}</span><span class="facet-n">{{ fa.count }}</span></a>{% else %}<p class="facet-none">{{ nav.t("None") }}</p>{% endfor %}
 </div></section>
 </aside>
-<section class="card"><div class="card-body table-responsive">
-<table class="table table-sm align-middle">
+<section class="card"><div class="table-responsive">
+<table class="table table-sm align-middle table-sticky ops-table">
 <thead><tr><th>{{ nav.t("Found") }}</th><th>{{ nav.t("File") }}</th><th>{{ nav.t("Signature") }}</th><th>{{ nav.t("Type") }}</th><th>{{ nav.t("Host") }}</th>{% if nav.is_admin %}<th><span class="visually-hidden">{{ nav.t("Actions") }}</span></th>{% endif %}</tr></thead>
 <tbody>
 {% for r in rows %}<tr>
 <td class="small text-nowrap"><a href="/jobs/{{ r.job_id }}">{{ r.at }}</a></td>
 <td class="small path">{{ crate::web::wbr(r.path)|safe }}</td>
-<td><span class="badge bg-danger text-wrap">{{ r.signature }}</span></td>
-<td class="small">{{ r.kind }}</td>
+<td><span class="sig-text">{{ r.signature }}</span></td>
+<td><span class="kind">{{ r.kind }}</span></td>
 <td class="small">{{ r.host }}</td>
-{% if nav.is_admin %}<td class="text-end"><form class="d-inline" method="post" action="/admin/quarantine"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="detection" value="{{ r.id }}"><button class="btn btn-link btn-sm p-0" type="submit" title="{{ nav.t("Move this file into quarantine if clamd still finds it infected") }}">{{ nav.t("quarantine") }}</button></form></td>{% endif %}
-</tr>{% else %}<tr><td colspan="6" class="muted">{{ nav.t("No detections match. That's good news.") }}</td></tr>{% endfor %}
-</tbody></table>
-{% if pages > 1 %}<nav aria-label="{{ nav.t("Pages") }}" class="d-flex gap-2 align-items-center">
-{% if page > 0 %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page - 1) }}">{{ nav.t("Newer") }}</a>{% endif %}
+{% if nav.is_admin %}<td class="text-end"><form class="d-inline" method="post" action="/admin/quarantine"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="detection" value="{{ r.id }}"><button class="btn btn-sm btn-outline-secondary" type="submit" title="{{ nav.t("Move this file into quarantine if clamd still finds it infected") }}"><i class="fas fa-box" aria-hidden="true"></i> {{ nav.t("quarantine") }}</button></form></td>{% endif %}
+</tr>{% else %}<tr><td colspan="6"><div class="empty-state empty-state-sm"><i class="fas fa-shield-alt empty-state-icon" aria-hidden="true"></i><p class="empty-state-text">{{ nav.t("No detections match. That's good news.") }}</p></div></td></tr>{% endfor %}
+</tbody></table></div>
+{% if pages > 1 %}<nav aria-label="{{ nav.t("Pages") }}" class="pager">
+{% if page > 0 %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page - 1) }}"><i class="fas fa-chevron-left" aria-hidden="true"></i> {{ nav.t("Newer") }}</a>{% endif %}
 <span class="small muted">{{ nav.t("Page") }} {{ page + 1 }} {{ nav.t("of") }} {{ pages }}</span>
-{% if page + 1 < pages %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page + 1) }}">{{ nav.t("Older") }}</a>{% endif %}
+{% if page + 1 < pages %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page + 1) }}">{{ nav.t("Older") }} <i class="fas fa-chevron-right" aria-hidden="true"></i></a>{% endif %}
 </nav>{% endif %}
-</div></section>
+</section>
 </div>
-{% endblock %}
+</div>{% endblock %}

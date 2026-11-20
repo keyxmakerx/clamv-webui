@@ -1,28 +1,32 @@
 {% extends "base.html" %}
 {% block title %}{{ crate::i18n::tr("Sign in · Palisade") }}{% endblock %}
-{% block body_class %} class="login-body"{% endblock %}
+{% block body_class %} class="auth-body"{% endblock %}
 {% block body %}
-<main class="card login-card"><div class="card-body">
-<img alt="ClamAV" class="login-logo" src="/images/logo.jpg">
-<h1>Palisade</h1>
-<p class="muted">{{ crate::i18n::tr("Sign in to manage scans and endpoints.") }}</p>
-{% if let Some(msg) = error %}<div class="alert alert-danger" role="alert">{{ msg }}</div>{% endif %}
-{% if let Some(msg) = info %}<div class="alert alert-info" role="status">{{ msg }}</div>{% endif %}
-{% if let Some(f) = first_run %}<div class="alert alert-secondary small first-run" role="note"><strong>First sign-in?</strong> Use the username <code>admin</code> and the one-time password Palisade wrote to <code class="text-break">{{ f.file }}</code>. Copy it out without printing it: <code class="text-break">docker compose cp palisade:{{ f.file }} ./admin-password</code>, then open <code>./admin-password</code>. Palisade then asks you for a new password and deletes the file. On a fresh install, <code>BOOTSTRAP_ADMIN_PASSWORD_FILE</code> sets this first password instead.</div>{% endif %}
-<form method="post" action="/login">
-{% if ldap %}<label for="source" class="form-label">{{ crate::i18n::tr("Account") }}</label>
-<select class="form-select mb-3" name="source" id="source"><option value="">{{ crate::i18n::tr("Local account") }}</option><option value="ldap"{% if source == "ldap" %} selected{% endif %}>{{ crate::i18n::tr("Directory (LDAP)") }}</option></select>{% endif %}
-<label for="username" class="form-label">{{ crate::i18n::tr("Username") }}</label>
-<input class="form-control" required autofocus name="username" id="username" autocomplete="username" maxlength="64" value="{{ username }}">
-<label for="password" class="form-label mt-3">{{ crate::i18n::tr("Password") }}</label>
-<input class="form-control" type="password" required name="password" id="password" autocomplete="current-password" maxlength="512">
-<button type="submit" class="btn btn-primary w-100 mt-4">{{ crate::i18n::tr("Sign in") }}</button>
+<main class="auth">
+<div class="auth-panel">
+<div class="auth-brand"><img src="/images/palisade-mark.svg?v={{ crate::web::asset_v() }}" alt="" width="36" height="36"><span>Palisade</span></div>
+<h1 class="auth-title">{{ crate::i18n::tr("Sign in") }}</h1>
+<p class="auth-sub">{{ crate::i18n::tr("Sign in to manage scans and endpoints.") }}</p>
+{% if let Some(msg) = error %}<div class="callout callout-danger" role="alert"><i class="fas fa-exclamation-circle callout-icon" aria-hidden="true"></i><div class="callout-body">{{ msg }}</div></div>{% endif %}
+{% if let Some(msg) = info %}<div class="callout callout-info" role="status"><i class="fas fa-info-circle callout-icon" aria-hidden="true"></i><div class="callout-body">{{ msg }}</div></div>{% endif %}
+{% if let Some(f) = first_run %}<div class="callout callout-accent first-run" role="note"><i class="fas fa-key callout-icon" aria-hidden="true"></i><div class="callout-body small"><strong>First sign-in?</strong> Use the username <code>admin</code> and the one-time password Palisade wrote to <code class="text-break">{{ f.file }}</code>. Copy it out without printing it: <code class="text-break">docker compose cp palisade:{{ f.file }} ./admin-password</code>, then open <code>./admin-password</code>. Palisade then asks you for a new password and deletes the file. On a fresh install, <code>BOOTSTRAP_ADMIN_PASSWORD_FILE</code> sets this first password instead.</div></div>{% endif %}
+<form method="post" action="/login" class="auth-form">
+{% if ldap %}<div class="field"><label for="source" class="form-label">{{ crate::i18n::tr("Account") }}</label>
+<select class="form-select" name="source" id="source"><option value="">{{ crate::i18n::tr("Local account") }}</option><option value="ldap"{% if source == "ldap" %} selected{% endif %}>{{ crate::i18n::tr("Directory (LDAP)") }}</option></select></div>{% endif %}
+<div class="field"><label for="username" class="form-label">{{ crate::i18n::tr("Username") }}</label>
+<input class="form-control" required{% if username.is_empty() %} autofocus{% endif %} name="username" id="username" autocomplete="username" maxlength="64" value="{{ username }}"></div>
+<div class="field"><label for="password" class="form-label">{{ crate::i18n::tr("Password") }}</label>
+<input class="form-control" type="password" required{% if !username.is_empty() %} autofocus{% endif %} name="password" id="password" autocomplete="current-password" maxlength="512"></div>
+<button type="submit" class="btn btn-primary w-100">{{ crate::i18n::tr("Sign in") }}</button>
 </form>
-<div class="text-center muted small my-3">{{ crate::i18n::tr("or") }}</div>
-<button type="button" class="btn btn-outline-primary w-100" data-passkey="login"><i class="fas fa-key" aria-hidden="true"></i> {{ crate::i18n::tr("Sign in with a passkey") }}</button>
-<div class="alert alert-danger d-none mt-2" role="alert" id="passkey-error"></div>
-{% if let Some(label) = sso %}<div class="text-center muted small my-3">{{ crate::i18n::tr("or") }}</div>
-<a class="btn btn-outline-primary w-100" href="/login/oidc">{{ label }}</a>{% endif %}
-</div></main>
+<div class="auth-divider">{{ crate::i18n::tr("or") }}</div>
+<div class="auth-alt">
+<button type="button" class="btn btn-outline-secondary w-100" data-passkey="login"><i class="fas fa-fingerprint" aria-hidden="true"></i> {{ crate::i18n::tr("Sign in with a passkey") }}</button>
+<div class="alert alert-danger d-none mb-0" role="alert" id="passkey-error"></div>
+{% if let Some(label) = sso %}<a class="btn btn-outline-secondary w-100" href="/login/oidc"><i class="fas fa-sign-in-alt" aria-hidden="true"></i> {{ label }}</a>{% endif %}
+</div>
+</div>
+<p class="auth-foot">{{ crate::i18n::tr("Palisade · self-hosted host security") }}</p>
+</main>
 <script defer src="/js/passkey.js?v={{ crate::web::asset_v() }}"></script>
 {% endblock %}

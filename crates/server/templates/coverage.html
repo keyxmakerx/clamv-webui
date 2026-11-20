@@ -1,24 +1,30 @@
 {% extends "shell.html" %}
 {% block title %}{{ nav.t("Coverage · Palisade") }}{% endblock %}
-{% block content %}
-<div class="page-head"><h1 class="h3">{{ nav.t("Coverage") }}</h1></div>
-<p class="muted">{{ nav.t("What each host is protected against, this server and every agent alike.") }} <span class="cov cov-ok">{{ nav.t("on") }}</span> <span class="cov cov-warn">{{ nav.t("needs a look") }}</span> <span class="cov cov-off">{{ nav.t("not covered") }}</span></p>
-<div id="r-coverage" data-refresh-region data-refresh="120">
-<section class="card mt-3"><div class="card-body table-responsive">
-<table class="table table-sm cov-table align-top mb-0">
-<thead><tr><th>{{ nav.t("Threat") }}</th>{% for h in hosts %}<th>{{ h.name }}</th>{% endfor %}</tr></thead>
-<tbody>
-{% for t in threats %}<tr><th class="cov-threat" scope="row">{{ t.name }}<small>{{ t.what }}</small></th>
-{% for c in t.cells %}<td><span class="cov cov-{{ c.state }}">{{ c.text }}</span>{% if loop.first && nav.is_admin && c.state != "ok" && !t.setup.is_empty() %} <a class="small" href="/admin/setup#{{ t.setup }}">Set up</a>{% endif %}</td>{% endfor %}</tr>
-{% endfor %}</tbody></table>
-</div></section>
-<div class="host-grid mt-3">
-{% for h in hosts %}<section class="card host-card"><div class="card-body">
-<div class="d-flex justify-content-between align-items-start gap-2"><div><h2 class="h5 mb-0">{{ h.name }}</h2><span class="badge {% if h.online %}bg-success{% else %}bg-danger{% endif %}">{{ h.role }} · {% if h.online %}{{ nav.t("online") }}{% else %}{{ nav.t("offline") }}{% endif %}</span></div>
-<div class="text-end"><span class="host-score">{{ h.on }}/{{ h.of }}</span><div class="host-meta">{{ nav.t("protections on") }}</div></div></div>
-<p class="host-meta mt-2 mb-0">{{ nav.t("Seen") }} {{ h.seen }}{% if !h.version.is_empty() %} · {{ h.version }}{% endif %}{% if !h.roots.is_empty() %}<br>{{ nav.t("Scans") }} {{ h.roots }}{% endif %}</p>
-<ul>{% for (label, c) in h.items %}<li><span class="label">{{ label }}</span><span class="cov cov-{{ c.state }}">{{ c.text }}</span></li>{% endfor %}</ul>
+{% block content %}<div class="ops-page">
+<div class="page-head"><div class="page-head-text"><h1 class="page-title">{{ nav.t("Coverage") }}</h1>
+<p class="page-sub">{{ nav.t("What each host is protected against, this server and every agent alike.") }}</p></div>
+{% if nav.is_admin %}<div class="page-actions"><a class="btn btn-outline-secondary" href="/admin/setup"><i class="fas fa-clipboard-check" aria-hidden="true"></i> Setup</a></div>{% endif %}</div>
+<div id="r-coverage" class="ops-flow" data-refresh-region data-refresh="120">
+<div class="host-grid">
+{% for h in hosts %}<section class="card host-card{% if h.on == h.of %} is-ok{% else if !h.online %} is-danger{% else %} is-warn{% endif %}">
+<div class="card-head"><div><h2 class="card-title">{{ h.name }}</h2><span class="badge {% if h.online %}badge-ok{% else %}badge-danger{% endif %}">{{ h.role }} · {% if h.online %}{{ nav.t("online") }}{% else %}{{ nav.t("offline") }}{% endif %}</span></div>
+<div class="host-score-box"><span class="host-score">{{ h.on }}<span class="host-score-of">/{{ h.of }}</span></span><div class="host-meta">{{ nav.t("protections on") }}</div></div></div>
+<div class="card-body">
+<progress class="host-progress" value="{{ h.on }}" max="{{ h.of }}" aria-label="{{ nav.t("protections on") }}">{{ h.on }}/{{ h.of }}</progress>
+<p class="host-meta">{{ nav.t("Seen") }} {{ h.seen }}{% if !h.version.is_empty() %} · {{ h.version }}{% endif %}{% if !h.roots.is_empty() %}<br>{{ nav.t("Scans") }} <span class="mono">{{ h.roots }}</span>{% endif %}</p>
+<details class="host-details" id="cov-host-{{ loop.index }}"><summary>{{ nav.t("Each protection") }}</summary><ul class="host-items">{% for (label, c) in h.items %}<li><span class="label">{{ label }}</span><span class="cov cov-{{ c.state }}">{{ c.text }}</span></li>{% endfor %}</ul></details>
 </div></section>{% endfor %}
 </div>
+<section class="card">
+<div class="card-head"><h2 class="card-title">{{ nav.t("Threats by host") }}</h2>
+<div class="card-actions cov-legend small"><span class="cov cov-ok">{{ nav.t("on") }}</span> <span class="cov cov-warn">{{ nav.t("needs a look") }}</span> <span class="cov cov-off">{{ nav.t("not covered") }}</span></div></div>
+<div class="table-responsive">
+<table class="table table-sm cov-table align-top mb-0">
+<thead><tr><th scope="col">{{ nav.t("Threat") }}</th>{% for h in hosts %}<th scope="col">{{ h.name }}</th>{% endfor %}</tr></thead>
+<tbody>
+{% for t in threats %}<tr><th class="cov-threat" scope="row">{{ t.name }}<small>{{ t.what }}</small></th>
+{% for c in t.cells %}<td class="cov-cell cov-cell-{{ c.state }}"><span class="cov cov-{{ c.state }}">{{ c.text }}</span>{% if loop.first && nav.is_admin && c.state != "ok" && !t.setup.is_empty() %} <a class="small cov-fix" href="/admin/setup#{{ t.setup }}">Set up</a>{% endif %}</td>{% endfor %}</tr>
+{% endfor %}</tbody></table>
+</div></section>
 </div>
-{% endblock %}
+</div>{% endblock %}

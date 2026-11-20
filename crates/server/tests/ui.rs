@@ -305,7 +305,7 @@ async fn assets_and_404() {
     let (app, _) = app().await;
     let res = app
         .clone()
-        .oneshot(get("/css/bootstrap.min.css", None))
+        .oneshot(get("/css/all.css", None))
         .await
         .expect("res");
     assert_eq!(res.status(), StatusCode::OK);
@@ -958,7 +958,7 @@ async fn static_assets_are_versioned_compressed_and_revalidated() {
     let res = app
         .clone()
         .oneshot(
-            Request::get(format!("/css/bootstrap.min.css?v={v}"))
+            Request::get(format!("/css/all.css?v={v}"))
                 .header(header::ACCEPT_ENCODING, "gzip")
                 .body(Body::empty())
                 .expect("req"),
@@ -976,7 +976,7 @@ async fn static_assets_are_versioned_compressed_and_revalidated() {
     let res = app
         .clone()
         .oneshot(
-            Request::get("/css/bootstrap.min.css")
+            Request::get("/css/all.css")
                 .header(header::IF_NONE_MATCH, etag)
                 .body(Body::empty())
                 .expect("req"),
@@ -996,7 +996,7 @@ async fn static_assets_are_versioned_compressed_and_revalidated() {
             .to_vec(),
     )
     .expect("utf8");
-    assert!(html.contains(&format!("/css/ui.css?v={v}")));
+    assert!(html.contains(&format!("/css/app.css?v={v}")));
 }
 
 #[tokio::test]

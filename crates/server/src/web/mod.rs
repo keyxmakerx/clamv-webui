@@ -134,6 +134,56 @@ impl Nav {
         crate::i18n::t(self.lang, s)
     }
 
+    /// The current page's name for the top bar, as the sidebar labels it.
+    pub fn title(&self) -> &'static str {
+        self.t(match self.page {
+            "dashboard" => "Dashboard",
+            "clamd" => "clamd Status",
+            "scan" => "Scan",
+            "jobs" => "Jobs",
+            "timeline" => "Timeline",
+            "integrity" => "Host Checks",
+            "crowdsec" => "CrowdSec",
+            "detections" => "Detections",
+            "coverage" => "Coverage",
+            "setup" => "Setup",
+            "users" => "Users",
+            "endpoints" => "clamd Endpoints",
+            "schedules" => "Schedules",
+            "canaries" => "Canaries",
+            "quarantine" => "Quarantine",
+            "firewall" => "Firewall",
+            "watch" => "Watched Folders",
+            "clamdconf" => "clamd Config",
+            "integrations" => "Integrations",
+            "settings" => "Settings",
+            "agents" => "Agents",
+            "tokens" => "API Tokens",
+            "audit" => "Audit Log",
+            "security" => "Account",
+            _ => "Palisade",
+        })
+    }
+
+    /// The sidebar group the current page sits in, for the top bar's breadcrumb.
+    pub fn section(&self) -> &'static str {
+        self.t(match self.page {
+            "dashboard" | "clamd" | "scan" | "jobs" | "timeline" | "integrity" | "crowdsec"
+            | "detections" | "coverage" => "Operations",
+            "security" => "Account",
+            _ => "Administration",
+        })
+    }
+
+    /// First letter of the user name, for the user menu's avatar.
+    pub fn initial(&self) -> String {
+        self.username
+            .chars()
+            .next()
+            .map(|c| c.to_uppercase().collect())
+            .unwrap_or_default()
+    }
+
     pub fn new(page: &'static str, s: &crate::db::sessions::Session, u: &User) -> Self {
         let (error, success) = ux::take(s);
         Self {
@@ -634,11 +684,114 @@ struct DashboardPage {
     update: Option<crate::update::Release>,
     /// Admins only: required or recommended setup that needs attention.
     setup: Option<setup::Banner>,
+    /// Infected files and failed scans in the range, for the status summary.
+    hits: i64,
+    failed: i64,
+    /// Agents: online now, enabled, registered.
+    agents_online: usize,
+    agents_enabled: usize,
+    agents_total: usize,
 }
 
 impl DashboardPage {
     fn badge(&self, v: &str) -> &'static str {
         scan::badge(v)
+    }
+
+    /// Enabled endpoints, and how many of them answered.
+    fn scanners(&self) -> (usize, usize) {
+        let up = self
+            .endpoints
+            .iter()
+            .filter(|(e, _, _)| matches!(e.status, Status::Up(_)))
+            .count();
+        let enabled = self
+            .endpoints
+            .iter()
+            .filter(|(e, _, _)| !matches!(e.status, Status::Disabled))
+            .count();
+        (up, enabled)
+    }
+
+    fn stale(&self) -> usize {
+        self.endpoints.iter().filter(|(_, _, s)| *s).count()
+    }
+
+    fn controls_failed(&self) -> usize {
+        self.controls.iter().filter(|(_, _, ok)| !*ok).count()
+    }
+
+    // Tone per status tile: "ok", "warn", "danger" or "muted".
+    fn scanner_tone(&self) -> &'static str {
+        let (up, enabled) = self.scanners();
+        if enabled == 0 {
+            "warn"
+        } else if up < enabled {
+            "danger"
+        } else if self.stale() > 0 {
+            "warn"
+        } else {
+            "ok"
+        }
+    }
+
+    fn hits_tone(&self) -> &'static str {
+        if self.hits > 0 { "danger" } else { "ok" }
+    }
+
+    fn failed_tone(&self) -> &'static str {
+        if self.failed > 0 { "warn" } else { "ok" }
+    }
+
+    fn control_tone(&self) -> &'static str {
+        if self.controls.is_empty() {
+            "muted"
+        } else if self.controls_failed() > 0 {
+            "danger"
+        } else {
+            "ok"
+        }
+    }
+
+    fn agents_tone(&self) -> &'static str {
+        if self.agents_online < self.agents_enabled {
+            "warn"
+        } else {
+            "ok"
+        }
+    }
+
+    fn tones(&self) -> Vec<&'static str> {
+        let mut v = vec![
+            self.scanner_tone(),
+            self.hits_tone(),
+            self.failed_tone(),
+            self.control_tone(),
+        ];
+        if self.agents_total > 0 {
+            v.push(self.agents_tone());
+        }
+        v
+    }
+
+    /// Tiles that need a look.
+    fn issues(&self) -> usize {
+        self.tones()
+            .iter()
+            .filter(|t| matches!(**t, "warn" | "danger"))
+            .count()
+    }
+
+    /// The worst tile tone, for the summary headline.
+    fn overall(&self) -> &'static str {
+        let t = self.tones();
+        if t.contains(&"danger") {
+            "danger"
+        } else if t.contains(&"warn") {
+            "warn"
+        } else {
+            "ok"
+        }
     }
 }
 
@@ -841,7 +994,8 @@ async fn dashboard(
             String::new()
         }
     };
-    let mut kpis = vec![
+    // Infected files and agents are in the status summary above the trends row.
+    let kpis = vec![
         Kpi {
             label: "Scans",
             value: cur.0.to_string(),
@@ -855,17 +1009,6 @@ async fn dashboard(
             delta: delta(cur.1, prev.1),
             tone: if cur.1 > 0 { "danger" } else { "ok" },
             href: jl("&verdict=VIRUS_FOUND"),
-        },
-        Kpi {
-            label: "Infected files",
-            value: hits.to_string(),
-            delta: String::new(),
-            tone: if hits > 0 { "danger" } else { "ok" },
-            href: if is_op {
-                format!("/detections?range={range}")
-            } else {
-                String::new()
-            },
         },
         Kpi {
             label: "Failed scans",
@@ -893,30 +1036,22 @@ async fn dashboard(
             },
         },
     ];
-    if !agents.is_empty() {
-        kpis.push(Kpi {
-            label: "Agents online",
-            value: format!("{online} / {}", agents.len()),
-            delta: String::new(),
-            tone: if online < agents.iter().filter(|a| a.enabled).count() {
-                "warn"
-            } else {
-                "ok"
-            },
-            href: if u.role.allows(Role::Admin) {
-                "/admin/agents".into()
-            } else {
-                String::new()
-            },
-        });
-    }
     let buckets = st
         .db
         .activity(since, bucket, offset)
         .await
         .unwrap_or_default();
     let count = usize::try_from(span / bucket).unwrap_or(24) + 1;
-    let chart = charts::activity(&buckets, since, bucket, count, offset, hourly);
+    // Bars grow once on a full page load, not on every background refresh.
+    let chart = charts::activity(
+        &buckets,
+        since,
+        bucket,
+        count,
+        offset,
+        hourly,
+        !ux::is_refresh(&headers),
+    );
 
     let names = scan::endpoint_names(&st).await;
     let f = crate::db::stats::DetectionFilter {
@@ -1007,6 +1142,11 @@ async fn dashboard(
                 .then(|| st.updates.available())
                 .flatten(),
             setup,
+            hits,
+            failed: cur.2,
+            agents_online: online,
+            agents_enabled: agents.iter().filter(|a| a.enabled).count(),
+            agents_total: agents.len(),
         },
     )
 }

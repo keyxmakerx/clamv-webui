@@ -1157,7 +1157,7 @@ async fn detections_dashboard_and_search() {
                 .expect("res"),
         )
         .await;
-        assert!(page.contains("<svg class=\"chart\""), "{range}");
+        assert!(page.contains("<svg class=\"chart"), "{range}");
         assert!(page.contains("Eicar-Test-Signature"));
         assert!(
             page.contains("/detections?range=") && page.contains("signature=Eicar-Test-Signature")

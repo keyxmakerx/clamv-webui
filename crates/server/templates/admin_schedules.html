@@ -1,63 +1,72 @@
 {% extends "shell.html" %}
 {% block title %}{{ nav.t("Schedules · Palisade") }}{% endblock %}
 {% block content %}
-<h1 class="h3">{{ nav.t("Scheduled scans") }}</h1>
-<p class="muted">{{ nav.t("Cron times and scan windows are in each schedule's time zone (default") }} <code>{{ default_zone }}</code>{{ nav.t(", set with") }} <code>SCHEDULE_TZ</code>{{ nav.t("). A run is skipped while the previous one is still going. With the EICAR control on, each run first checks that clamd flags the EICAR test file; a miss logs") }} <code>eicar.control_failed</code>.</p>
-<section class="card mt-3"><div class="card-body">
-<h2 class="h5">{{ nav.t("Add schedule") }}</h2>
-{% if roots.is_empty() && agents.is_empty() %}<p class="muted">{{ nav.t("Set") }} <code>SCAN_ROOTS</code> {{ nav.t("or add an agent to schedule path scans.") }}</p>{% else %}
-<form method="post" action="/admin/schedules" class="row g-3">
+<div class="page-head"><div class="page-head-text"><h1 class="page-title">{{ nav.t("Scheduled scans") }}</h1>
+<p class="page-sub">{{ nav.t("Cron times and scan windows are in each schedule's time zone (default") }} <code>{{ default_zone }}</code>{{ nav.t(", set with") }} <code>SCHEDULE_TZ</code>{{ nav.t("). A run is skipped while the previous one is still going. With the EICAR control on, each run first checks that clamd flags the EICAR test file; a miss logs") }} <code>eicar.control_failed</code>.</p></div></div>
+<details class="card add-panel mt-3" id="add-schedule"{% if rows.is_empty() || !preview.is_empty() || nav.error.is_some() %} open{% endif %}>
+<summary class="card-head"><h2 class="card-title"><i class="fas fa-plus" aria-hidden="true"></i> {{ nav.t("Add schedule") }}</h2><i class="fas fa-chevron-down add-panel-chevron" aria-hidden="true"></i></summary>
+<div class="card-body">
+{% if roots.is_empty() && agents.is_empty() %}<div class="callout callout-info" role="status"><i class="fas fa-info-circle callout-icon" aria-hidden="true"></i><div class="callout-body">{{ nav.t("Set") }} <code>SCAN_ROOTS</code> {{ nav.t("or add an agent to schedule path scans.") }}</div></div>{% else %}
+<form method="post" action="/admin/schedules" class="form-stack">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
-<div class="col-md-4"><label class="form-label" for="sn">{{ nav.t("Name") }}</label><input class="form-control" id="sn" name="name" required maxlength="100" placeholder="{{ nav.t("Nightly library") }}" autocomplete="off" value="{{ draft.name }}"></div>
-<div class="col-md-4"><label class="form-label" for="spr">{{ nav.t("How often") }}</label><select class="form-select" id="spr" name="preset">{% for p in presets %}<option value="{{ p.0 }}"{% if draft.preset == p.0 %} selected{% endif %}>{{ p.1 }}</option>{% endfor %}<option value="custom"{% if draft.preset == "custom" %} selected{% endif %}>{{ nav.t("Custom (type a cron line)") }}</option></select>
-<label class="form-label mt-2 small" for="sc">{{ nav.t("Custom cron") }}</label><input class="form-control form-control-sm" id="sc" name="cron" maxlength="128" placeholder="30 2 * * *" autocomplete="off" value="{{ draft.cron }}">
-<div class="form-text">{{ nav.t("Overrides the choice above: minute hour day month weekday, or @daily / @weekly") }}</div></div>
-<div class="col-md-4"><label class="form-label" for="se">{{ nav.t("Run on") }}</label><select class="form-select" id="se" name="endpoint">
-{% if !roots.is_empty() %}<optgroup label="This server">{% for e in endpoints %}<option value="{% if !e.is_default %}{{ e.id }}{% endif %}"{% if (draft.endpoint.is_empty() && e.is_default) || draft.endpoint == e.id.to_string() %} selected{% endif %}>{{ e.name }}{% if e.is_default %} {{ nav.t("(default)") }}{% endif %}</option>{% endfor %}</optgroup>{% endif %}{% if !agents.is_empty() %}<optgroup label="Agents">{% for a in agents %}<option value="a:{{ a.id }}"{% if draft.endpoint == format!("a:{}", a.id) %} selected{% endif %}>{{ a.name }}{% if !a.online %} {{ nav.t("(offline)") }}{% endif %}</option>{% endfor %}</optgroup>{% endif %}</select></div>
-<div class="col-md-8"><label class="form-label" for="sp">{{ nav.t("Paths, one per line") }}</label><textarea class="form-control" id="sp" name="paths" rows="3" required placeholder="{% for r in roots %}{{ r }}&#10;{% endfor %}">{{ draft.paths }}</textarea></div>
-<div class="col-md-4 d-flex align-items-end"><label class="form-check-label"><input class="form-check-input" type="checkbox" name="eicar" value="1"{% if draft.eicar %} checked{% endif %}> {{ nav.t("EICAR control on every run") }}</label></div>
-<div class="col-md-8"><label class="form-label" for="sx">{{ nav.t("Leave out, one path per line (optional)") }}</label><textarea class="form-control" id="sx" name="exclusions" rows="2" placeholder="{{ nav.t("/media/tv/Downloads") }}">{{ draft.exclusions }}</textarea>
-<div class="form-text">{{ nav.t("Everything under these paths is skipped. On an agent, only whole paths from the list above.") }}</div></div>
-<div class="col-md-4"><label class="form-label" for="sz">{{ nav.t("Time zone (optional)") }}</label><input class="form-control" id="sz" name="time_zone" maxlength="64" placeholder="{{ default_zone }}" autocomplete="off" value="{{ draft.time_zone }}">
-<div class="form-text">{{ nav.t("An IANA name like Europe/Berlin") }}</div></div>
-<div class="col-md-4"><label class="form-label" for="sws">{{ nav.t("Scan window start (optional)") }}</label><input class="form-control" type="time" id="sws" name="window_start" value="{{ draft.window_start }}"></div>
-<div class="col-md-4"><label class="form-label" for="swe">{{ nav.t("Scan window end") }}</label><input class="form-control" type="time" id="swe" name="window_end" value="{{ draft.window_end }}">
-<div class="form-text">{{ nav.t("Runs start only inside the window; queued paths are dropped when it closes. 22:00 to 06:00 spans midnight.") }}</div></div>
-{% if !preview.is_empty() %}<div class="col-12"><p class="mb-1"><strong>{{ nav.t("Next runs") }}</strong> ({% if draft.time_zone.is_empty() %}{{ default_zone }}{% else %}{{ draft.time_zone }}{% endif %})</p><ul class="small mb-0">{% for t in preview %}<li>{{ t }}</li>{% endfor %}</ul></div>{% endif %}
-<div class="col-12 d-flex gap-2"><button class="btn btn-primary" type="submit">{{ nav.t("Add schedule") }}</button><button class="btn btn-outline-secondary" type="submit" name="preview" value="1" formnovalidate>{{ nav.t("Preview next runs") }}</button></div>
+<fieldset class="form-section"><legend class="form-section-title">{{ nav.t("What to scan") }}</legend>
+<div class="form-grid">
+<div class="field"><label class="form-label" for="sn">{{ nav.t("Name") }}</label><input class="form-control" id="sn" name="name" required maxlength="100" placeholder="{{ nav.t("Nightly library") }}" autocomplete="off" value="{{ draft.name }}"></div>
+<div class="field"><label class="form-label" for="se">{{ nav.t("Run on") }}</label><select class="form-select" id="se" name="endpoint">
+{% if !roots.is_empty() %}<optgroup label="{{ nav.t("This server") }}">{% for e in endpoints %}<option value="{% if !e.is_default %}{{ e.id }}{% endif %}"{% if (draft.endpoint.is_empty() && e.is_default) || draft.endpoint == e.id.to_string() %} selected{% endif %}>{{ e.name }}{% if e.is_default %} {{ nav.t("(default)") }}{% endif %}</option>{% endfor %}</optgroup>{% endif %}{% if !agents.is_empty() %}<optgroup label="{{ nav.t("Agents") }}">{% for a in agents %}<option value="a:{{ a.id }}"{% if draft.endpoint == format!("a:{}", a.id) %} selected{% endif %}>{{ a.name }}{% if !a.online %} {{ nav.t("(offline)") }}{% endif %}</option>{% endfor %}</optgroup>{% endif %}</select></div>
+<div class="field field-half"><label class="form-label" for="sp">{{ nav.t("Paths, one per line") }}</label><textarea class="form-control" id="sp" name="paths" rows="3" required placeholder="{% for r in roots %}{{ r }}&#10;{% endfor %}">{{ draft.paths }}</textarea></div>
+<div class="field field-half"><label class="form-label" for="sx">{{ nav.t("Leave out, one path per line (optional)") }}</label><textarea class="form-control" id="sx" name="exclusions" rows="3" placeholder="{{ nav.t("/media/tv/Downloads") }}" aria-describedby="sx-help">{{ draft.exclusions }}</textarea>
+<div class="form-text" id="sx-help">{{ nav.t("Everything under these paths is skipped. On an agent, only whole paths from the list above.") }}</div></div>
+</div></fieldset>
+<fieldset class="form-section"><legend class="form-section-title">{{ nav.t("When") }}</legend>
+<div class="form-grid">
+<div class="field"><label class="form-label" for="spr">{{ nav.t("How often") }}</label><select class="form-select" id="spr" name="preset">{% for p in presets %}<option value="{{ p.0 }}"{% if draft.preset == p.0 %} selected{% endif %}>{{ p.1 }}</option>{% endfor %}<option value="custom"{% if draft.preset == "custom" %} selected{% endif %}>{{ nav.t("Custom (type a cron line)") }}</option></select></div>
+<div class="field"><label class="form-label" for="sc">{{ nav.t("Custom cron") }}</label><input class="form-control" id="sc" name="cron" maxlength="128" placeholder="30 2 * * *" autocomplete="off" value="{{ draft.cron }}" aria-describedby="sc-help">
+<div class="form-text" id="sc-help">{{ nav.t("Overrides the choice above: minute hour day month weekday, or @daily / @weekly") }}</div></div>
+<div class="field"><label class="form-label" for="sz">{{ nav.t("Time zone (optional)") }}</label><input class="form-control" id="sz" name="time_zone" maxlength="64" placeholder="{{ default_zone }}" autocomplete="off" value="{{ draft.time_zone }}" aria-describedby="sz-help">
+<div class="form-text" id="sz-help">{{ nav.t("An IANA name like Europe/Berlin") }}</div></div>
+<div class="field"><label class="form-label" for="sws">{{ nav.t("Scan window start (optional)") }}</label><input class="form-control" type="time" id="sws" name="window_start" value="{{ draft.window_start }}" aria-describedby="sw-help"></div>
+<div class="field"><label class="form-label" for="swe">{{ nav.t("Scan window end") }}</label><input class="form-control" type="time" id="swe" name="window_end" value="{{ draft.window_end }}" aria-describedby="sw-help"></div>
+</div>
+<div class="form-text" id="sw-help">{{ nav.t("Runs start only inside the window; queued paths are dropped when it closes. 22:00 to 06:00 spans midnight.") }}</div>
+</fieldset>
+<label class="form-check"><input class="form-check-input" type="checkbox" name="eicar" value="1"{% if draft.eicar %} checked{% endif %}> {{ nav.t("EICAR control on every run") }}</label>
+{% if !preview.is_empty() %}<div class="callout callout-info" role="status"><i class="fas fa-clock callout-icon" aria-hidden="true"></i><div class="callout-body"><p class="mb-1"><strong>{{ nav.t("Next runs") }}</strong> ({% if draft.time_zone.is_empty() %}{{ default_zone }}{% else %}{{ draft.time_zone }}{% endif %})</p><ul class="small mb-0 tabular">{% for t in preview %}<li>{{ t }}</li>{% endfor %}</ul></div></div>{% endif %}
+<div class="form-actions"><button class="btn btn-primary" type="submit"><i class="fas fa-plus" aria-hidden="true"></i> {{ nav.t("Add schedule") }}</button><button class="btn btn-outline-secondary" type="submit" name="preview" value="1" formnovalidate><i class="fas fa-clock" aria-hidden="true"></i> {{ nav.t("Preview next runs") }}</button></div>
 </form>{% endif %}
-</div></section>
-<section class="card mt-3"><div class="card-body table-responsive">
+</div></details>
+<section class="card mt-3">
+<div class="table-responsive">
 <table class="table table-sm align-middle">
 <thead><tr><th>{{ nav.t("Schedule") }}</th><th>{{ nav.t("Paths") }}</th><th>{{ nav.t("Next run") }}</th><th>{{ nav.t("Last run") }}</th><th>{{ nav.t("EICAR control") }}</th><th><span class="visually-hidden">{{ nav.t("Actions") }}</span></th></tr></thead>
 <tbody>
-{% for r in rows %}<tr>
-<td><strong>{{ r.name }}</strong>{% if !r.enabled %} <span class="badge bg-secondary">{{ nav.t("paused") }}</span>{% endif %}<div class="small">{% if !r.cron_label.is_empty() %}{{ r.cron_label }} {% endif %}<code>{{ r.cron }}</code> {{ r.zone }}{% if !r.window.is_empty() %} {{ nav.t("· window") }} {{ r.window }}{% endif %} · {{ r.endpoint }}</div></td>
-<td class="small path">{% for p in r.paths %}<div>{{ crate::web::wbr(p)|safe }}</div>{% endfor %}{% for x in r.exclusions %}<div class="muted">{{ nav.t("not") }} {{ crate::web::wbr(x)|safe }}</div>{% endfor %}</td>
-<td class="small text-nowrap">{{ r.next }}{% if r.enabled && r.upcoming.len() > 1 %}<div class="muted" title="Next runs in {{ r.zone }}">{% for t in r.upcoming %}{{ t }}{% if !loop.last %}<br>{% endif %}{% endfor %}</div>{% endif %}</td>
-<td class="small text-nowrap">{% if r.last_job.is_empty() %}{{ r.last_run }}{% else %}<a href="/jobs/{{ r.last_job }}">{{ r.last_run }}</a>{% endif %}</td>
-<td>{% if !r.eicar %}<span class="muted small">{{ nav.t("off") }}</span>{% else if r.control == "passed" %}<a href="/jobs/{{ r.control_job }}"><span class="badge bg-success">{{ nav.t("passed") }}</span></a>{% else if r.control == "failed" %}<a href="/jobs/{{ r.control_job }}"><span class="badge bg-danger">{{ nav.t("failed") }}</span></a>{% else %}<span class="muted small">{{ r.control }}</span>{% endif %}</td>
-<td><div class="d-flex gap-2">
-<form method="post" action="/admin/schedules/{{ r.id }}/run"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-primary" type="submit">{{ nav.t("Run now") }}</button></form>
+{% for r in rows %}<tr{% if !r.enabled %} class="is-paused"{% endif %}>
+<td><strong>{{ r.name }}</strong>{% if !r.enabled %} <span class="badge badge-muted"><i class="fas fa-pause" aria-hidden="true"></i> {{ nav.t("paused") }}</span>{% endif %}<div class="small text-muted">{% if !r.cron_label.is_empty() %}{{ r.cron_label }} {% endif %}<code>{{ r.cron }}</code> {{ r.zone }}{% if !r.window.is_empty() %} {{ nav.t("· window") }} {{ r.window }}{% endif %} · {{ r.endpoint }}</div></td>
+<td class="small path">{% for p in r.paths %}<div>{{ crate::web::wbr(p)|safe }}</div>{% endfor %}{% for x in r.exclusions %}<div class="text-muted">{{ nav.t("not") }} {{ crate::web::wbr(x)|safe }}</div>{% endfor %}</td>
+<td class="small text-nowrap tabular">{{ r.next }}{% if r.enabled && r.upcoming.len() > 1 %}<div class="text-muted" title="{{ nav.t("Next runs in") }} {{ r.zone }}">{% for t in r.upcoming %}{{ t }}{% if !loop.last %}<br>{% endif %}{% endfor %}</div>{% endif %}</td>
+<td class="small text-nowrap tabular">{% if r.last_job.is_empty() %}{{ r.last_run }}{% else %}<a href="/jobs/{{ r.last_job }}">{{ r.last_run }}</a>{% endif %}</td>
+<td>{% if !r.eicar %}<span class="text-muted small">{{ nav.t("off") }}</span>{% else if r.control == "passed" %}<a href="/jobs/{{ r.control_job }}" class="badge-link"><span class="badge badge-ok">{{ nav.t("passed") }}</span></a>{% else if r.control == "failed" %}<a href="/jobs/{{ r.control_job }}" class="badge-link"><span class="badge badge-danger">{{ nav.t("failed") }}</span></a>{% else %}<span class="text-muted small">{{ r.control }}</span>{% endif %}</td>
+<td><div class="row-actions">
+<form method="post" action="/admin/schedules/{{ r.id }}/run"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-primary" type="submit"><i class="fas fa-play" aria-hidden="true"></i> {{ nav.t("Run now") }}</button></form>
 <form method="post" action="/admin/schedules/{{ r.id }}/enabled"><input type="hidden" name="_csrf" value="{{ nav.csrf }}">{% if !r.enabled %}<input type="hidden" name="enabled" value="1">{% endif %}<button class="btn btn-sm btn-outline-secondary" type="submit">{% if r.enabled %}{{ nav.t("Pause") }}{% else %}{{ nav.t("Resume") }}{% endif %}</button></form>
 <details class="edit"><summary class="btn btn-sm btn-outline-secondary">{{ nav.t("Edit") }}</summary>
-<form method="post" action="/admin/schedules/{{ r.id }}/edit" class="edit-form">
+<form method="post" action="/admin/schedules/{{ r.id }}/edit" class="edit-form edit-form-wide">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
 <label class="form-label" for="sn-{{ r.id }}">{{ nav.t("Name") }}</label><input class="form-control form-control-sm" id="sn-{{ r.id }}" name="name" required maxlength="100" value="{{ r.name }}" autocomplete="off">
 <label class="form-label mt-2" for="spr-{{ r.id }}">{{ nav.t("How often") }}</label><select class="form-select form-select-sm" id="spr-{{ r.id }}" name="preset">{% for p in presets %}<option value="{{ p.0 }}"{% if r.preset == p.0 %} selected{% endif %}>{{ p.1 }}</option>{% endfor %}<option value="custom"{% if r.preset == "custom" %} selected{% endif %}>{{ nav.t("Custom (type a cron line)") }}</option></select>
 <label class="form-label mt-2" for="sc-{{ r.id }}">{{ nav.t("Custom cron") }}</label><input class="form-control form-control-sm" id="sc-{{ r.id }}" name="cron" maxlength="128" value="{% if r.preset == "custom" %}{{ r.cron }}{% endif %}" placeholder="{{ r.cron }}" autocomplete="off">
 <label class="form-label mt-2" for="se-{{ r.id }}">{{ nav.t("Run on") }}</label><select class="form-select form-select-sm" id="se-{{ r.id }}" name="endpoint">
-{% if !roots.is_empty() %}<optgroup label="This server">{% for e in endpoints %}{% let v = self.endpoint_value(e) %}<option value="{{ v }}"{% if v == r.run_on %} selected{% endif %}>{{ e.name }}{% if e.is_default %} {{ nav.t("(default)") }}{% endif %}</option>{% endfor %}</optgroup>{% endif %}{% if !agents.is_empty() %}<optgroup label="Agents">{% for a in agents %}{% let v = format!("a:{}", a.id) %}<option value="{{ v }}"{% if v == r.run_on %} selected{% endif %}>{{ a.name }}{% if !a.online %} {{ nav.t("(offline)") }}{% endif %}</option>{% endfor %}</optgroup>{% endif %}</select>
+{% if !roots.is_empty() %}<optgroup label="{{ nav.t("This server") }}">{% for e in endpoints %}{% let v = self.endpoint_value(e) %}<option value="{{ v }}"{% if v == r.run_on %} selected{% endif %}>{{ e.name }}{% if e.is_default %} {{ nav.t("(default)") }}{% endif %}</option>{% endfor %}</optgroup>{% endif %}{% if !agents.is_empty() %}<optgroup label="{{ nav.t("Agents") }}">{% for a in agents %}{% let v = format!("a:{}", a.id) %}<option value="{{ v }}"{% if v == r.run_on %} selected{% endif %}>{{ a.name }}{% if !a.online %} {{ nav.t("(offline)") }}{% endif %}</option>{% endfor %}</optgroup>{% endif %}</select>
 <label class="form-label mt-2" for="sp-{{ r.id }}">{{ nav.t("Paths, one per line") }}</label><textarea class="form-control form-control-sm" id="sp-{{ r.id }}" name="paths" rows="3" required>{{ r.paths.join("\n") }}</textarea>
 <label class="form-label mt-2" for="sx-{{ r.id }}">{{ nav.t("Leave out, one path per line") }}</label><textarea class="form-control form-control-sm" id="sx-{{ r.id }}" name="exclusions" rows="2">{{ r.exclusions.join("\n") }}</textarea>
 <label class="form-label mt-2" for="sz-{{ r.id }}">{{ nav.t("Time zone") }}</label><input class="form-control form-control-sm" id="sz-{{ r.id }}" name="time_zone" maxlength="64" placeholder="{{ default_zone }}" value="{{ r.time_zone }}" autocomplete="off">
-<div class="d-flex gap-2 mt-2"><div><label class="form-label" for="sws-{{ r.id }}">{{ nav.t("Window start") }}</label><input class="form-control form-control-sm" type="time" id="sws-{{ r.id }}" name="window_start" value="{{ r.window_start }}"></div><div><label class="form-label" for="swe-{{ r.id }}">{{ nav.t("Window end") }}</label><input class="form-control form-control-sm" type="time" id="swe-{{ r.id }}" name="window_end" value="{{ r.window_end }}"></div></div>
-<label class="form-check-label small mt-2"><input class="form-check-input" type="checkbox" name="eicar" value="1"{% if r.eicar %} checked{% endif %}> {{ nav.t("EICAR control on every run") }}</label>
-<div class="mt-2"><button class="btn btn-sm btn-primary" type="submit">{{ nav.t("Save") }}</button></div>
+<div class="field-pair mt-2"><div><label class="form-label" for="sws-{{ r.id }}">{{ nav.t("Window start") }}</label><input class="form-control form-control-sm" type="time" id="sws-{{ r.id }}" name="window_start" value="{{ r.window_start }}"></div><div><label class="form-label" for="swe-{{ r.id }}">{{ nav.t("Window end") }}</label><input class="form-control form-control-sm" type="time" id="swe-{{ r.id }}" name="window_end" value="{{ r.window_end }}"></div></div>
+<label class="form-check small mt-2"><input class="form-check-input" type="checkbox" name="eicar" value="1"{% if r.eicar %} checked{% endif %}> {{ nav.t("EICAR control on every run") }}</label>
+<div class="edit-actions"><button class="btn btn-sm btn-primary" type="submit">{{ nav.t("Save") }}</button></div>
 </form></details>
-<form method="post" action="/admin/schedules/{{ r.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">{{ nav.t("Delete") }}</button></form>
+<details class="confirm"><summary class="btn btn-sm btn-outline-danger"><i class="fas fa-trash-alt" aria-hidden="true"></i> {{ nav.t("Delete") }}</summary><div class="confirm-box"><p>{{ nav.t("Delete") }} {{ r.name }}{{ nav.t("? This can't be undone.") }}</p><form method="post" action="/admin/schedules/{{ r.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-danger" type="submit">{{ nav.t("Delete schedule") }}</button></form></div></details>
 </div></td>
-</tr>{% else %}<tr><td colspan="6" class="muted">{{ nav.t("No schedules yet.") }}</td></tr>{% endfor %}
+</tr>{% else %}<tr><td colspan="6"><div class="empty-state empty-inline"><i class="fas fa-calendar-alt empty-state-icon" aria-hidden="true"></i><p class="empty-state-title">{{ nav.t("No schedules yet.") }}</p><p class="empty-state-text">{{ nav.t("A nightly scan of your important folders is a good start.") }}</p></div></td></tr>{% endfor %}
 </tbody></table>
 </div></section>
 {% endblock %}

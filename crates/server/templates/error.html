@@ -1,10 +1,16 @@
 {% extends "base.html" %}
 {% block title %}{{ status }} {{ crate::i18n::tr("· Palisade") }}{% endblock %}
-{% block body_class %} class="login-body"{% endblock %}
+{% block body_class %} class="auth-body"{% endblock %}
 {% block body %}
-<main class="card login-card"><div class="card-body">
-<h1>{{ status }}</h1>
-<p>{{ message }}</p>
-<p><a href="/dashboard">{{ crate::i18n::tr("Go to the dashboard") }}</a></p>
-</div></main>
+<main class="auth">
+<div class="auth-panel">
+<div class="auth-brand"><img src="/images/palisade-mark.svg?v={{ crate::web::asset_v() }}" alt="" width="36" height="36"><span>Palisade</span></div>
+<p class="error-code">{{ status }}</p>
+<h1 class="auth-title">{{ message }}</h1>
+<div class="error-actions">
+<a class="btn btn-primary" href="/dashboard"><i class="fas fa-tachometer-alt" aria-hidden="true"></i> {{ crate::i18n::tr("Go to the dashboard") }}</a>
+</div>
+</div>
+<p class="auth-foot">{{ crate::i18n::tr("Palisade · self-hosted host security") }}</p>
+</main>
 {% endblock %}

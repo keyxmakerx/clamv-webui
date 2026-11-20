@@ -1,25 +1,24 @@
 {% extends "shell.html" %}
 {% block title %}{{ nav.t("Timeline · Palisade") }}{% endblock %}
-{% block content %}
-<div class="page-head"><h1 class="h3">{{ nav.t("Timeline") }}</h1>
-<nav class="seg" aria-label="{{ nav.t("Time range") }}">{% let opts = [("24h", nav.t("24 h")), ("7d", nav.t("7 days")), ("30d", nav.t("30 days"))] %}{% for (v, l) in opts %}<a class="seg-btn{% if range == *v %} active{% endif %}" href="/timeline?range={{ v }}{% if !host.is_empty() %}&amp;host={{ host_q }}{% endif %}"{% if range == *v %} aria-current="page"{% endif %}>{{ l }}</a>{% endfor %}</nav></div>
-<p class="muted">{{ nav.t("Detections, canary hits, integrity findings, Falco and CrowdSec alerts from every host. Two different sensors on the same host within an hour make an incident (CrowdSec with only Falco does not).") }}</p>
-{% if hosts.len() > 1 || !host.is_empty() %}<div class="d-flex flex-wrap gap-2 mb-2">{% if !host.is_empty() %}<a class="chip" href="/timeline?range={{ range }}">{{ nav.t("all hosts ×") }}</a>{% endif %}{% for (h, hq) in hosts %}{% if *h != host %}<a class="chip" href="/timeline?range={{ range }}&amp;host={{ hq }}">{{ h }}</a>{% endif %}{% endfor %}</div>{% endif %}
-{% for x in incidents %}<section class="card mt-3 incident"><div class="card-body">
-<h2 class="h5 mb-1"><i class="fas fa-link text-danger" aria-hidden="true"></i> {{ nav.t("Incident on") }} {{ x.host }}</h2>
-<p class="small muted mb-2">{{ x.sensors }} · {{ x.span }}</p>
-<ul class="small mb-0">{% for r in x.rows %}<li><span class="text-nowrap">{{ r.at }}</span> <span class="badge {{ self.sensor_class(r.sensor) }}">{{ r.sensor }}</span> <a href="{{ r.href }}">{{ r.title }}</a> <span class="muted text-break">{{ r.detail }}</span></li>{% endfor %}</ul>
-</div></section>{% endfor %}
-<section class="card mt-3"><div class="card-body table-responsive">
-<table class="table table-sm align-top mb-0">
+{% block content %}<div class="ops-page">
+<div class="page-head"><div class="page-head-text"><h1 class="page-title">{{ nav.t("Timeline") }}</h1>
+<p class="page-sub">{{ nav.t("Detections, canary hits, integrity findings, Falco and CrowdSec alerts from every host. Two different sensors on the same host within an hour make an incident (CrowdSec with only Falco does not).") }}</p></div>
+<div class="page-actions"><nav class="seg" aria-label="{{ nav.t("Time range") }}">{% let opts = [("24h", nav.t("24 h")), ("7d", nav.t("7 days")), ("30d", nav.t("30 days"))] %}{% for (v, l) in opts %}<a class="seg-btn{% if range == *v %} active{% endif %}" href="/timeline?range={{ v }}{% if !host.is_empty() %}&amp;host={{ host_q }}{% endif %}"{% if range == *v %} aria-current="page"{% endif %}>{{ l }}</a>{% endfor %}</nav></div></div>
+{% if hosts.len() > 1 || !host.is_empty() %}<nav class="chip-row" aria-label="{{ nav.t("Host") }}">{% if !host.is_empty() %}<span class="chip chip-active" aria-current="true">{{ host }}</span><a class="chip" href="/timeline?range={{ range }}">{{ nav.t("all hosts ×") }}</a>{% endif %}{% for (h, hq) in hosts %}{% if *h != host %}<a class="chip" href="/timeline?range={{ range }}&amp;host={{ hq }}">{{ h }}</a>{% endif %}{% endfor %}</nav>{% endif %}
+{% for x in incidents %}<section class="card incident">
+<div class="card-head"><h2 class="card-title"><i class="fas fa-link" aria-hidden="true"></i> {{ nav.t("Incident on") }} {{ x.host }}</h2><p class="card-sub">{{ x.sensors }} · {{ x.span }}</p></div>
+<div class="card-body"><ol class="tl-list">{% for r in x.rows %}<li class="tl-item"><span class="tl-when">{{ r.at }}</span><span class="badge {{ self.sensor_class(r.sensor) }}">{{ r.sensor }}</span><span class="tl-what"><a href="{{ r.href }}">{{ r.title }}</a> <span class="muted text-break">{{ r.detail }}</span></span></li>{% endfor %}</ol></div>
+</section>{% endfor %}
+<section class="card"><div class="card-head"><h2 class="card-title">{{ nav.t("All events") }}</h2><div class="card-actions"><span class="page-count">{{ rows.len() }}</span></div></div><div class="table-responsive table-scroll table-scroll-tall" tabindex="0" role="region" aria-label="{{ nav.t("All events") }}">
+<table class="table table-sm align-top mb-0 table-sticky ops-table">
 <thead><tr><th>{{ nav.t("When") }}</th><th>{{ nav.t("Host") }}</th><th>{{ nav.t("Sensor") }}</th><th>{{ nav.t("What") }}</th></tr></thead>
 <tbody>
 {% for r in rows %}<tr{% if r.linked %} class="tl-linked"{% endif %}>
-<td class="small text-nowrap">{{ r.at }}</td>
+<td class="small text-nowrap">{% if r.linked %}<i class="fas fa-link tl-link-icon" title="{{ nav.t("Part of an incident") }}" aria-label="{{ nav.t("Part of an incident") }}"></i> {% endif %}{{ r.at }}</td>
 <td class="small">{{ r.host }}</td>
 <td><span class="badge {{ self.sensor_class(r.sensor) }}">{{ r.sensor }}</span></td>
 <td><a class="small" href="{{ r.href }}">{{ r.title }}</a><div class="small muted text-break">{{ r.detail }}</div></td>
-</tr>{% else %}<tr><td colspan="4" class="muted">{{ nav.t("Nothing seen in this period.") }}</td></tr>{% endfor %}
+</tr>{% else %}<tr><td colspan="4"><div class="empty-state empty-state-sm"><i class="fas fa-check-circle empty-state-icon" aria-hidden="true"></i><p class="empty-state-text">{{ nav.t("Nothing seen in this period.") }}</p></div></td></tr>{% endfor %}
 </tbody></table>
 </div></section>
-{% endblock %}
+</div>{% endblock %}

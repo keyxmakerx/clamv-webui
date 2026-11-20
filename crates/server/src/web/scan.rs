@@ -596,10 +596,10 @@ pub struct JobRow {
 
 pub(crate) fn badge(verdict: &str) -> &'static str {
     match verdict {
-        jobs::OK => "bg-success",
-        jobs::VIRUS_FOUND => "bg-danger",
-        jobs::ERROR => "bg-warning text-dark",
-        _ => "bg-secondary",
+        jobs::OK => "badge-ok",
+        jobs::VIRUS_FOUND => "badge-danger",
+        jobs::ERROR => "badge-warn",
+        _ => "badge-muted",
     }
 }
 

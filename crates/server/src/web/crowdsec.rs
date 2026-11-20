@@ -211,11 +211,8 @@ pub struct Q {
 // ---- charts and map ----
 
 /// Alerts per hour (24 h or less) or per day, as bars that link to the alerts page.
-fn bars(alerts: &[Alert], since: i64, now: i64, offset_ms: i64, range: &str) -> String {
-    const W: f64 = 520.0;
-    const H: f64 = 240.0;
-    const PAD_L: f64 = 36.0;
-    const PAD_B: f64 = 22.0;
+/// `grow` animates the bars once (full page loads only, not background refreshes).
+fn bars(alerts: &[Alert], since: i64, now: i64, offset_ms: i64, range: &str, grow: bool) -> String {
     let hourly = now - since <= 86_400_000;
     let bucket = if hourly { 3_600_000 } else { 86_400_000 };
     let first = (since + offset_ms) - (since + offset_ms).rem_euclid(bucket) - offset_ms;
@@ -234,78 +231,34 @@ fn bars(alerts: &[Alert], since: i64, now: i64, offset_ms: i64, range: &str) -> 
             }
         }
     }
-    let max = n.iter().copied().max().unwrap_or(0).max(1);
-    let step = [
-        1, 2, 5, 10, 20, 25, 50, 100, 200, 250, 500, 1000, 2000, 5000, 10_000,
-    ]
-    .into_iter()
-    .find(|s| max <= s * 4)
-    .unwrap_or(max / 4 + 1);
-    let top = step * ((max + step - 1) / step).max(1);
-    let plot_h = H - PAD_B - 8.0;
-    #[allow(clippy::cast_precision_loss)]
-    let y = |v: i64| 8.0 + plot_h - (v as f64 / top as f64) * plot_h;
-    #[allow(clippy::cast_precision_loss)]
-    let bw = (W - PAD_L - 24.0) / count as f64;
-    let mut s = String::new();
-    let _ = write!(
-        s,
-        r#"<svg class="chart" viewBox="0 0 {W} {H}" role="group" aria-label="CrowdSec alerts over time. Each bar links to its alerts.">"#
-    );
-    let mut v = 0;
-    while v <= top {
-        let yy = y(v);
-        let _ = write!(
-            s,
-            r#"<line class="chart-grid" x1="{PAD_L}" x2="{W}" y1="{yy:.1}" y2="{yy:.1}"/><text class="chart-axis" x="{:.1}" y="{:.1}" text-anchor="end">{v}</text>"#,
-            PAD_L - 6.0,
-            yy + 4.0
-        );
-        v += step;
-    }
-    let every = (count / 8).max(1);
-    for i in 0..count {
-        let start = first + i64::try_from(i).unwrap_or(0) * bucket;
-        #[allow(clippy::cast_precision_loss)]
-        let x = PAD_L + i as f64 * bw + bw * 0.12;
-        let w = (bw * 0.76).max(1.0);
-        let label = super::charts::label(start, offset_ms, hourly);
-        let tip = format!("{label}: {} alert(s), {} simulated", n[i], sim[i]);
-        let _ = write!(
-            s,
-            r#"<a href="/crowdsec/alerts?range={range}" aria-label="{t}"><title>{t}</title><rect class="chart-hit" x="{x:.1}" y="8" width="{w:.1}" height="{plot_h:.1}"/>"#,
-            t = esc(&tip)
-        );
-        let real = n[i] - sim[i];
-        if real > 0 {
-            let y1 = y(real);
-            let _ = write!(
-                s,
-                r#"<rect class="bar-hit" x="{x:.1}" y="{y1:.1}" width="{w:.1}" height="{:.1}" rx="2"/>"#,
-                y(0) - y1
-            );
-        }
-        if sim[i] > 0 {
-            let y1 = y(n[i]);
-            let _ = write!(
-                s,
-                r#"<rect class="bar-ok" x="{x:.1}" y="{y1:.1}" width="{w:.1}" height="{:.1}" rx="2"/>"#,
-                y(real) - y1
-            );
-        }
-        s.push_str("</a>");
-        if i % every == 0 {
-            let _ = write!(
-                s,
-                r#"<text class="chart-axis" x="{:.1}" y="{:.1}" text-anchor="middle">{}</text>"#,
-                x + w / 2.0,
-                H - 6.0,
-                esc(&label)
-            );
-        }
-    }
-    s.push_str("</svg>");
-    s
+    let starts: Vec<i64> = (0..count)
+        .map(|i| first + i64::try_from(i).unwrap_or(0) * bucket)
+        .collect();
+    let ticks = super::charts::ticks(&starts, offset_ms, bucket);
+    let list: Vec<super::charts::Bar> = starts
+        .iter()
+        .zip(ticks)
+        .enumerate()
+        .map(|(i, (&start, tick))| super::charts::Bar {
+            href: format!("/crowdsec/alerts?range={range}"),
+            tip: format!(
+                "{}: {} alert(s), {} simulated",
+                super::charts::label(start, offset_ms, hourly),
+                n[i],
+                sim[i]
+            ),
+            tick,
+            segs: vec![(n[i] - sim[i], "bar-hit"), (sim[i], "bar-sim")],
+        })
+        .collect();
+    super::charts::stacked(
+        &list,
+        (520.0, 240.0),
+        "cs-alerts",
+        "CrowdSec alerts over time",
+        "Stacked bars: real and simulated alerts. Each bar links to the alerts page.",
+        grow,
+    )
 }
 
 /// Equirectangular world (lat 90 to -60) with one dot per place, sized by alerts.
@@ -323,7 +276,7 @@ fn map(alerts: &[Alert], banned: &std::collections::HashSet<String>) -> String {
         e.1 |= banned.contains(&a.value);
     }
     let mut s = String::from(
-        r#"<svg class="attack-map" viewBox="0 0 360 150" role="group" aria-label="Where attacks came from"><image class="map-land" aria-hidden="true" href="/images/world.svg" x="0" y="0" width="360" height="150"/>"#,
+        r#"<svg class="attack-map" viewBox="0 0 360 150" role="group" aria-labelledby="cs-map-title cs-map-desc"><title id="cs-map-title">Where attacks came from</title><desc id="cs-map-desc">One dot per place, sized by alerts; red dots are banned now. Each dot links to that country's alerts.</desc><image class="map-land" aria-hidden="true" href="/images/world.svg" x="0" y="0" width="360" height="150"/>"#,
     );
     let mut list: Vec<_> = spots.into_iter().collect();
     list.sort_by_key(|(_, (n, _, _))| *n);
@@ -569,7 +522,14 @@ async fn overview(
             last_ok: last_ok(&status),
             status,
             range,
-            chart: bars(&list, since, now, super::tz_offset_ms(&headers), range),
+            chart: bars(
+                &list,
+                since,
+                now,
+                super::tz_offset_ms(&headers),
+                range,
+                !super::ux::is_refresh(&headers),
+            ),
             map: map(&list, &banned),
             countries: top(list.iter().map(|a| a.country.clone()), "country", range, 8),
             scenarios: top(

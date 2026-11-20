@@ -1,8 +1,9 @@
 {# "Not set up yet" panel for a feature page. Needs `g` (a guide from crate::web::setup) and `nav`. #}
-<section class="card empty-state mt-3"><div class="card-body">
-<h2 class="h5"><i class="fas fa-plug" aria-hidden="true"></i> Not set up yet: {{ g.title }}</h2>
-<p>{{ g.gives }}</p>
-{% if nav.is_admin %}{% let snip_suffix = "-empty" %}{% include "_setup_fix.html" %}
-<p class="small mt-2 mb-0"><a href="/admin/setup#{{ g.key }}">See it on the Setup checklist</a></p>
-{% else %}<p class="small muted mb-0">An admin can turn this on; the Setup page shows them how.</p>{% endif %}
-</div></section>
+<section class="card empty-state empty-setup mt-3">
+<i class="fas fa-plug empty-state-icon" aria-hidden="true"></i>
+<h2 class="empty-state-title">{{ nav.t("Not set up yet:") }} {{ g.title }}</h2>
+<p class="empty-state-text">{{ g.gives }}</p>
+{% if nav.is_admin %}<div class="empty-fix">{% let snip_suffix = "-empty" %}{% include "_setup_fix.html" %}</div>
+<div class="empty-state-action"><a class="btn btn-sm btn-outline-primary" href="/admin/setup#{{ g.key }}"><i class="fas fa-clipboard-check" aria-hidden="true"></i> {{ nav.t("See it on the Setup checklist") }}</a></div>
+{% else %}<p class="empty-state-text small mb-0">{{ nav.t("An admin can turn this on; the Setup page shows them how.") }}</p>{% endif %}
+</section>

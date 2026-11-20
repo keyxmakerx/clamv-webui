@@ -353,7 +353,7 @@ async fn console_reads_alerts_and_manages_decisions() {
         ))
         .await
         .expect("res");
-    assert!(follow(&app, res, &c).await.contains("alert-danger"));
+    assert!(follow(&app, res, &c).await.contains("callout-danger"));
 
     // Removing one decision, then all on an IP.
     let res = app

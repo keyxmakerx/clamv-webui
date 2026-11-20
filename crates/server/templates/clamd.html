@@ -1,24 +1,29 @@
 {% extends "shell.html" %}
 {% block title %}{{ nav.t("clamd Status · Palisade") }}{% endblock %}
-{% block content %}
-<h1 class="h3">{{ nav.t("clamd status") }}</h1>
-<p class="muted">{{ nav.t("Sampled every 30 s from clamd STATS. This page updates every 10 s.") }}</p>
-<div id="r-clamd" data-refresh-region data-refresh="10">
+{% block content %}<div class="ops-page">
+<div class="page-head"><div class="page-head-text"><h1 class="page-title">{{ nav.t("clamd status") }}</h1>
+<p class="page-sub">{{ nav.t("Sampled every 30 s from clamd STATS. This page updates every 10 s.") }}</p></div>
+{% if nav.is_admin %}<div class="page-actions"><a class="btn btn-outline-secondary" href="/admin/endpoints"><i class="fas fa-cog" aria-hidden="true"></i> {{ nav.t("Manage endpoints") }}</a></div>{% endif %}</div>
+<div id="r-clamd" class="ops-flow" data-refresh-region data-refresh="10">
 {% for e in rows %}
-<section class="card mt-3"><div class="card-body">
-<h2 class="h5">{{ e.name }} {% if e.available %}<span class="badge bg-success">{{ nav.t("reachable") }}</span>{% else %}<span class="badge bg-danger">{{ nav.t("unreachable") }}</span>{% endif %} <span class="small muted">{{ nav.t("sampled") }} {{ e.sampled }}</span></h2>
-{% if e.available %}
-<dl class="row mb-0">
-<dt class="col-sm-3">{{ nav.t("Threads") }}</dt><dd class="col-sm-9">{{ e.threads }}<div><meter min="0" max="100" low="70" high="90" optimum="0" value="{{ e.busy_pct }}" aria-label="{{ nav.t("Busy threads") }}">{{ e.busy_pct }}%</meter> <span class="small muted">{{ e.busy_pct }}{{ nav.t("% busy") }}</span></div></dd>
-<dt class="col-sm-3">{{ nav.t("Queue") }}</dt><dd class="col-sm-9">{{ e.queue }} {{ nav.t("item(s)") }}</dd>
-<dt class="col-sm-3">{{ nav.t("Pool memory") }}</dt><dd class="col-sm-9">{{ e.memory }}</dd>
-<dt class="col-sm-3">ClamAV</dt><dd class="col-sm-9">{{ e.version }}</dd>
-<dt class="col-sm-3">{{ nav.t("Signatures") }}</dt><dd class="col-sm-9">{{ nav.t("version") }} {{ e.database }}, {{ e.database_age }} {{ nav.t("old") }}{% if e.stale %} <span class="badge bg-danger">{{ nav.t("stale") }}</span>{% endif %}</dd>
+<section class="card clamd-card">
+<div class="card-head"><h2 class="card-title"><span class="status-dot {% if e.available %}is-ok{% else %}is-danger{% endif %}" aria-hidden="true"></span> {{ e.name }}</h2>
+<div class="card-actions">{% if e.available %}<span class="badge badge-ok">{{ nav.t("reachable") }}</span>{% else %}<span class="badge badge-danger">{{ nav.t("unreachable") }}</span>{% endif %} <span class="small muted">{{ nav.t("sampled") }} {{ e.sampled }}</span></div></div>
+{% if e.available %}<div class="card-body">
+<div class="clamd-meters">
+<div class="clamd-meter"><span class="stat-label">{{ nav.t("Threads") }}</span><strong class="clamd-meter-value">{{ e.threads }}</strong>
+<meter min="0" max="100" low="70" high="90" optimum="0" value="{{ e.busy_pct }}" aria-label="{{ nav.t("Busy threads") }}">{{ e.busy_pct }}%</meter><span class="small muted">{{ e.busy_pct }}{{ nav.t("% busy") }}</span></div>
+<div class="clamd-meter"><span class="stat-label">{{ nav.t("Queue") }}</span><strong class="clamd-meter-value">{{ e.queue }}</strong><span class="small muted">{{ nav.t("item(s)") }}</span></div>
+<div class="clamd-meter"><span class="stat-label">{{ nav.t("Pool memory") }}</span><strong class="clamd-meter-value">{{ e.memory }}</strong></div>
+</div>
+<dl class="kv">
+<dt>ClamAV</dt><dd>{{ e.version }}</dd>
+<dt>{{ nav.t("Signatures") }}</dt><dd>{{ nav.t("version") }} {{ e.database }}, {{ e.database_age }} {{ nav.t("old") }}{% if e.stale %} <span class="badge badge-danger">{{ nav.t("stale") }}</span>{% endif %}</dd>
 </dl>
-{% endif %}
-</div></section>
+</div>{% endif %}
+</section>
 {% else %}
-<p class="muted mt-3">{{ nav.t("No samples yet. The first arrives within 30 s of start.") }}</p>
+<div class="empty-state"><i class="fas fa-hourglass-half empty-state-icon" aria-hidden="true"></i><h2 class="empty-state-title">{{ nav.t("Waiting for the first sample") }}</h2><p class="empty-state-text">{{ nav.t("No samples yet. The first arrives within 30 s of start.") }}</p></div>
 {% endfor %}
 </div>
-{% endblock %}
+</div>{% endblock %}

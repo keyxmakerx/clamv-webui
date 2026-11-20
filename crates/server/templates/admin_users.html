@@ -1,40 +1,44 @@
 {% extends "shell.html" %}
 {% block title %}{{ nav.t("Users · Palisade") }}{% endblock %}
 {% block content %}
-<h1 class="h3">{{ nav.t("Users") }}</h1>
+<div class="page-head"><div class="page-head-text"><h1 class="page-title">{{ nav.t("Users") }}</h1>
+<p class="page-sub">{{ nav.t("Who can sign in, and what each person may do. Viewers read, operators scan, admins change settings.") }}</p></div></div>
 {% include "_confirm.html" %}
-<section class="card mt-3"><div class="card-body">
-<h2 class="h5">{{ nav.t("Add user") }}</h2>
-<form method="post" action="/admin/users" class="row g-2 align-items-end">
+<details class="card add-panel mt-3" id="add-user"{% if nav.error.is_some() %} open{% endif %}>
+<summary class="card-head"><h2 class="card-title"><i class="fas fa-plus" aria-hidden="true"></i> {{ nav.t("Add user") }}</h2><span class="card-sub">{{ nav.t("They must change the temporary password at first sign-in.") }}</span><i class="fas fa-chevron-down add-panel-chevron" aria-hidden="true"></i></summary>
+<div class="card-body">
+<form method="post" action="/admin/users" class="form-grid">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
-<div class="col-md-4"><label class="form-label" for="nu">{{ nav.t("Username") }}</label><input class="form-control" id="nu" name="username" required maxlength="64" autocomplete="off"></div>
-<div class="col-md-3"><label class="form-label" for="nr">{{ nav.t("Role") }}</label><select class="form-select" id="nr" name="role">{% for r in roles %}<option value="{{ r }}">{{ r }}</option>{% endfor %}</select></div>
-<div class="col-md-3"><label class="form-label" for="np">{{ nav.t("Temporary password") }}</label><input class="form-control" id="np" name="password" type="password" required minlength="12" maxlength="128" autocomplete="new-password"></div>
-<div class="col-md-2"><button class="btn btn-primary w-100" type="submit">{{ nav.t("Add") }}</button></div>
+<div class="field"><label class="form-label" for="nu">{{ nav.t("Username") }}</label><input class="form-control" id="nu" name="username" required maxlength="64" autocomplete="off"></div>
+<div class="field"><label class="form-label" for="nr">{{ nav.t("Role") }}</label><select class="form-select" id="nr" name="role">{% for r in roles %}<option value="{{ r }}">{{ r }}</option>{% endfor %}</select></div>
+<div class="field"><label class="form-label" for="np">{{ nav.t("Temporary password") }}</label><input class="form-control" id="np" name="password" type="password" required minlength="12" maxlength="128" autocomplete="new-password" aria-describedby="np-help"><div class="form-text" id="np-help">{{ nav.t("At least 12 characters.") }}</div></div>
+<div class="form-actions"><button class="btn btn-primary" type="submit"><i class="fas fa-user-plus" aria-hidden="true"></i> {{ nav.t("Add") }}</button></div>
 </form>
-</div></section>
-<section class="card mt-3"><div class="card-body table-responsive">
-<table class="table align-middle">
+</div></details>
+<section class="card mt-3">
+<div class="card-head"><h2 class="card-title">{{ nav.t("People") }}</h2><p class="card-sub">{{ nav.t("Saving a role or resetting a password signs that user out everywhere.") }}</p></div>
+<div class="table-responsive">
+<table class="table align-middle users-table">
 <thead><tr><th>{{ nav.t("User") }}</th><th>{{ nav.t("Role and status") }}</th><th>{{ nav.t("Last sign-in") }}</th><th>{{ nav.t("Reset password") }}</th><th><span class="visually-hidden">{{ nav.t("Actions") }}</span></th></tr></thead>
 <tbody>
 {% for u in users %}
 <tr>
-<td><strong>{{ u.username }}</strong>{% if u.is_self %} <span class="badge bg-secondary">{{ nav.t("you") }}</span>{% endif %}{% if u.must_change %} <span class="badge bg-warning text-dark">{{ nav.t("must change password") }}</span>{% endif %}{% if u.sso %} <span class="badge bg-info text-dark">SSO</span>{% endif %}{% if !u.mfa.is_empty() %} <span class="badge bg-success" title="{{ nav.t("Second factors") }}">2FA: {{ u.mfa }}</span>{% endif %}</td>
-<td><form method="post" action="/admin/users/{{ u.id }}/role" class="d-flex gap-2 align-items-center">
+<td><div class="user-cell"><span class="avatar" aria-hidden="true"><i class="fas fa-user"></i></span><div><strong>{{ u.username }}</strong>
+<div class="badge-row">{% if u.is_self %}<span class="badge badge-accent">{{ nav.t("you") }}</span>{% endif %}{% if u.must_change %}<span class="badge badge-warn">{{ nav.t("must change password") }}</span>{% endif %}{% if u.sso %}<span class="badge badge-info">SSO</span>{% endif %}{% if !u.mfa.is_empty() %}<span class="badge badge-ok" title="{{ nav.t("Second factors") }}"><i class="fas fa-shield-alt" aria-hidden="true"></i> 2FA: {{ u.mfa }}</span>{% endif %}</div></div></div></td>
+<td><form method="post" action="/admin/users/{{ u.id }}/role" class="inline-form inline-form-sm">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
-<select class="form-select form-select-sm w-auto" name="role" aria-label="Role for {{ u.username }}">{% for r in roles %}<option value="{{ r }}"{% if *r == u.role %} selected{% endif %}>{{ r }}</option>{% endfor %}</select>
-<label class="form-check-label small"><input class="form-check-input" type="checkbox" name="enabled" value="1"{% if u.enabled %} checked{% endif %}> {{ nav.t("enabled") }}</label>
+<select class="form-select form-select-sm w-auto" name="role" aria-label="{{ nav.t("Role for") }} {{ u.username }}">{% for r in roles %}<option value="{{ r }}"{% if *r == u.role %} selected{% endif %}>{{ r }}</option>{% endfor %}</select>
+<label class="form-check form-check-inline small"><input class="form-check-input" type="checkbox" name="enabled" value="1"{% if u.enabled %} checked{% endif %}> {{ nav.t("enabled") }}</label>
 <button class="btn btn-sm btn-outline-primary" type="submit">{{ nav.t("Save") }}</button></form></td>
-<td class="small">{{ u.last_login }}</td>
-<td><form method="post" action="/admin/users/{{ u.id }}/password" class="d-flex gap-2">
+<td class="small text-nowrap tabular">{{ u.last_login }}</td>
+<td><form method="post" action="/admin/users/{{ u.id }}/password" class="inline-form inline-form-sm">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
-<input class="form-control form-control-sm" type="password" name="password" required minlength="12" maxlength="128" autocomplete="new-password" aria-label="New password for {{ u.username }}">
+<input class="form-control form-control-sm" type="password" name="password" required minlength="12" maxlength="128" autocomplete="new-password" placeholder="{{ nav.t("New password") }}" aria-label="{{ nav.t("New password for") }} {{ u.username }}">
 <button class="btn btn-sm btn-outline-secondary" type="submit">{{ nav.t("Reset") }}</button></form></td>
-<td><div class="d-flex flex-column gap-1 align-items-start">{% if !u.is_self %}<details class="confirm"><summary class="btn btn-sm btn-outline-danger">{{ nav.t("Delete") }}</summary><div class="confirm-box"><p>{{ nav.t("Delete") }} {{ u.username }}{{ nav.t("? This can't be undone.") }}</p><form method="post" action="/admin/users/{{ u.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-danger" type="submit">{{ nav.t("Delete user") }}</button></form></div></details>{% endif %}
-{% if !u.mfa.is_empty() %}<details class="confirm"><summary class="btn btn-sm btn-outline-warning">{{ nav.t("Reset 2FA") }}</summary><div class="confirm-box"><p>{{ nav.t("Remove") }} {{ u.username }}{{ nav.t("'s authenticator app and passkeys? They sign in with the password alone until they add new ones. This can't be undone.") }}</p><form method="post" action="/admin/users/{{ u.id }}/mfa-reset"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-danger" type="submit">{{ nav.t("Reset 2FA") }}</button></form></div></details>{% endif %}</div></td>
+<td><div class="row-actions">{% if !u.mfa.is_empty() %}<details class="confirm"><summary class="btn btn-sm btn-outline-warning">{{ nav.t("Reset 2FA") }}</summary><div class="confirm-box"><p>{{ nav.t("Remove") }} {{ u.username }}{{ nav.t("'s authenticator app and passkeys? They sign in with the password alone until they add new ones. This can't be undone.") }}</p><form method="post" action="/admin/users/{{ u.id }}/mfa-reset"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-danger" type="submit">{{ nav.t("Reset 2FA") }}</button></form></div></details>{% endif %}
+{% if !u.is_self %}<details class="confirm"><summary class="btn btn-sm btn-outline-danger"><i class="fas fa-trash-alt" aria-hidden="true"></i> {{ nav.t("Delete") }}</summary><div class="confirm-box"><p>{{ nav.t("Delete") }} {{ u.username }}{{ nav.t("? This can't be undone.") }}</p><form method="post" action="/admin/users/{{ u.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-danger" type="submit">{{ nav.t("Delete user") }}</button></form></div></details>{% endif %}</div></td>
 </tr>
 {% endfor %}
 </tbody></table>
-<p class="muted small">{{ nav.t("Saving a role or resetting a password signs that user out everywhere.") }}</p>
 </div></section>
 {% endblock %}

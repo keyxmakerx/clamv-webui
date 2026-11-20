@@ -1,0 +1,173 @@
+/* Palisade motion layer (owner: D). Loaded last.
+ *
+ * Rules: motion explains a state change, never decorates. Feedback <= --dur-fast, entering <= --dur-base,
+ * big surfaces <= --dur-slow, exits faster than entrances. Only opacity and transform move (colour may
+ * fade). No infinite animation except live indicators. Never animate numbers.
+ * Every duration comes from the --dur-* tokens (app.css), which drop to 0ms under
+ * prefers-reduced-motion (unless html[data-motion="full"]) and under html[data-motion="reduce"].
+ * The kill switch at the end also catches anything that forgot to use the tokens.
+ */
+
+/* ---------------------------------------------------------------- keyframes */
+@keyframes pal-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pal-fade-out { from { opacity: 1; } to { opacity: 0; } }
+/* Popovers and menus: a short rise from where they are anchored. */
+@keyframes pal-pop-in { from { opacity: 0; transform: translateY(-4px) scale(.98); } to { opacity: 1; transform: none; } }
+@keyframes pal-pop-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(-4px) scale(.98); } }
+/* Toasts enter from the edge they live on. */
+@keyframes pal-toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes pal-toast-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(16px); } }
+/* Flash callouts on page load. */
+@keyframes pal-rise-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+/* A value that changed in a background refresh: the tint fades away, nothing moves. */
+@keyframes pal-changed { from { background-color: var(--accent-soft); } to { background-color: transparent; } }
+/* Badges keep their own fill, so they get a fading ring instead. */
+@keyframes pal-changed-ring { from { outline-color: var(--accent); } to { outline-color: transparent; } }
+/* Live indicator: a ring that expands and fades from the dot. */
+@keyframes pal-ping { 0% { opacity: .6; transform: scale(1); } 80%, 100% { opacity: 0; transform: scale(2.4); } }
+@keyframes pal-spin { to { transform: rotate(360deg); } }
+/* Cross-document view transition, main content only. */
+@keyframes pal-vt-out { to { opacity: 0; } }
+@keyframes pal-vt-in { from { opacity: 0; } }
+
+/* ---------------------------------------------------------------- popovers: confirm, edit, user menu */
+details.confirm[open] > .confirm-box,
+details.edit[open] > .edit-form,
+details[data-menu][open] > .menu {
+  animation: pal-pop-in var(--dur-fast) var(--ease-out) both;
+  transform-origin: top right;
+}
+/* script.js adds .is-closing for the length of the exit before removing [open]. */
+details.is-closing[open] > .confirm-box,
+details.is-closing[open] > .edit-form,
+details.is-closing[open] > .menu {
+  animation: pal-pop-out var(--dur-instant) var(--ease-in-out) both;
+}
+/* Phones show confirm/edit inline (static), so only fade, no rise. */
+@media (max-width: 700px) {
+  details.confirm[open] > .confirm-box,
+  details.edit[open] > .edit-form { animation-name: pal-fade-in; }
+  details.is-closing[open] > .confirm-box,
+  details.is-closing[open] > .edit-form { animation-name: pal-fade-out; }
+}
+.user-caret { transition: transform var(--dur-fast) var(--ease-out); }
+.user-menu[open] .user-caret { transform: rotate(180deg); }
+
+/* ---------------------------------------------------------------- flash callouts and toasts */
+.flash-region > .callout { animation: pal-rise-in var(--dur-base) var(--ease-out) both; }
+.flash-region > .callout.is-leaving,
+.callout.is-leaving { animation: pal-fade-out var(--dur-fast) var(--ease-in-out) both; }
+/* With script.js running, success flashes are shown as toasts instead; errors stay in the page.
+ * Gated on .has-toasts, which script.js itself sets, so a failed script load never hides a message. */
+.has-toasts .flash-region > .callout-ok.flash { display: none; }
+.has-toasts .flash-region:not(:has(> :not(.callout-ok.flash))) { display: none; }
+.toast { animation: pal-toast-in var(--dur-base) var(--ease-out) both; }
+.toast.is-leaving { animation: pal-toast-out var(--dur-fast) var(--ease-in-out) both; }
+.toast-close { flex: none; margin: -4px -8px -4px 0; }
+
+/* ---------------------------------------------------------------- command palette */
+.palette { animation: pal-fade-in var(--dur-fast) var(--ease-out) both; }
+.palette > .palette-panel { animation: pal-pop-in var(--dur-base) var(--ease-out) both; transform-origin: top center; }
+.palette.is-closing { animation: pal-fade-out var(--dur-instant) var(--ease-in-out) both; }
+.palette.is-closing > .palette-panel { animation: pal-pop-out var(--dur-instant) var(--ease-in-out) both; }
+.palette-item { transition: background-color var(--dur-instant) var(--ease-out); }
+
+/* ---------------------------------------------------------------- busy submit buttons */
+.btn.is-busy, button.is-busy { cursor: progress; }
+.btn.is-busy { position: relative; color: transparent; }
+.btn.is-busy > * { opacity: 0; } /* not visibility: the label stays the accessible name */
+.btn.is-busy::after {
+  content: ""; position: absolute; top: 50%; left: 50%;
+  width: 1em; height: 1em; margin: -.5em 0 0 -.5em;
+  border: 2px solid var(--text-muted); border-right-color: transparent; border-radius: 50%;
+  animation: pal-spin .7s linear infinite;
+}
+.btn-primary.is-busy::after, .btn-danger.is-busy::after, .btn-success.is-busy::after { border-color: var(--accent-fg); border-right-color: transparent; }
+
+/* ---------------------------------------------------------------- refresh: changed values */
+/* No fill-mode: once the tint has faded the element is back on its own background. */
+.is-changed { animation: pal-changed 1.2s var(--ease-out); }
+.badge.is-changed, .status-dot.is-changed { outline: 2px solid transparent; outline-offset: 2px; animation-name: pal-changed-ring; }
+/* Reduced motion: no fade, a steady mark for the same time (script removes the class). */
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="full"]) .is-changed { animation: none; }
+  html:not([data-motion="full"]) .is-changed:not(.badge):not(.status-dot) { background-color: var(--accent-soft); }
+  html:not([data-motion="full"]) .badge.is-changed, html:not([data-motion="full"]) .status-dot.is-changed { outline-color: var(--accent); }
+}
+html[data-motion="reduce"] .is-changed { animation: none; }
+html[data-motion="reduce"] .is-changed:not(.badge):not(.status-dot) { background-color: var(--accent-soft); }
+html[data-motion="reduce"] .badge.is-changed, html[data-motion="reduce"] .status-dot.is-changed { outline-color: var(--accent); }
+
+/* ---------------------------------------------------------------- live indicators */
+.status-dot.is-live, .live-dot { position: relative; }
+.live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
+.status-dot.is-live::after, .live-dot::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; background: inherit;
+  animation: pal-ping 1.6s var(--ease-out) infinite;
+}
+
+/* ---------------------------------------------------------------- copy buttons */
+[data-copy].copied { transition: color var(--dur-fast) var(--ease-out); }
+
+/* ---------------------------------------------------------------- in-page scrolling */
+@media (prefers-reduced-motion: no-preference) {
+  html:not([data-motion="reduce"]) { scroll-behavior: smooth; }
+}
+html[data-motion="full"] { scroll-behavior: smooth; }
+
+/* ---------------------------------------------------------------- cross-document view transitions
+ * Progressive enhancement (Chromium 126+, Safari 18.2+). The sidebar and the topbar keep their place;
+ * only the page under them cross-fades. Off when motion is reduced (see the kill switch). */
+@view-transition { navigation: auto; }
+#app-sidebar { view-transition-name: pal-sidebar; }
+.topbar { view-transition-name: pal-topbar; }
+.toast-region { view-transition-name: pal-toasts; }
+::view-transition-group(pal-sidebar),
+::view-transition-group(pal-topbar),
+::view-transition-group(pal-toasts),
+::view-transition-new(pal-sidebar),
+::view-transition-new(pal-topbar),
+::view-transition-new(pal-toasts) { animation: none; }
+::view-transition-old(pal-sidebar),
+::view-transition-old(pal-topbar),
+::view-transition-old(pal-toasts) { display: none; }
+::view-transition-old(root) { animation: pal-vt-out var(--dur-fast) var(--ease-in-out) both; }
+::view-transition-new(root) { animation: pal-vt-in var(--dur-base) var(--ease-out) both; }
+/* The phone drawer is off-canvas: never let it take part. */
+@media (max-width: 1023.98px) {
+  #app-sidebar { view-transition-name: none; }
+}
+
+/* ---------------------------------------------------------------- reduced motion: kill switch
+ * Applies to the OS setting (unless the user chose "full" in Account > Display preferences) and to
+ * the in-app "reduce" choice. "full" may override the OS: it is an explicit, per-browser choice made in
+ * this app, and nothing here moves far, loops (bar live dots), parallaxes or auto-plays. */
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion="full"]) *,
+  html:not([data-motion="full"]) *::before,
+  html:not([data-motion="full"]) *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0s !important;
+    transition-duration: .01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+  html:not([data-motion="full"])::view-transition-group(*),
+  html:not([data-motion="full"])::view-transition-old(*),
+  html:not([data-motion="full"])::view-transition-new(*) { animation: none !important; }
+}
+html[data-motion="reduce"] *,
+html[data-motion="reduce"] *::before,
+html[data-motion="reduce"] *::after {
+  animation-duration: .01ms !important;
+  animation-iteration-count: 1 !important;
+  animation-delay: 0s !important;
+  transition-duration: .01ms !important;
+  transition-delay: 0s !important;
+  scroll-behavior: auto !important;
+}
+html[data-motion="reduce"]::view-transition-group(*),
+html[data-motion="reduce"]::view-transition-old(*),
+html[data-motion="reduce"]::view-transition-new(*) { animation: none !important; }
+html[data-motion="reduce"] { scroll-behavior: auto; }

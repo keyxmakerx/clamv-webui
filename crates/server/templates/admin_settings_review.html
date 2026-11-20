@@ -1,20 +1,23 @@
 {% extends "shell.html" %}
 {% block title %}{{ nav.t("Review Settings · Palisade") }}{% endblock %}
 {% block content %}
-<h1 class="h3">{{ nav.t("Review changes") }}</h1>
-<section class="card mt-3"><div class="card-body table-responsive">
-<table class="table table-sm align-middle">
+<div class="page-head"><div class="page-head-text"><h1 class="page-title">{{ nav.t("Review changes") }}</h1>
+<p class="page-sub">{{ nav.t("Changes apply after the container restarts.") }}</p></div></div>
+<section class="card mt-3">
+<div class="table-responsive">
+<table class="table table-sm align-middle diff-table">
 <thead><tr><th>{{ nav.t("Setting") }}</th><th>{{ nav.t("Now saved") }}</th><th>{{ nav.t("New") }}</th></tr></thead>
 <tbody>
-{% for c in changes %}<tr><td><strong>{{ c.label }}</strong><div class="small muted"><code>{{ c.env }}</code></div></td><td class="text-break">{{ c.old }}</td><td class="text-break">{{ c.new }}</td></tr>{% endfor %}
+{% for c in changes %}<tr><td><strong>{{ c.label }}</strong><div class="small text-muted"><code>{{ c.env }}</code></div></td><td class="text-break diff-old">{{ c.old }}</td><td class="text-break diff-new">{{ c.new }}</td></tr>{% endfor %}
 </tbody></table>
-<form method="post" action="/admin/settings/apply" class="d-flex gap-2">
+</div>
+<div class="card-body">
+<form method="post" action="/admin/settings/apply" class="form-actions">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
 <input type="hidden" name="_revision" value="{{ revision }}">
 {% for c in changes %}<input type="hidden" name="{{ c.env }}" value="{{ c.value }}">{% endfor %}
-<button class="btn btn-primary" type="submit">{{ nav.t("Save") }}</button>
+<button class="btn btn-primary" type="submit"><i class="fas fa-check" aria-hidden="true"></i> {{ nav.t("Save") }}</button>
 <a class="btn btn-outline-secondary" href="/admin/settings">{{ nav.t("Back") }}</a>
 </form>
-<p class="small muted mt-2 mb-0">{{ nav.t("Changes apply after the container restarts.") }}</p>
 </div></section>
 {% endblock %}

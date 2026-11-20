@@ -1,14 +1,15 @@
 {# "Confirm it's you": a fresh password, code or SSO sign-in, good for a few minutes. #}
-{% if confirm.active %}<p class="small text-success mt-3"><i class="fas fa-check" aria-hidden="true"></i> {{ nav.t("Confirmed. Sensitive changes are allowed for a few minutes.") }}</p>
-{% else %}<section class="card mt-3"><div class="card-body">
-<h2 class="h6">{{ nav.t("Confirm it's you") }}</h2>
-<p class="muted small">{{ nav.t("Needed before") }} {% if confirm.next == "/admin/users" %}{{ nav.t("making an admin, raising a role, or resetting someone's password or 2FA") }}{% else %}{{ nav.t("setting up an authenticator app or changing passkeys") }}{% endif %}{{ nav.t(". Lasts a few minutes.") }}</p>
-{% if confirm.kind == "sso" %}<a class="btn btn-outline-primary" href="/account/confirm/sso?next={{ confirm.next }}">{{ nav.t("Sign in again with") }} {{ confirm.sso_label }}</a>
-{% else %}<form method="post" action="/account/confirm" class="d-flex flex-wrap gap-2">
+{% if confirm.active %}<div class="callout callout-ok mt-3" role="status"><i class="fas fa-check-circle callout-icon" aria-hidden="true"></i><div class="callout-body">{{ nav.t("Confirmed. Sensitive changes are allowed for a few minutes.") }}</div></div>
+{% else %}<section class="card stepup-card mt-3">
+<div class="card-head"><h2 class="card-title"><i class="fas fa-user-shield" aria-hidden="true"></i> {{ nav.t("Confirm it's you") }}</h2></div>
+<div class="card-body">
+<p class="text-muted small">{{ nav.t("Needed before") }} {% if confirm.next == "/admin/users" %}{{ nav.t("making an admin, raising a role, or resetting someone's password or 2FA") }}{% else %}{{ nav.t("setting up an authenticator app or changing passkeys") }}{% endif %}{{ nav.t(". Lasts a few minutes.") }}</p>
+{% if confirm.kind == "sso" %}<a class="btn btn-outline-primary" href="/account/confirm/sso?next={{ confirm.next }}"><i class="fas fa-sign-in-alt" aria-hidden="true"></i> {{ nav.t("Sign in again with") }} {{ confirm.sso_label }}</a>
+{% else %}<form method="post" action="/account/confirm" class="inline-form">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
 <input type="hidden" name="next" value="{{ confirm.next }}">
-{% if confirm.kind == "totp" %}<input class="form-control w-auto" name="proof" required autocomplete="one-time-code" maxlength="64" placeholder="{{ nav.t("Authenticator code") }}" aria-label="{{ nav.t("Authenticator code or recovery code") }}">
-{% else %}<input class="form-control w-auto" type="password" name="proof" required autocomplete="current-password" maxlength="256" placeholder="{% if confirm.kind == "ldap" %}Directory password{% else %}Current password{% endif %}" aria-label="{% if confirm.kind == "ldap" %}Directory password{% else %}Current password{% endif %}">{% endif %}
-<button class="btn btn-outline-primary" type="submit">{{ nav.t("Confirm") }}</button>
+{% if confirm.kind == "totp" %}<div class="field"><label class="form-label" for="confirm-proof">{{ nav.t("Authenticator code or recovery code") }}</label><input class="form-control" id="confirm-proof" name="proof" required autocomplete="one-time-code" maxlength="64" placeholder="{{ nav.t("Authenticator code") }}"></div>
+{% else %}<div class="field"><label class="form-label" for="confirm-proof">{% if confirm.kind == "ldap" %}{{ nav.t("Directory password") }}{% else %}{{ nav.t("Current password") }}{% endif %}</label><input class="form-control" id="confirm-proof" type="password" name="proof" required autocomplete="current-password" maxlength="256"></div>{% endif %}
+<button class="btn btn-primary" type="submit">{{ nav.t("Confirm") }}</button>
 </form>{% endif %}
 </div></section>{% endif %}

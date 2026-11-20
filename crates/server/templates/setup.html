@@ -1,23 +1,33 @@
 {% extends "shell.html" %}
-{% block title %}Setup · Palisade{% endblock %}
+{% block title %}{{ nav.t("Setup · Palisade") }}{% endblock %}
 {% block content %}
-<div class="page-head"><h1 class="h3">Setup</h1></div>
-<p class="muted">What works on this server, what is missing, and exactly what to add to <code>docker-compose.yml</code> for each. After changing the compose file run <code>docker compose up -d</code>; this page checks again on every visit.</p>
+<div class="page-head"><div class="page-head-text"><h1 class="page-title">{{ nav.t("Setup") }}</h1>
+<p class="page-sub">{{ nav.t("What works on this server, what is missing, and exactly what to add to") }} <code>docker-compose.yml</code> {{ nav.t("for each. After changing the compose file run") }} <code>docker compose up -d</code>{{ nav.t("; this page checks again on every visit.") }}</p></div></div>
 <div id="r-setup" data-refresh-region data-refresh="{% if report.pending() %}15{% else %}120{% endif %}">
-<div class="kpi-grid mb-3">
-<div class="kpi {% if attention > 0 %}kpi-warn{% else %}kpi-ok{% endif %}"><span class="kpi-label">Need attention</span><strong class="kpi-value">{{ attention }}</strong></div>
-<div class="kpi kpi-ok"><span class="kpi-label">Working</span><strong class="kpi-value">{{ ok }}</strong></div>
-<div class="kpi"><span class="kpi-label">Optional, not set up</span><strong class="kpi-value">{{ off }}</strong></div>
+<section class="card setup-summary" aria-labelledby="setup-progress-label"><div class="card-body">
+<div class="setup-summary-top">
+<div class="setup-progress-wrap">
+<p class="setup-progress-label" id="setup-progress-label"><strong class="setup-progress-count">{{ self.progress().0 }} / {{ self.progress().1 }}</strong> {{ nav.t("required and recommended checks done") }}</p>
+<progress class="setup-progress" value="{{ self.progress().0 }}" max="{{ self.progress().1 }}" aria-labelledby="setup-progress-label">{{ self.progress().0 }} / {{ self.progress().1 }}</progress>
 </div>
-{% if attention > 0 %}<form method="post" action="/admin/setup/dismiss" class="mb-3"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="next" value="setup"><button class="btn btn-sm btn-outline-secondary" type="submit">Hide the dashboard reminder until something new comes up</button></form>{% endif %}
-{% for (gkey, gname, gnote) in [("required", "Required", "Palisade cannot scan properly without these."), ("recommended", "Recommended", "It runs without them, but not safely for long."), ("optional", "Optional", "Turn on what you use.")] %}
-<h2 class="h5 mt-4 mb-1">{{ gname }}</h2><p class="small muted mb-2">{{ gnote }}</p>
-<section class="card"><div class="card-body setup-list">
+{% if attention > 0 %}<form method="post" action="/admin/setup/dismiss" class="setup-dismiss"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="next" value="setup"><button class="btn btn-sm btn-outline-secondary" type="submit"><i class="fas fa-bell-slash" aria-hidden="true"></i> {{ nav.t("Hide the dashboard reminder until something new comes up") }}</button></form>{% endif %}
+</div>
+<div class="stat-grid setup-stats">
+<div class="stat {% if attention > 0 %}is-warn{% else %}is-ok{% endif %}"><span class="stat-label">{{ nav.t("Need attention") }}</span><strong class="stat-value">{{ attention }}</strong></div>
+<div class="stat is-ok"><span class="stat-label">{{ nav.t("Working") }}</span><strong class="stat-value">{{ ok }}</strong></div>
+<div class="stat"><span class="stat-label">{{ nav.t("Optional, not set up") }}</span><strong class="stat-value">{{ off }}</strong></div>
+</div>
+</div></section>
+{% let groups = [("required", nav.t("Required"), nav.t("Palisade cannot scan properly without these.")), ("recommended", nav.t("Recommended"), nav.t("It runs without them, but not safely for long.")), ("optional", nav.t("Optional"), nav.t("Turn on what you use."))] %}{% for (gkey, gname, gnote) in groups %}
+<section class="card setup-group mt-3" aria-labelledby="sg-{{ gkey }}">
+<div class="card-head"><span class="setup-step-num" aria-hidden="true">{{ loop.index }}</span><div class="card-head-text"><h2 class="card-title" id="sg-{{ gkey }}">{{ gname }}</h2><p class="card-sub">{{ gnote }}</p></div>
+<div class="card-actions"><span class="badge {% if self.done(gkey) == self.group(gkey).len() %}badge-ok{% else %}badge-muted{% endif %}">{{ self.done(gkey) }} {{ nav.t("of") }} {{ self.group(gkey).len() }} {{ nav.t("done") }}</span></div></div>
+<div class="setup-list">
 {% for r in self.group(gkey) %}{% let g = r.guide %}
-<details class="setup-row" id="{{ g.key }}"{% if r.health.needs_action() %} open{% endif %}>
-<summary><span class="badge {{ r.health.badge() }}">{{ r.health.label() }}</span> <strong>{{ g.title }}</strong> <span class="setup-detail small">{{ r.detail }}</span></summary>
+<details class="setup-row {{ r.health.tone() }}" id="{{ g.key }}"{% if r.health.needs_action() %} open{% endif %}>
+<summary><span class="setup-status" aria-hidden="true"><i class="fas {{ r.health.icon() }}"></i></span><span class="setup-row-main"><strong class="setup-row-title">{{ g.title }}</strong> <span class="setup-detail">{{ r.detail }}</span></span><span class="badge {{ r.health.badge() }}">{{ r.health.label() }}</span><i class="fas fa-chevron-down setup-chevron" aria-hidden="true"></i></summary>
 <div class="setup-fix">
-<p class="small mb-2">{{ g.gives }}</p>
+<p class="setup-gives">{{ g.gives }}</p>
 {% let snip_suffix = "" %}{% include "_setup_fix.html" %}
 </div>
 </details>
