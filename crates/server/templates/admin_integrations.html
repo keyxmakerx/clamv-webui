@@ -1,34 +1,37 @@
 {% extends "shell.html" %}
 {% block title %}{{ nav.t("Integrations · Palisade") }}{% endblock %}
 {% block content %}
-<h1 class="h3">{{ nav.t("Integrations") }}</h1>
-<section class="card mt-3"><div class="card-body">
-<h2 class="h5">{{ nav.t("Alerts") }}</h2>
+<div class="page-head"><div class="page-head-text"><h1 class="page-title">{{ nav.t("Integrations") }}</h1>
+<p class="page-sub">{{ nav.t("Where alerts go, and how Prometheus and Grafana read Palisade's metrics.") }}</p></div>
+{% if !targets.is_empty() %}<div class="page-actions"><form method="post" action="/admin/integrations/webhook/test"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-primary" type="submit"><i class="fas fa-paper-plane" aria-hidden="true"></i> {{ nav.t("Send test message") }}</button></form></div>{% endif %}</div>
+<section class="card mt-3">
+<div class="card-head"><h2 class="card-title"><i class="fas fa-bell" aria-hidden="true"></i> {{ nav.t("Alerts") }}</h2>{% if !targets.is_empty() %}<p class="card-sub">{{ nav.t("Full URLs are kept secret.") }}</p>{% endif %}</div>
 {% if !targets.is_empty() %}
 <div class="table-responsive"><table class="table table-sm align-middle">
 <thead><tr><th>{{ nav.t("Destination") }}</th><th>{{ nav.t("Kind") }}</th><th>{{ nav.t("Last delivery") }}</th></tr></thead>
 <tbody>
-{% for t in targets %}<tr><td><code>{{ t.0 }}</code></td><td><span class="badge bg-secondary">{{ t.1 }}</span></td><td>{% if let Some(l) = t.2 %}{{ l.0 }} · {% if l.1 %}<span class="text-success">{{ nav.t("delivered") }}</span>{% else %}<span class="text-danger">{{ nav.t("failed:") }} {{ l.2 }}</span>{% endif %}{% else %}<span class="muted">{{ nav.t("none since start") }}</span>{% endif %}</td></tr>
+{% for t in targets %}<tr><td><code>{{ t.0 }}</code></td><td><span class="badge badge-muted">{{ t.1 }}</span></td><td class="small">{% if let Some(l) = t.2 %}<span class="tabular">{{ l.0 }}</span> · {% if l.1 %}<span class="badge badge-ok">{{ nav.t("delivered") }}</span>{% else %}<span class="badge badge-danger">{{ nav.t("failed:") }}</span> <span class="text-danger">{{ l.2 }}</span>{% endif %}{% else %}<span class="text-muted">{{ nav.t("none since start") }}</span>{% endif %}</td></tr>
 {% endfor %}</tbody></table></div>
-<dl class="row mb-2">
-<dt class="col-sm-3">{{ nav.t("Sends") }}</dt><dd class="col-sm-9">{% if all %}{{ nav.t("every finished scan") }}{% else %}{{ nav.t("detections, failed scans, unscannable files, failed EICAR checks and canary hits") }}{% endif %}</dd>
-<dt class="col-sm-3">{{ nav.t("Never notifies") }}</dt><dd class="col-sm-9">{% if ignored.is_empty() %}<span class="muted">{{ nav.t("nothing muted") }}</span>{% else %}<code>{{ ignored }}</code> <span class="muted small">{{ nav.t("(still logged and listed)") }}</span>{% endif %}</dd>
+<div class="card-body">
+<dl class="kv">
+<dt>{{ nav.t("Sends") }}</dt><dd>{% if all %}{{ nav.t("every finished scan") }}{% else %}{{ nav.t("detections, failed scans, unscannable files, failed EICAR checks and canary hits") }}{% endif %}</dd>
+<dt>{{ nav.t("Never notifies") }}</dt><dd>{% if ignored.is_empty() %}<span class="text-muted">{{ nav.t("nothing muted") }}</span>{% else %}<code>{{ ignored }}</code> <span class="text-muted small">{{ nav.t("(still logged and listed)") }}</span>{% endif %}</dd>
 </dl>
-<p class="muted small">{{ nav.t("Full URLs are kept secret.") }}</p>
-<form method="post" action="/admin/integrations/webhook/test"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-outline-primary" type="submit">{{ nav.t("Send test message") }}</button></form>
+</div>
 {% else %}
-<p class="muted mb-0">No alert destination yet, so detections only show up here.</p>
+<div class="card-body"><p class="text-muted mb-0">{{ nav.t("No alert destination yet, so detections only show up here.") }}</p></div>
 {% endif %}
-</div></section>
+</section>
 {% if targets.is_empty() %}{% let g = crate::web::setup::guide("alerts") %}{% include "_empty.html" %}{% endif %}
-<section class="card mt-3"><div class="card-body">
-<h2 class="h5">{{ nav.t("Prometheus and Grafana") }}</h2>
+<section class="card mt-3">
+<div class="card-head"><h2 class="card-title"><i class="fas fa-chart-line" aria-hidden="true"></i> {{ nav.t("Prometheus and Grafana") }}</h2>{% if metrics %}<span class="badge badge-ok">{{ nav.t("on") }}</span>{% else %}<span class="badge badge-muted">{{ nav.t("off") }}</span>{% endif %}</div>
+<div class="card-body">
 {% if metrics %}<p>{{ nav.t("Metrics are served at") }} <code>/metrics</code> {{ nav.t("(also") }} <code>/actuator/prometheus</code>{{ nav.t(") with") }} <code>Authorization: Bearer</code> {{ nav.t("and the configured") }} <code>METRICS_TOKEN</code>.</p>
-{% else %}<p class="muted">Off: <code>/metrics</code> answers 404 until a token is set (see below).</p>{% endif %}
-<ul class="mb-0">
-<li><a href="/admin/integrations/files/grafana-palisade.json">{{ nav.t("Grafana dashboard") }}</a></li>
-<li><a href="/admin/integrations/files/clamav-alerts.yml">{{ nav.t("Prometheus alert rules") }}</a></li>
-<li><a href="/admin/integrations/files/prometheus.yml.example">{{ nav.t("Prometheus scrape config example") }}</a></li>
+{% else %}<p class="text-muted">{{ nav.t("Off:") }} <code>/metrics</code> {{ nav.t("answers 404 until a token is set (see below).") }}</p>{% endif %}
+<ul class="link-list">
+<li><a href="/admin/integrations/files/grafana-palisade.json"><i class="fas fa-download" aria-hidden="true"></i> {{ nav.t("Grafana dashboard") }}</a></li>
+<li><a href="/admin/integrations/files/clamav-alerts.yml"><i class="fas fa-download" aria-hidden="true"></i> {{ nav.t("Prometheus alert rules") }}</a></li>
+<li><a href="/admin/integrations/files/prometheus.yml.example"><i class="fas fa-download" aria-hidden="true"></i> {{ nav.t("Prometheus scrape config example") }}</a></li>
 </ul>
 </div></section>
 {% if !metrics %}{% let g = crate::web::setup::guide("metrics") %}{% include "_empty.html" %}{% endif %}

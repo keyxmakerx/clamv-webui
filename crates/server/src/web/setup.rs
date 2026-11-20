@@ -76,12 +76,35 @@ impl Health {
 
     pub fn badge(self) -> &'static str {
         match self {
-            Self::Ok => "bg-success",
-            Self::Attention => "bg-warning text-dark",
-            Self::Off => "bg-secondary",
-            Self::Broken => "bg-danger",
-            Self::Pending => "bg-info text-dark",
-            Self::Note => "bg-light text-dark border",
+            Self::Ok => "badge-ok",
+            Self::Attention => "badge-warn",
+            Self::Off => "badge-muted",
+            Self::Broken => "badge-danger",
+            Self::Pending => "badge-info",
+            Self::Note => "badge-muted",
+        }
+    }
+
+    /// The Setup row's state class (`is-…`), for its status icon and edge colour.
+    pub fn tone(self) -> &'static str {
+        match self {
+            Self::Ok | Self::Note => "is-done",
+            Self::Attention => "is-warn",
+            Self::Off => "is-off",
+            Self::Broken => "is-danger",
+            Self::Pending => "is-pending",
+        }
+    }
+
+    /// The Font Awesome icon for the Setup row's status.
+    pub fn icon(self) -> &'static str {
+        match self {
+            Self::Ok => "fa-check",
+            Self::Note => "fa-info",
+            Self::Attention => "fa-exclamation",
+            Self::Off => "fa-minus",
+            Self::Broken => "fa-times",
+            Self::Pending => "fa-hourglass-half",
         }
     }
 
@@ -1675,6 +1698,21 @@ impl SetupPage {
             .iter()
             .filter(|r| r.group == want)
             .collect()
+    }
+
+    /// Rows in group `g` that need nothing more (working, or only a reminder).
+    fn done(&self, g: &str) -> usize {
+        self.group(g)
+            .iter()
+            .filter(|r| matches!(r.health, Health::Ok | Health::Note))
+            .count()
+    }
+
+    /// Required and recommended rows: (done, total), for the progress bar.
+    fn progress(&self) -> (usize, usize) {
+        let done = self.done("required") + self.done("recommended");
+        let total = self.group("required").len() + self.group("recommended").len();
+        (done, total)
     }
 }
 

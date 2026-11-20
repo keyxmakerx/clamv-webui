@@ -1,41 +1,52 @@
 {% extends "shell.html" %}
 {% block title %}{{ nav.t("API Tokens · Palisade") }}{% endblock %}
 {% block content %}
-<h1 class="h3">{{ nav.t("API tokens") }}</h1>
-<p class="muted">{{ nav.t("For") }} <code>clamctl</code>{{ nav.t(", its MCP server and scripts. Send as") }} <code>Authorization: Bearer …</code>.</p>
-{% if let Some(sec) = secret %}<div class="alert alert-warning" role="alert"><strong>{{ nav.t("New token secret:") }}</strong>
-<div class="mt-2 d-flex gap-2 align-items-start"><code id="new-token" class="text-break user-select-all">{{ sec }}</code><button class="btn btn-sm btn-outline-secondary" type="button" data-copy="new-token">{{ nav.t("Copy") }}</button></div>
-<div class="small mt-2">{{ nav.t("Store it in a password manager or a secret file now. Only its hash is kept.") }}</div></div>{% endif %}
-<section class="card mt-3"><div class="card-body">
-<h2 class="h5">{{ nav.t("Issue token") }}</h2>
-<form method="post" action="/admin/api-tokens" class="row g-3">
+<div class="page-head"><div class="page-head-text"><h1 class="page-title">{{ nav.t("API tokens") }}</h1>
+<p class="page-sub">{{ nav.t("For") }} <code>clamctl</code>{{ nav.t(", its MCP server and scripts. Send as") }} <code>Authorization: Bearer …</code>.</p></div></div>
+{% if let Some(sec) = secret %}<section class="card secret-reveal mt-3" role="alert">
+<div class="card-head"><h2 class="card-title"><i class="fas fa-key" aria-hidden="true"></i> {{ nav.t("New token secret:") }}</h2><span class="badge badge-warn">{{ nav.t("shown once") }}</span></div>
+<div class="card-body">
+<div class="secret-value"><code id="new-token" class="text-break user-select-all">{{ sec }}</code><button class="btn btn-sm btn-primary" type="button" data-copy="new-token"><i class="fas fa-copy" aria-hidden="true"></i> {{ nav.t("Copy") }}</button></div>
+<p class="small mb-0 mt-2"><i class="fas fa-exclamation-triangle text-warning" aria-hidden="true"></i> {{ nav.t("Store it in a password manager or a secret file now. Only its hash is kept.") }}</p>
+</div></section>{% endif %}
+<details class="card add-panel mt-3" id="issue-token"{% if tokens.is_empty() || nav.error.is_some() %} open{% endif %}>
+<summary class="card-head"><h2 class="card-title"><i class="fas fa-plus" aria-hidden="true"></i> {{ nav.t("Issue token") }}</h2><span class="card-sub">{{ nav.t("The secret is shown once, right after you issue it.") }}</span><i class="fas fa-chevron-down add-panel-chevron" aria-hidden="true"></i></summary>
+<div class="card-body">
+<form method="post" action="/admin/api-tokens" class="form-stack">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
-<div class="col-md-5"><label class="form-label" for="tl">{{ nav.t("Label") }}</label><input class="form-control" id="tl" name="label" required maxlength="100" autocomplete="off" placeholder="{{ nav.t("nas-backup-check") }}"></div>
-<div class="col-md-3"><label class="form-label" for="td">{{ nav.t("Expires after (days)") }}</label><input class="form-control" id="td" name="days" type="number" min="1" max="3650" placeholder="{{ nav.t("never") }}"></div>
-<fieldset class="col-12"><legend class="form-label fs-6">{{ nav.t("Scopes") }}</legend>
-{% for sc in scopes %}<label class="form-check form-check-inline"><input class="form-check-input" type="checkbox" name="scope" value="{{ sc }}"{% if *sc == "jobs:read" || *sc == "health:read" || *sc == "endpoints:read" %} checked{% endif %}> <code>{{ sc }}</code></label>{% endfor %}
+<div class="form-grid">
+<div class="field"><label class="form-label" for="tl">{{ nav.t("Label") }}</label><input class="form-control" id="tl" name="label" required maxlength="100" autocomplete="off" placeholder="{{ nav.t("nas-backup-check") }}"></div>
+<div class="field"><label class="form-label" for="td">{{ nav.t("Expires after (days)") }}</label><input class="form-control" id="td" name="days" type="number" min="1" max="3650" placeholder="{{ nav.t("never") }}"></div>
+</div>
+<fieldset class="form-section"><legend class="form-section-title">{{ nav.t("Scopes") }}</legend>
+<div class="check-grid">{% for sc in scopes %}<label class="form-check"><input class="form-check-input" type="checkbox" name="scope" value="{{ sc }}"{% if *sc == "jobs:read" || *sc == "health:read" || *sc == "endpoints:read" %} checked{% endif %}> <code>{{ sc }}</code></label>{% endfor %}</div>
 </fieldset>
-<div class="col-md-6"><label class="form-label" for="te">{{ nav.t("Limit to endpoints (none selected: all)") }}</label>
+<fieldset class="form-section"><legend class="form-section-title">{{ nav.t("Limits (optional)") }}</legend>
+<div class="form-grid">
+<div class="field"><label class="form-label" for="te">{{ nav.t("Limit to endpoints (none selected: all)") }}</label>
 <select class="form-select" id="te" name="endpoint" multiple size="3">{% for e in endpoints %}<option value="{{ e.id }}">{{ e.name }}</option>{% endfor %}</select></div>
-<div class="col-md-6"><label class="form-label" for="tr">{{ nav.t("Limit path scans to (comma-separated, empty: all roots)") }}</label>
+<div class="field"><label class="form-label" for="tr">{{ nav.t("Limit path scans to (comma-separated, empty: all roots)") }}</label>
 <input class="form-control" id="tr" name="roots" maxlength="4096" placeholder="{{ roots }}" autocomplete="off"></div>
-<div class="col-12"><button class="btn btn-primary" type="submit">{{ nav.t("Issue token") }}</button></div>
+</div></fieldset>
+<div class="form-actions"><button class="btn btn-primary" type="submit"><i class="fas fa-key" aria-hidden="true"></i> {{ nav.t("Issue token") }}</button></div>
 </form>
-</div></section>
-<section class="card mt-3"><div class="card-body table-responsive">
+</div></details>
+<section class="card mt-3">
+<div class="card-head"><h2 class="card-title">{{ nav.t("Tokens") }}</h2></div>
+<div class="table-responsive">
 <table class="table table-sm align-middle">
 <thead><tr><th>{{ nav.t("Label") }}</th><th>{{ nav.t("Scopes") }}</th><th>{{ nav.t("Created") }}</th><th>{{ nav.t("Expires") }}</th><th>{{ nav.t("Last used") }}</th><th><span class="visually-hidden">{{ nav.t("Actions") }}</span></th></tr></thead>
 <tbody>
 {% for t in tokens %}<tr>
 <td><strong>{{ t.label }}</strong> <code class="small">{{ t.prefix }}…</code>
-{% if t.state == "active" %}<span class="badge bg-success">{{ nav.t("active") }}</span>{% else %}<span class="badge bg-secondary">{{ t.state }}</span>{% endif %}
-{% if !t.limits.is_empty() %}<div class="small muted">{{ t.limits }}</div>{% endif %}</td>
-<td class="small"><code>{{ t.scopes }}</code></td>
-<td class="small">{{ t.created }}</td>
-<td class="small">{{ t.expires }}</td>
-<td class="small">{{ t.last_used }}</td>
-<td>{% if t.state == "active" %}<details class="confirm"><summary class="btn btn-sm btn-outline-danger">{{ nav.t("Revoke") }}</summary><div class="confirm-box"><p>{{ nav.t("Revoke") }} {{ t.label }}{{ nav.t("? Anything using it stops working at once. This can't be undone.") }}</p><form method="post" action="/admin/api-tokens/{{ t.id }}/revoke"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-danger" type="submit">{{ nav.t("Revoke token") }}</button></form></div></details>{% endif %}</td>
-</tr>{% else %}<tr><td colspan="6" class="muted">{{ nav.t("No tokens yet.") }}</td></tr>{% endfor %}
+{% if t.state == "active" %}<span class="badge badge-ok">{{ nav.t("active") }}</span>{% else %}<span class="badge badge-muted">{{ t.state }}</span>{% endif %}
+{% if !t.limits.is_empty() %}<div class="small text-muted">{{ t.limits }}</div>{% endif %}</td>
+<td class="small"><div class="scope-list">{% for sc in t.scopes.split_whitespace() %}<code class="scope">{{ sc }}</code>{% endfor %}</div></td>
+<td class="small text-nowrap tabular">{{ t.created }}</td>
+<td class="small text-nowrap tabular">{{ t.expires }}</td>
+<td class="small text-nowrap tabular">{{ t.last_used }}</td>
+<td>{% if t.state == "active" %}<div class="row-actions"><details class="confirm"><summary class="btn btn-sm btn-outline-danger">{{ nav.t("Revoke") }}</summary><div class="confirm-box"><p>{{ nav.t("Revoke") }} {{ t.label }}{{ nav.t("? Anything using it stops working at once. This can't be undone.") }}</p><form method="post" action="/admin/api-tokens/{{ t.id }}/revoke"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-danger" type="submit">{{ nav.t("Revoke token") }}</button></form></div></details></div>{% endif %}</td>
+</tr>{% else %}<tr><td colspan="6"><div class="empty-state empty-inline"><i class="fas fa-key empty-state-icon" aria-hidden="true"></i><p class="empty-state-title">{{ nav.t("No tokens yet.") }}</p><p class="empty-state-text">{{ nav.t("Issue one below for each script or tool, with only the scopes it needs.") }}</p></div></td></tr>{% endfor %}
 </tbody></table>
 </div></section>
 {% endblock %}

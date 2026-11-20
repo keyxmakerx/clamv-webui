@@ -511,6 +511,15 @@ impl AuditPage {
     fn csv_link(&self) -> String {
         format!("/admin/audit.csv?{}", self.q.link(0))
     }
+    /// Badge tone for an outcome column value.
+    fn outcome_badge(&self, outcome: &str) -> &'static str {
+        match outcome {
+            "OK" => "badge-ok",
+            "FAILED" | "FAIL" | "ALERT" => "badge-danger",
+            "DENIED" => "badge-warn",
+            _ => "badge-muted",
+        }
+    }
 }
 
 fn audit_view(r: crate::db::audit::AuditRow) -> AuditView {

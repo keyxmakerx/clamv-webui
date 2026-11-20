@@ -1,17 +1,18 @@
 {% extends "shell.html" %}
 {% block title %}{{ nav.t("Settings · Palisade") }}{% endblock %}
 {% block content %}
-<h1 class="h3">{{ nav.t("Settings") }}</h1>
-<p class="muted">{{ nav.t("Saved values apply after a restart. Environment variables win over values saved here. Leave a field empty to use the default.") }}</p>
-<form method="post" action="/admin/settings/review">
+<div class="page-head"><div class="page-head-text"><h1 class="page-title">{{ nav.t("Settings") }}</h1>
+<p class="page-sub">{{ nav.t("Saved values apply after a restart. Environment variables win over values saved here. Leave a field empty to use the default.") }}</p></div></div>
+<form method="post" action="/admin/settings/review" class="settings-form">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
 {% for s in sections %}
-<section class="card mt-3"><div class="card-body">
-<h2 class="h5">{{ s.name }}</h2>
+<section class="card mt-3">
+<div class="card-head"><h2 class="card-title">{{ s.name }}</h2></div>
+<div class="setting-list">
 {% for r in s.rows %}
-<div class="row g-2 align-items-center py-2 border-bottom">
-<div class="col-md-5"><label class="form-label mb-0" for="f-{{ r.env }}"><strong>{{ r.label }}</strong></label><div class="small muted">{{ r.help }} <code>{{ r.env }}</code></div></div>
-<div class="col-md-4">
+<div class="setting-row">
+<div class="setting-label"><label class="form-label" for="f-{{ r.env }}">{{ r.label }}</label><div class="form-text">{{ r.help }} <code>{{ r.env }}</code></div></div>
+<div class="setting-control">
 {% if let Some(v) = r.locked %}<input class="form-control" id="f-{{ r.env }}" value="{{ v }}" disabled>
 {% else if r.kind == "bool" %}<select class="form-select" id="f-{{ r.env }}" name="{{ r.env }}">
 <option value=""{% if r.value.is_empty() %} selected{% endif %}>{{ nav.t("Default (") }}{% if r.default == "true" %}{{ nav.t("yes") }}{% else %}{{ nav.t("no") }}{% endif %})</option>
@@ -23,18 +24,18 @@
 {% else if r.kind == "number" %}<input class="form-control" type="number" id="f-{{ r.env }}" name="{{ r.env }}" min="{{ r.min }}" max="{{ r.max }}" value="{{ r.value }}" placeholder="{{ r.default }}">
 {% else %}<input class="form-control" id="f-{{ r.env }}" name="{{ r.env }}" value="{{ r.value }}" placeholder="{{ r.default }}" maxlength="2048" autocomplete="off">{% endif %}
 </div>
-<div class="col-md-3 small">{% if r.locked.is_some() %}<span class="badge bg-secondary">{{ nav.t("set by environment") }}</span>{% else if r.pending %}<span class="badge bg-warning text-dark">{{ nav.t("applies after restart") }}</span>{% else if !r.value.is_empty() %}<span class="badge bg-success">{{ nav.t("saved") }}</span>{% endif %}</div>
+<div class="setting-state">{% if r.locked.is_some() %}<span class="badge badge-muted"><i class="fas fa-lock" aria-hidden="true"></i> {{ nav.t("set by environment") }}</span>{% else if r.pending %}<span class="badge badge-warn">{{ nav.t("applies after restart") }}</span>{% else if !r.value.is_empty() %}<span class="badge badge-ok">{{ nav.t("saved") }}</span>{% endif %}</div>
 </div>
 {% endfor %}
 </div></section>
 {% endfor %}
-<div class="mt-3"><button class="btn btn-primary" type="submit">{{ nav.t("Review changes") }}</button></div>
+<div class="form-actions form-actions-sticky"><button class="btn btn-primary" type="submit"><i class="fas fa-search" aria-hidden="true"></i> {{ nav.t("Review changes") }}</button><span class="small text-muted">{{ nav.t("Nothing is saved until you confirm on the next page.") }}</span></div>
 </form>
-<section class="card mt-4"><div class="card-body">
-<h2 class="h5">{{ nav.t("Deployment") }}</h2>
-<p class="small muted">{{ nav.t("Set only through the environment, because they hold secrets or security boundaries.") }}</p>
-<dl class="row mb-0">
-{% for d in deployment %}<dt class="col-sm-4">{{ d.0 }}</dt><dd class="col-sm-8 text-break">{{ d.1 }}</dd>{% endfor %}
+<section class="card mt-4">
+<div class="card-head"><h2 class="card-title"><i class="fas fa-lock" aria-hidden="true"></i> {{ nav.t("Deployment") }}</h2><p class="card-sub">{{ nav.t("Set only through the environment, because they hold secrets or security boundaries.") }}</p></div>
+<div class="card-body">
+<dl class="kv">
+{% for d in deployment %}<dt>{{ d.0 }}</dt><dd class="text-break">{{ d.1 }}</dd>{% endfor %}
 </dl>
 </div></section>
 {% endblock %}

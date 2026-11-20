@@ -1,7 +1,9 @@
 {% extends "shell.html" %}
 {% block title %}{{ nav.t("Jobs · Palisade") }}{% endblock %}
-{% block content %}
-<div class="page-head"><h1 class="h3">{{ nav.t("Jobs") }}</h1><span class="muted small">{{ total }} {{ nav.t("job(s)") }}{% if refresh %} {{ nav.t("· updating every 5 s") }}{% endif %}</span></div>
+{% block content %}<div class="ops-page">
+<div class="page-head"><div class="page-head-text"><h1 class="page-title">{{ nav.t("Jobs") }}</h1>
+<p class="page-sub">{{ nav.t("Every scan: uploads, path scans, watched folders and EICAR controls.") }} <span class="page-count">{{ total }} {{ nav.t("job(s)") }}</span>{% if refresh %} <span class="live-pill"><span class="live-dot" aria-hidden="true"></span>{{ nav.t("· updating every 5 s") }}</span>{% endif %}</p></div>
+<div class="page-actions"><a class="btn btn-primary" href="/scan"><i class="fas fa-search" aria-hidden="true"></i> {{ nav.t("New scan") }}</a></div></div>
 <form method="get" action="/jobs" class="filter-bar" data-remember="jobs">
 <div class="filter-search"><i class="fas fa-search" aria-hidden="true"></i>
 <input class="form-control" type="search" name="q" value="{{ q }}" maxlength="512" placeholder="{{ nav.t("Search: eicar  kind=WATCH  -path:/tmp  after:2026-11-01  agent=nas-2") }}" aria-label="{{ nav.t("Search jobs") }}">
@@ -18,28 +20,28 @@
 </div>
 <div class="search-help d-none" id="jobs-help"><code>word</code> {{ nav.t("or") }} <code>"two words"</code> {{ nav.t("match target or submitter ·") }} <code>field:value</code> {{ nav.t("contains,") }} <code>field=value</code> {{ nav.t("exact ·") }} <code>-</code> {{ nav.t("negates · fields:") }} <code>target</code>, <code>by</code>, <code>kind</code>, <code>verdict</code>, <code>status</code>, <code>agent</code>/<code>endpoint</code>, <code>after</code>, <code>before</code>, <code>since:7d</code></div>
 </form>
-{% if window.0.is_some() || window.1.is_some() %}<div class="small muted mt-2">{{ nav.t("Showing a time window from the dashboard chart.") }} <a href="{{ self.unwindowed() }}">{{ nav.t("Remove it") }}</a></div>{% endif %}
-{% for w in warnings %}<div class="alert alert-warning py-1 small mt-2" role="status">{{ w }}</div>{% endfor %}
-<section class="card mt-3" id="r-jobs" data-refresh-region{% if refresh %} data-refresh="5"{% endif %}><div class="card-body table-responsive">
-<table class="table table-sm align-middle">
-<thead><tr><th>{{ nav.t("Submitted") }}</th><th>{{ nav.t("Type") }}</th><th>{{ nav.t("Target") }}</th><th>{{ nav.t("Host") }}</th><th>{{ nav.t("By") }}</th><th>{{ nav.t("Result") }}</th><th>{{ nav.t("Duration") }}</th></tr></thead>
+{% if window.0.is_some() || window.1.is_some() %}<div class="callout callout-info callout-sm"><i class="fas fa-chart-bar callout-icon" aria-hidden="true"></i><div class="callout-body">{{ nav.t("Showing a time window from the dashboard chart.") }} <a href="{{ self.unwindowed() }}">{{ nav.t("Remove it") }}</a></div></div>{% endif %}
+{% for w in warnings %}<div class="callout callout-warn callout-sm" role="status"><i class="fas fa-exclamation-triangle callout-icon" aria-hidden="true"></i><div class="callout-body">{{ w }}</div></div>{% endfor %}
+<section class="card" id="r-jobs" data-refresh-region{% if refresh %} data-refresh="5"{% endif %}><div class="table-responsive">
+<table class="table table-sm align-middle table-sticky ops-table">
+<thead><tr><th>{{ nav.t("Submitted") }}</th><th>{{ nav.t("Type") }}</th><th>{{ nav.t("Target") }}</th><th>{{ nav.t("Host") }}</th><th>{{ nav.t("By") }}</th><th>{{ nav.t("Result") }}</th><th class="text-end">{{ nav.t("Duration") }}</th></tr></thead>
 <tbody>
-{% for r in rows %}<tr>
+{% for r in rows %}<tr{% if r.verdict == "VIRUS_FOUND" %} class="row-danger"{% else if r.verdict == "ERROR" %} class="row-warn"{% endif %}>
 <td class="small text-nowrap"><a href="/jobs/{{ r.id }}">{{ r.submitted }}</a></td>
-<td>{{ r.kind }}</td>
+<td><span class="kind">{{ r.kind }}</span></td>
 <td class="small path"><a href="/jobs/{{ r.id }}">{{ crate::web::wbr(r.target)|safe }}</a></td>
 <td class="small">{{ r.endpoint }}</td>
-<td class="small">{{ r.submitted_by }}</td>
-<td>{% if r.verdict.is_empty() %}<span class="badge bg-secondary">{{ r.status }}</span>{% else %}<span class="badge {{ self.badge(r.verdict) }}">{{ r.verdict }}</span>{% endif %}
-{% if !r.signatures.is_empty() %}<div class="small">{{ r.signatures }}</div>{% endif %}
+<td class="small muted">{{ r.submitted_by }}</td>
+<td>{% if r.verdict.is_empty() %}<span class="badge badge-muted">{% if r.status == "RUNNING" %}<span class="live-dot" aria-hidden="true"></span>{% endif %}{{ r.status }}</span>{% else %}<span class="badge {{ self.badge(r.verdict) }}">{{ r.verdict }}</span>{% endif %}
+{% if !r.signatures.is_empty() %}<div class="small sig-text">{{ r.signatures }}</div>{% endif %}
 {% if r.problems > 0 %}<div class="small muted">{{ r.problems }} {{ nav.t("file(s) not fully scanned") }}</div>{% endif %}</td>
-<td class="small text-nowrap">{{ r.duration }}</td>
-</tr>{% else %}<tr><td colspan="7" class="muted">{{ nav.t("No jobs match.") }}</td></tr>{% endfor %}
-</tbody></table>
-{% if pages > 1 %}<nav aria-label="{{ nav.t("Pages") }}" class="d-flex gap-2 align-items-center">
-{% if page > 0 %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page - 1) }}">{{ nav.t("Newer") }}</a>{% endif %}
+<td class="small text-nowrap text-end num">{{ r.duration }}</td>
+</tr>{% else %}<tr><td colspan="7"><div class="empty-state empty-state-sm"><i class="fas fa-inbox empty-state-icon" aria-hidden="true"></i><p class="empty-state-text">{{ nav.t("No jobs match.") }}</p></div></td></tr>{% endfor %}
+</tbody></table></div>
+{% if pages > 1 %}<nav aria-label="{{ nav.t("Pages") }}" class="pager">
+{% if page > 0 %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page - 1) }}"><i class="fas fa-chevron-left" aria-hidden="true"></i> {{ nav.t("Newer") }}</a>{% endif %}
 <span class="small muted">{{ nav.t("Page") }} {{ page + 1 }} {{ nav.t("of") }} {{ pages }}</span>
-{% if page + 1 < pages %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page + 1) }}">{{ nav.t("Older") }}</a>{% endif %}
+{% if page + 1 < pages %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page + 1) }}">{{ nav.t("Older") }} <i class="fas fa-chevron-right" aria-hidden="true"></i></a>{% endif %}
 </nav>{% endif %}
-</div></section>
-{% endblock %}
+</section>
+</div>{% endblock %}

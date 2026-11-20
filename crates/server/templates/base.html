@@ -5,12 +5,13 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 {% block head %}{% endblock %}
 <title>{% block title %}Palisade{% endblock %}</title>
-<link rel="icon" href="/favicon.ico">
-<link rel="stylesheet" href="/css/bootstrap.min.css?v={{ crate::web::asset_v() }}">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" href="/images/palisade-mark.svg?v={{ crate::web::asset_v() }}" type="image/svg+xml">
 <link rel="stylesheet" href="/css/all.css?v={{ crate::web::asset_v() }}">
-<link rel="stylesheet" href="/css/style.css?v={{ crate::web::asset_v() }}">
-<link rel="stylesheet" href="/css/phase0.css?v={{ crate::web::asset_v() }}">
-<link rel="stylesheet" href="/css/ui.css?v={{ crate::web::asset_v() }}">
+<link rel="stylesheet" href="/css/app.css?v={{ crate::web::asset_v() }}">
+<link rel="stylesheet" href="/css/ops.css?v={{ crate::web::asset_v() }}">
+<link rel="stylesheet" href="/css/admin.css?v={{ crate::web::asset_v() }}">
+<link rel="stylesheet" href="/css/motion.css?v={{ crate::web::asset_v() }}">
 <script src="/js/theme.js?v={{ crate::web::asset_v() }}"></script>
 <script defer src="/js/script.js?v={{ crate::web::asset_v() }}"></script>
 </head>

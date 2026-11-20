@@ -1,21 +1,22 @@
 {% extends "shell.html" %}
 {% block title %}{{ nav.t("clamd config · Palisade") }}{% endblock %}
 {% block content %}
-<h1 class="h3">{{ nav.t("clamd configuration") }}</h1>
-<p class="muted">{{ nav.t("Read-only. Mount the files into this container and point") }} <code>CLAMD_CONF_FILE</code> {{ nav.t("and") }} <code>FRESHCLAM_CONF_FILE</code> {{ nav.t("at them. ExcludePath rules also apply to watched folders and single-file scans here.") }}</p>
-{% if !checks.is_empty() %}<section class="card mt-3"><div class="card-body">
-<h2 class="h5">{{ nav.t("Checks") }}</h2>
-<ul class="mb-0">{% for c in checks %}<li>{% if c.0 %}<span class="badge bg-success">{{ nav.t("ok") }}</span>{% else %}<span class="badge bg-warning text-dark">{{ nav.t("fix") }}</span>{% endif %} {{ c.1 }}</li>{% endfor %}</ul>
-{% if !excludes.is_empty() %}<h3 class="h6 mt-3">{{ nav.t("ExcludePath") }}</h3><ul class="small mb-0">{% for e in excludes %}<li><code>{{ e }}</code></li>{% endfor %}</ul>{% endif %}
+<div class="page-head"><div class="page-head-text"><h1 class="page-title">{{ nav.t("clamd configuration") }}</h1>
+<p class="page-sub">{{ nav.t("Read-only. Mount the files into this container and point") }} <code>CLAMD_CONF_FILE</code> {{ nav.t("and") }} <code>FRESHCLAM_CONF_FILE</code> {{ nav.t("at them. ExcludePath rules also apply to watched folders and single-file scans here.") }}</p></div></div>
+{% if !checks.is_empty() %}<section class="card mt-3">
+<div class="card-head"><h2 class="card-title">{{ nav.t("Checks") }}</h2></div>
+<div class="card-body">
+<ul class="check-list">{% for c in checks %}<li class="{% if c.0 %}is-ok{% else %}is-warn{% endif %}">{% if c.0 %}<span class="badge badge-ok">{{ nav.t("ok") }}</span>{% else %}<span class="badge badge-warn">{{ nav.t("fix") }}</span>{% endif %} <span>{{ c.1 }}</span></li>{% endfor %}</ul>
+{% if !excludes.is_empty() %}<h3 class="sub-title mt-3">{{ nav.t("ExcludePath") }}</h3><ul class="code-list small">{% for e in excludes %}<li><code>{{ e }}</code></li>{% endfor %}</ul>{% endif %}
 </div></section>{% endif %}
-{% for f in files %}<section class="card mt-3"><div class="card-body">
-<h2 class="h5">{{ f.title }}</h2>
-{% if f.path.is_empty() %}<p class="muted mb-0">{{ nav.t("Not configured. Set") }} <code>{{ f.env }}</code>.</p>
-{% else if let Some(e) = f.error %}<p class="text-danger mb-0">{{ e }}</p>
-{% else %}<p class="small muted"><code>{{ f.path }}</code>{% if !f.modified.is_empty() %} {{ nav.t("· changed") }} {{ f.modified }}{% endif %}</p>
-<div class="table-responsive"><table class="table table-sm small"><thead><tr><th>{{ nav.t("Directive") }}</th><th>{{ nav.t("Value") }}</th></tr></thead><tbody>
-{% for d in f.directives %}<tr><td><code>{{ d.0 }}</code></td><td class="text-break">{{ d.1 }}</td></tr>{% else %}<tr><td colspan="2" class="muted">{{ nav.t("No directives.") }}</td></tr>{% endfor %}
+{% for f in files %}<section class="card mt-3">
+<div class="card-head"><h2 class="card-title"><i class="fas fa-file-alt" aria-hidden="true"></i> {{ f.title }}</h2>{% if !f.path.is_empty() && f.error.is_none() %}<p class="card-sub"><code>{{ f.path }}</code>{% if !f.modified.is_empty() %} {{ nav.t("· changed") }} {{ f.modified }}{% endif %}</p>{% endif %}</div>
+<div class="card-body">
+{% if f.path.is_empty() %}<div class="empty-state empty-inline"><i class="fas fa-file-excel empty-state-icon" aria-hidden="true"></i><p class="empty-state-text">{{ nav.t("Not configured. Set") }} <code>{{ f.env }}</code>.</p></div>
+{% else if let Some(e) = f.error %}<div class="callout callout-danger" role="alert"><i class="fas fa-exclamation-circle callout-icon" aria-hidden="true"></i><div class="callout-body">{{ e }}</div></div>
+{% else %}<div class="table-responsive"><table class="table table-sm small directive-table"><thead><tr><th>{{ nav.t("Directive") }}</th><th>{{ nav.t("Value") }}</th></tr></thead><tbody>
+{% for d in f.directives %}<tr><td><code>{{ d.0 }}</code></td><td class="text-break">{{ d.1 }}</td></tr>{% else %}<tr><td colspan="2" class="text-muted">{{ nav.t("No directives.") }}</td></tr>{% endfor %}
 </tbody></table></div>
-<details><summary class="small">{{ nav.t("Raw file") }}</summary><pre class="small mt-2 mb-0">{{ f.text }}</pre></details>{% endif %}
+<details class="disclosure mt-2"><summary>{{ nav.t("Raw file") }}</summary><div class="code-block mt-2"><pre id="raw-{{ loop.index }}"><code>{{ f.text }}</code></pre><button type="button" class="btn btn-sm code-copy" data-copy="raw-{{ loop.index }}"><i class="fas fa-copy" aria-hidden="true"></i> {{ nav.t("Copy") }}</button></div></details>{% endif %}
 </div></section>{% endfor %}
 {% endblock %}

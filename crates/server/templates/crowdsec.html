@@ -1,39 +1,38 @@
 {% extends "shell.html" %}
 {% block title %}{{ nav.t("CrowdSec · Palisade") }}{% endblock %}
-{% block content %}
+{% block content %}<div class="ops-page">
 {% let tab = "overview" %}{% include "crowdsec_head.html" %}
 {% if status.configured %}
-<div class="d-flex align-items-center gap-2 flex-wrap mb-2"><nav class="seg" aria-label="{{ nav.t("Time range") }}">{% let opts = [("1h", nav.t("1 h")), ("24h", nav.t("24 h")), ("7d", nav.t("7 days")), ("30d", nav.t("30 days"))] %}{% for (v, l) in opts %}<a class="seg-btn{% if range == *v %} active{% endif %}" href="/crowdsec?range={{ v }}"{% if range == *v %} aria-current="page"{% endif %}>{{ l }}</a>{% endfor %}</nav>
+<div class="toolbar"><nav class="seg" aria-label="{{ nav.t("Time range") }}">{% let opts = [("1h", nav.t("1 h")), ("24h", nav.t("24 h")), ("7d", nav.t("7 days")), ("30d", nav.t("30 days"))] %}{% for (v, l) in opts %}<a class="seg-btn{% if range == *v %} active{% endif %}" href="/crowdsec?range={{ v }}"{% if range == *v %} aria-current="page"{% endif %}>{{ l }}</a>{% endfor %}</nav>
 {% if !last_ok.is_empty() %}<span class="small muted">{{ nav.t("read") }} {{ last_ok }} {{ nav.t("ago") }}</span>{% endif %}</div>
-<div id="r-crowdsec" data-refresh-region data-refresh="60">
-<div class="kpi-grid">
-{% for k in kpis %}{% if k.href.is_empty() %}<div class="kpi{% if !k.tone.is_empty() %} kpi-{{ k.tone }}{% endif %}">{% else %}<a class="kpi{% if !k.tone.is_empty() %} kpi-{{ k.tone }}{% endif %}" href="{{ k.href }}">{% endif %}
-<span class="kpi-label">{{ k.label }}</span><strong class="kpi-value">{{ k.value }}</strong>
+<div id="r-crowdsec" class="ops-flow" data-refresh-region data-refresh="60">
+<div class="stat-grid stat-grid-fit">
+{% for k in kpis %}{% if k.href.is_empty() %}<div class="stat{% if !k.tone.is_empty() %} is-{{ k.tone }}{% endif %}">{% else %}<a class="stat{% if !k.tone.is_empty() %} is-{{ k.tone }}{% endif %}" href="{{ k.href }}">{% endif %}
+<span class="stat-label">{{ k.label }}</span><strong class="stat-value">{{ k.value }}</strong>
 {% if k.href.is_empty() %}</div>{% else %}</a>{% endif %}{% endfor %}
 </div>
-<div class="grid-two mt-3 cs-top">
-<section class="card"><div class="card-body"><h2 class="h5">{{ nav.t("Attack map") }}</h2>
-<div class="map-wrap">{{ map|safe }}</div>
-<div class="chart-legend small legend-dot"><span class="lg lg-hit"></span>{{ nav.t("alerts") }} <span class="lg lg-ban"></span>{{ nav.t("banned now · click a dot for that country") }}</div>
-</div></section>
-<section class="card"><div class="card-body"><h2 class="h5">{{ nav.t("Alerts over time") }}</h2>
-<div class="chart-wrap">{{ chart|safe }}</div>
-<div class="chart-legend small"><span class="lg lg-hit"></span>{{ nav.t("alerts") }} <span class="lg lg-ok"></span>{{ nav.t("simulated") }}</div>
-</div></section>
+<div class="ops-grid-2 cs-top">
+<section class="card"><div class="card-head"><h2 class="card-title">{{ nav.t("Attack map") }}</h2>
+<div class="card-actions chart-legend small legend-dot" aria-hidden="true"><span class="lg-item"><span class="lg lg-hit"></span>{{ nav.t("alerts") }}</span><span class="lg-item"><span class="lg lg-ban"></span>{{ nav.t("banned now · click a dot for that country") }}</span></div></div>
+<div class="card-body"><div class="map-wrap">{{ map|safe }}</div></div>
+</section>
+<section class="card"><div class="card-head"><h2 class="card-title">{{ nav.t("Alerts over time") }}</h2>
+<div class="card-actions chart-legend small" aria-hidden="true"><span class="lg-item"><span class="lg lg-hit"></span>{{ nav.t("alerts") }}</span><span class="lg-item"><span class="lg lg-sim"></span>{{ nav.t("simulated") }}</span></div></div>
+<div class="card-body"><div class="chart-wrap">{{ chart|safe }}</div></div>
+</section>
 </div>
-<div class="grid-three mt-3">
+<div class="ops-grid-3 cs-tops">
 {% for (title, list) in self.tops() %}
-<section class="card"><div class="card-body"><h2 class="h6">{{ title }}</h2>
-{% for t in list %}<a class="toprow" href="{{ t.href }}"><span class="toprow-label text-break">{{ t.label }}</span><span class="toprow-n">{{ t.count }}</span><progress value="{{ t.count }}" max="{{ t.max }}"></progress></a>{% else %}<p class="muted small mb-0">{{ nav.t("Nothing in this period.") }}</p>{% endfor %}
+<section class="card"><div class="card-head"><h2 class="card-title">{{ title }}</h2></div><div class="card-body">
+{% for t in list %}<a class="toprow" href="{{ t.href }}"><span class="toprow-label text-break">{{ t.label }}</span><span class="toprow-n">{{ t.count }}</span><progress value="{{ t.count }}" max="{{ t.max }}"></progress></a>{% else %}<p class="ops-empty">{{ nav.t("Nothing in this period.") }}</p>{% endfor %}
 </div></section>{% endfor %}
 </div>
-<section class="card mt-3"><div class="card-body table-responsive">
-<h2 class="h5">{{ nav.t("Latest alerts") }} <a class="small" href="/crowdsec/alerts?range={{ range }}">{{ nav.t("all alerts") }}</a></h2>
-<table class="table table-sm align-middle"><thead><tr><th>{{ nav.t("When") }}</th><th>{{ nav.t("Source") }}</th><th>{{ nav.t("Scenario") }}</th><th>{{ nav.t("Target") }}</th></tr></thead><tbody>
-{% for a in recent %}<tr><td class="small text-nowrap">{{ a.at }}</td><td class="small"><code>{{ a.source }}</code>{% if !a.country.is_empty() %} <span class="badge bg-secondary">{{ a.country }}</span>{% endif %}<div class="muted">{{ a.as_name }}</div></td>
-<td class="small">{{ a.scenario }}{% if a.simulated %} <span class="badge bg-info text-dark">{{ nav.t("simulated") }}</span>{% endif %}</td><td class="small">{{ a.machine }}</td></tr>
-{% else %}<tr><td colspan="4" class="muted">{{ nav.t("No alerts in this period.") }}</td></tr>{% endfor %}
+<section class="card"><div class="card-head"><h2 class="card-title">{{ nav.t("Latest alerts") }}</h2><div class="card-actions"><a class="btn btn-sm btn-outline-secondary" href="/crowdsec/alerts?range={{ range }}">{{ nav.t("all alerts") }}</a></div></div>
+<div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>{{ nav.t("When") }}</th><th>{{ nav.t("Source") }}</th><th>{{ nav.t("Scenario") }}</th><th>{{ nav.t("Target") }}</th></tr></thead><tbody>
+{% for a in recent %}<tr><td class="small text-nowrap">{{ a.at }}</td><td class="small"><code>{{ a.source }}</code>{% if !a.country.is_empty() %} <span class="badge badge-muted">{{ a.country }}</span>{% endif %}<div class="muted">{{ a.as_name }}</div></td>
+<td class="small">{{ a.scenario }}{% if a.simulated %} <span class="badge badge-info">{{ nav.t("simulated") }}</span>{% endif %}</td><td class="small">{{ a.machine }}</td></tr>
+{% else %}<tr><td colspan="4"><div class="empty-state empty-state-sm"><i class="fas fa-check-circle empty-state-icon" aria-hidden="true"></i><p class="empty-state-text">{{ nav.t("No alerts in this period.") }}</p></div></td></tr>{% endfor %}
 </tbody></table></div></section>
 </div>
 {% endif %}
-{% endblock %}
+</div>{% endblock %}

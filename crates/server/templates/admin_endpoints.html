@@ -1,46 +1,49 @@
 {% extends "shell.html" %}
 {% block title %}{{ nav.t("clamd Endpoints · Palisade") }}{% endblock %}
 {% block content %}
-<h1 class="h3">{{ nav.t("clamd endpoints") }}</h1>
-<section class="card mt-3"><div class="card-body">
-<h2 class="h5">{{ nav.t("Add endpoint") }}</h2>
-<form method="post" action="/admin/endpoints" class="row g-2 align-items-end">
+<div class="page-head"><div class="page-head-text"><h1 class="page-title">{{ nav.t("clamd endpoints") }}</h1>
+<p class="page-sub">{{ nav.t("Manual scans and schedules use the default endpoint unless they name another.") }}</p></div></div>
+<details class="card add-panel mt-3" id="add-endpoint"{% if nav.error.is_some() %} open{% endif %}>
+<summary class="card-head"><h2 class="card-title"><i class="fas fa-plus" aria-hidden="true"></i> {{ nav.t("Add endpoint") }}</h2>
+<span class="card-sub">{% if allowlist.is_empty() %}{{ nav.t("Only the host of CLAMD_ENDPOINT is allowed. Set CLAMD_HOST_ALLOWLIST to add others.") }}{% else %}{{ nav.t("Allowed hosts:") }} <code>{{ allowlist }}</code>{% endif %}</span><i class="fas fa-chevron-down add-panel-chevron" aria-hidden="true"></i></summary>
+<div class="card-body">
+<form method="post" action="/admin/endpoints" class="form-stack">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
-<div class="col-md-3"><label class="form-label" for="en">{{ nav.t("Name") }}</label><input class="form-control" id="en" name="name" required maxlength="64" autocomplete="off"></div>
-<div class="col-md-5"><label class="form-label" for="ea">{{ nav.t("Address") }}</label><input class="form-control" id="ea" name="address" required maxlength="512" placeholder="{{ nav.t("tcp://clamav:3310") }}" autocomplete="off"><div class="form-text">tcp://host:3310 {{ nav.t("or") }} unix:///run/clamav/clamd.sock</div></div>
-<div class="col-md-2"><label class="form-check-label small"><input class="form-check-input" type="checkbox" name="make_default" value="1"> {{ nav.t("make default") }}</label></div>
-<div class="col-md-2"><button class="btn btn-primary w-100" type="submit">{{ nav.t("Add") }}</button></div>
+<div class="form-grid">
+<div class="field"><label class="form-label" for="en">{{ nav.t("Name") }}</label><input class="form-control" id="en" name="name" required maxlength="64" autocomplete="off"></div>
+<div class="field field-wide"><label class="form-label" for="ea">{{ nav.t("Address") }}</label><input class="form-control" id="ea" name="address" required maxlength="512" placeholder="{{ nav.t("tcp://clamav:3310") }}" autocomplete="off" aria-describedby="ea-help"><div class="form-text" id="ea-help"><code>tcp://host:3310</code> {{ nav.t("or") }} <code>unix:///run/clamav/clamd.sock</code></div></div>
+</div>
+<label class="form-check"><input class="form-check-input" type="checkbox" name="make_default" value="1"> {{ nav.t("make default") }}</label>
+<div class="form-actions"><button class="btn btn-primary" type="submit"><i class="fas fa-plus" aria-hidden="true"></i> {{ nav.t("Add") }}</button></div>
 </form>
-{% if allowlist.is_empty() %}<p class="muted small mt-2">{{ nav.t("Only the host of CLAMD_ENDPOINT is allowed. Set CLAMD_HOST_ALLOWLIST to add others.") }}</p>
-{% else %}<p class="muted small mt-2">{{ nav.t("Allowed hosts:") }} <code>{{ allowlist }}</code></p>{% endif %}
-</div></section>
-<section class="card mt-3"><div class="card-body table-responsive">
+</div></details>
+<section class="card mt-3">
+<div class="table-responsive">
 <table class="table align-middle">
 <thead><tr><th>{{ nav.t("Name") }}</th><th>{{ nav.t("Address") }}</th><th>{{ nav.t("Enabled") }}</th><th><span class="visually-hidden">{{ nav.t("Actions") }}</span></th></tr></thead>
 <tbody>
 {% for e in endpoints %}
 <tr>
-<td><strong>{{ e.name }}</strong>{% if e.is_default %} <span class="badge bg-primary">{{ nav.t("default") }}</span>{% endif %}</td>
+<td><strong>{{ e.name }}</strong>{% if e.is_default %} <span class="badge badge-accent">{{ nav.t("default") }}</span>{% endif %}</td>
 <td><code>{{ e.address }}</code></td>
-<td>{% if e.is_default %}<span class="muted small">{{ nav.t("always") }}</span>{% else %}<form method="post" action="/admin/endpoints/{{ e.id }}/enabled" class="d-flex gap-2 align-items-center">
+<td>{% if e.is_default %}<span class="text-muted small">{{ nav.t("always") }}</span>{% else %}<form method="post" action="/admin/endpoints/{{ e.id }}/enabled" class="inline-form inline-form-sm">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
-<label class="form-check-label small"><input class="form-check-input" type="checkbox" name="enabled" value="1"{% if e.enabled %} checked{% endif %}> {{ nav.t("enabled") }}</label>
+<label class="form-check form-check-inline small"><input class="form-check-input" type="checkbox" name="enabled" value="1"{% if e.enabled %} checked{% endif %}> {{ nav.t("enabled") }}</label>
 <button class="btn btn-sm btn-outline-primary" type="submit">{{ nav.t("Save") }}</button></form>{% endif %}</td>
-<td><div class="d-flex gap-2 flex-wrap">
+<td><div class="row-actions">
+<form method="post" action="/admin/endpoints/{{ e.id }}/test"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-secondary" type="submit" title="{{ nav.t("Checks that clamd answers and flags the harmless EICAR test file") }}"><i class="fas fa-vial" aria-hidden="true"></i> {{ nav.t("Test") }}</button></form>
 <details class="edit"><summary class="btn btn-sm btn-outline-secondary">{{ nav.t("Edit") }}</summary>
 <form method="post" action="/admin/endpoints/{{ e.id }}/edit" class="edit-form">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
 <label class="form-label" for="en-{{ e.id }}">{{ nav.t("Name") }}</label><input class="form-control form-control-sm" id="en-{{ e.id }}" name="name" required maxlength="64" value="{{ e.name }}" autocomplete="off">
 <label class="form-label mt-2" for="ea-{{ e.id }}">{{ nav.t("Address") }}</label><input class="form-control form-control-sm" id="ea-{{ e.id }}" name="address" required maxlength="512" value="{{ e.address }}" autocomplete="off">
-<div class="mt-2"><button class="btn btn-sm btn-primary" type="submit">{{ nav.t("Save") }}</button></div>
+<div class="edit-actions"><button class="btn btn-sm btn-primary" type="submit">{{ nav.t("Save") }}</button></div>
 </form></details>
-<form method="post" action="/admin/endpoints/{{ e.id }}/test"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-secondary" type="submit" title="{{ nav.t("Checks that clamd answers and flags the harmless EICAR test file") }}">{{ nav.t("Test") }}</button></form>
 {% if !e.is_default %}<form method="post" action="/admin/endpoints/{{ e.id }}/default"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-secondary" type="submit">{{ nav.t("Make default") }}</button></form>
-<form method="post" action="/admin/endpoints/{{ e.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">{{ nav.t("Delete") }}</button></form>{% endif %}
+<details class="confirm"><summary class="btn btn-sm btn-outline-danger"><i class="fas fa-trash-alt" aria-hidden="true"></i> {{ nav.t("Delete") }}</summary><div class="confirm-box"><p>{{ nav.t("Delete") }} {{ e.name }}{{ nav.t("? This can't be undone.") }}</p><form method="post" action="/admin/endpoints/{{ e.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-danger" type="submit">{{ nav.t("Delete endpoint") }}</button></form></div></details>{% endif %}
 </div></td>
 </tr>
 {% endfor %}
 </tbody></table>
-<p class="muted small">{{ nav.t("Manual scans and schedules use the default endpoint unless they name another.") }}</p>
 </div></section>
 {% endblock %}

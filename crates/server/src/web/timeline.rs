@@ -51,11 +51,11 @@ struct TimelinePage {
 impl TimelinePage {
     fn sensor_class(&self, s: &str) -> &'static str {
         match s {
-            "ClamAV" => "bg-danger",
-            "Canary" => "bg-warning text-dark",
-            "Integrity" => "bg-info text-dark",
-            "CrowdSec" => "bg-primary",
-            _ => "bg-secondary",
+            "ClamAV" => "badge-danger",
+            "Canary" => "badge-warn",
+            "Integrity" => "badge-info",
+            "CrowdSec" => "badge-accent",
+            _ => "badge-muted",
         }
     }
 }

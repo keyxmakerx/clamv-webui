@@ -1,10 +1,10 @@
 {% extends "shell.html" %}
 {% block title %}{{ nav.t("Audit log · Palisade") }}{% endblock %}
 {% block content %}
-<div class="page-head"><h1 class="h3">{{ nav.t("Audit log") }}</h1><span class="muted small">{{ total }} {{ nav.t("event(s)") }}</span>
-<a class="btn btn-sm btn-outline-secondary ms-auto" href="{{ self.csv_link() }}"><i class="fas fa-file-csv" aria-hidden="true"></i> {{ nav.t("Export CSV") }}</a></div>
-<p class="muted">{{ nav.t("Every event is also written to the container log. The export holds up to 10,000 events.") }}</p>
-<form method="get" action="/admin/audit" class="filter-bar" data-remember="audit">
+<div class="page-head"><div class="page-head-text"><h1 class="page-title">{{ nav.t("Audit log") }} <span class="page-count tabular">{{ total }} {{ nav.t("event(s)") }}</span></h1>
+<p class="page-sub">{{ nav.t("Every event is also written to the container log. The export holds up to 10,000 events.") }}</p></div>
+<div class="page-actions"><a class="btn btn-outline-secondary" href="{{ self.csv_link() }}"><i class="fas fa-file-csv" aria-hidden="true"></i> {{ nav.t("Export CSV") }}</a></div></div>
+<form method="get" action="/admin/audit" class="filter-bar toolbar" data-remember="audit">
 <div class="filter-search"><i class="fas fa-search" aria-hidden="true"></i>
 <input class="form-control" type="search" name="q" value="{{ q.q }}" maxlength="256" placeholder="{{ nav.t("Search user, action, details, address or job") }}" aria-label="{{ nav.t("Search the audit log") }}"></div>
 <div class="filter-chips">
@@ -16,17 +16,19 @@
 <a class="btn btn-sm btn-outline-secondary" href="/admin/audit?reset=1" data-forget="audit">{{ nav.t("Clear") }}</a>
 </div>
 </form>
-<section class="card mt-3"><div class="card-body table-responsive">
-<table class="table table-sm">
+<section class="card mt-3">
+<div class="table-responsive">
+<table class="table table-sm table-sticky audit-table">
 <thead><tr><th>{{ nav.t("Time") }}</th><th>{{ nav.t("User") }}</th><th>{{ nav.t("Action") }}</th><th>{{ nav.t("Outcome") }}</th><th>{{ nav.t("Details") }}</th><th>IP</th></tr></thead>
 <tbody>
-{% for r in rows %}<tr><td class="small text-nowrap">{{ r.at }}</td><td>{{ r.user }}</td><td><code>{{ r.action }}</code></td><td>{{ r.outcome }}</td><td class="small text-break">{{ r.details }}</td><td class="small">{{ r.ip }}</td></tr>
-{% else %}<tr><td colspan="6" class="muted">{{ nav.t("No events match.") }}</td></tr>{% endfor %}
+{% for r in rows %}<tr><td class="small text-nowrap tabular">{{ r.at }}</td><td>{{ r.user }}</td><td><code>{{ r.action }}</code></td><td>{% if r.outcome.is_empty() %}<span class="text-muted">-</span>{% else %}<span class="badge {{ self.outcome_badge(r.outcome.as_str()) }}">{{ r.outcome }}</span>{% endif %}</td><td class="small text-break">{{ r.details }}</td><td class="small tabular">{{ r.ip }}</td></tr>
+{% else %}<tr><td colspan="6"><div class="empty-state empty-inline"><i class="fas fa-search empty-state-icon" aria-hidden="true"></i><p class="empty-state-title">{{ nav.t("No events match.") }}</p><p class="empty-state-text"><a href="/admin/audit?reset=1" data-forget="audit">{{ nav.t("Clear the filters") }}</a></p></div></td></tr>{% endfor %}
 </tbody></table>
-{% if pages > 1 %}<nav aria-label="{{ nav.t("Pages") }}" class="d-flex gap-2 align-items-center">
-{% if page > 0 %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page - 1) }}">{{ nav.t("Newer") }}</a>{% endif %}
-<span class="small muted">{{ nav.t("Page") }} {{ page + 1 }} {{ nav.t("of") }} {{ pages }}</span>
-{% if page + 1 < pages %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page + 1) }}">{{ nav.t("Older") }}</a>{% endif %}
+</div>
+{% if pages > 1 %}<nav aria-label="{{ nav.t("Pages") }}" class="pager">
+{% if page > 0 %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page - 1) }}"><i class="fas fa-chevron-left" aria-hidden="true"></i> {{ nav.t("Newer") }}</a>{% endif %}
+<span class="small text-muted tabular">{{ nav.t("Page") }} {{ page + 1 }} {{ nav.t("of") }} {{ pages }}</span>
+{% if page + 1 < pages %}<a class="btn btn-sm btn-outline-secondary" href="{{ self.link(page + 1) }}">{{ nav.t("Older") }} <i class="fas fa-chevron-right" aria-hidden="true"></i></a>{% endif %}
 </nav>{% endif %}
-</div></section>
+</section>
 {% endblock %}

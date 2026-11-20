@@ -1,76 +1,98 @@
 {% extends "shell.html" %}
 {% block title %}{{ nav.t("Dashboard · Palisade") }}{% endblock %}
-{% block content %}
-<div class="page-head"><h1 class="h3">{{ nav.t("Dashboard") }}</h1>
-<nav class="seg" aria-label="{{ nav.t("Time range") }}">{% let opts = [("24h", nav.t("24 h")), ("7d", nav.t("7 days")), ("30d", nav.t("30 days"))] %}{% for (v, l) in opts %}<a class="seg-btn{% if range == *v %} active{% endif %}" href="/dashboard?range={{ v }}"{% if range == *v %} aria-current="page"{% endif %}>{{ l }}</a>{% endfor %}</nav></div>
-{% if let Some(b) = setup %}<div class="alert alert-warning d-flex align-items-center flex-wrap gap-2 setup-banner" role="status"><i class="fa-solid fa-clipboard-check" aria-hidden="true"></i><span><a class="alert-link" href="/admin/setup">{{ b.text() }}</a> <span class="small">({{ b.titles }})</span></span>
-<form method="post" action="/admin/setup/dismiss" class="ms-auto"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-secondary" type="submit">Hide until something new comes up</button></form></div>{% endif %}
-{% if let Some(up) = update %}<div class="alert alert-info d-flex align-items-center gap-2"><i class="fa-solid fa-circle-up" aria-hidden="true"></i><span>{{ nav.t("Version") }} {{ up.version }} {{ nav.t("is out (running") }} {{ crate::VERSION }}).</span><a href="{{ up.url }}" rel="noopener noreferrer" target="_blank">{{ nav.t("Release notes") }}</a></div>{% endif %}
-<div id="r-dash" data-refresh-region data-refresh="60">
-<div class="kpi-grid">
-{% for k in kpis %}{% if k.href.is_empty() %}<div class="kpi kpi-{{ k.tone }}">{% else %}<a class="kpi kpi-{{ k.tone }}" href="{{ k.href }}">{% endif %}
-<span class="kpi-label">{{ k.label }}</span><strong class="kpi-value">{{ k.value }}</strong>{% if !k.delta.is_empty() %}<span class="kpi-delta">{{ k.delta }}</span>{% endif %}
+{% block content %}<div class="ops-page">
+<div class="page-head"><div class="page-head-text"><h1 class="page-title">{{ nav.t("Dashboard") }}</h1>
+<p class="page-sub">{{ nav.t("Is everything OK? Scanner health, detections and activity across this server and every agent.") }}</p></div>
+<div class="page-actions"><nav class="seg" aria-label="{{ nav.t("Time range") }}">{% let opts = [("24h", nav.t("24 h")), ("7d", nav.t("7 days")), ("30d", nav.t("30 days"))] %}{% for (v, l) in opts %}<a class="seg-btn{% if range == *v %} active{% endif %}" href="/dashboard?range={{ v }}"{% if range == *v %} aria-current="page"{% endif %}>{{ l }}</a>{% endfor %}</nav>
+{% if nav.is_operator %}<a class="btn btn-primary" href="/scan"><i class="fas fa-search" aria-hidden="true"></i> {{ nav.t("New scan") }}</a>{% endif %}</div></div>
+{% if let Some(b) = setup %}<div class="callout callout-warn setup-banner" role="status"><i class="fas fa-clipboard-check callout-icon" aria-hidden="true"></i><div class="callout-body"><a href="/admin/setup">{{ b.text() }}</a> <span class="small">({{ b.titles }})</span></div>
+<form method="post" action="/admin/setup/dismiss" class="callout-actions"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-secondary" type="submit">Hide until something new comes up</button></form></div>{% endif %}
+{% if let Some(up) = update %}<div class="callout callout-info"><i class="fas fa-arrow-circle-up callout-icon" aria-hidden="true"></i><div class="callout-body">{{ nav.t("Version") }} {{ up.version }} {{ nav.t("is out (running") }} {{ crate::VERSION }}). <a href="{{ up.url }}" rel="noopener noreferrer" target="_blank">{{ nav.t("Release notes") }}</a></div></div>{% endif %}
+<div id="r-dash" class="ops-flow" data-refresh-region data-refresh="60">
+{% let overall = self.overall() %}{% let issues = self.issues() %}{% let (up, enabled) = self.scanners() %}
+<section class="dash-status is-{{ overall }}" aria-labelledby="dash-status-title">
+<div class="dash-status-head"><span class="dash-status-icon" aria-hidden="true"><i class="fas {% if overall == "ok" %}fa-check{% else if overall == "warn" %}fa-exclamation{% else %}fa-exclamation-triangle{% endif %}"></i></span>
+<div><h2 class="dash-status-title" id="dash-status-title">{% if issues == 0 %}{{ nav.t("All clear") }}{% else if issues == 1 %}{{ nav.t("1 check needs attention") }}{% else %}{{ issues }} {{ nav.t("checks need attention") }}{% endif %}</h2>
+<p class="dash-status-sub">{% if range == "7d" %}{{ nav.t("Last 7 days") }}{% else if range == "30d" %}{{ nav.t("Last 30 days") }}{% else %}{{ nav.t("Last 24 h") }}{% endif %} · {{ nav.t("scanners, detections, failed scans and the EICAR control") }}{% if agents_total > 0 %} · {{ nav.t("agents") }}{% endif %}</p></div></div>
+<ul class="dash-checks">
+{% let t = self.scanner_tone() %}<li><a class="dash-check is-{{ t }}" href="/clamd"><span class="dash-check-label"><i class="fas fa-server" aria-hidden="true"></i> {{ nav.t("Scanners") }}</span>
+<span class="dash-check-value">{{ up }}<span class="dash-check-of"> / {{ enabled }}</span></span>
+<span class="dash-check-note"><span class="status-dot is-{{ t }}" aria-hidden="true"></span>{% if enabled == 0 %}{{ nav.t("No endpoint configured") }}{% else if up < enabled %}{{ enabled - up }} {{ nav.t("unreachable") }}{% else if self.stale() > 0 %}{{ nav.t("Signatures out of date") }}{% else %}{{ nav.t("Reachable, signatures current") }}{% endif %}</span></a></li>
+{% let t = self.hits_tone() %}<li><a class="dash-check is-{{ t }}"{% if nav.is_operator %} href="/detections?range={{ range }}"{% endif %}><span class="dash-check-label"><i class="fas fa-biohazard" aria-hidden="true"></i> {{ nav.t("Detections") }}</span>
+<span class="dash-check-value">{{ hits }}</span>
+<span class="dash-check-note"><span class="status-dot is-{{ t }}" aria-hidden="true"></span>{% if hits > 0 %}{{ nav.t("Infected files to review") }}{% else %}{{ nav.t("Nothing found") }}{% endif %}</span></a></li>
+{% let t = self.failed_tone() %}<li><a class="dash-check is-{{ t }}"{% if nav.is_operator %} href="/jobs?range={{ range }}&amp;verdict=ERROR"{% endif %}><span class="dash-check-label"><i class="fas fa-times-circle" aria-hidden="true"></i> {{ nav.t("Failed scans") }}</span>
+<span class="dash-check-value">{{ failed }}</span>
+<span class="dash-check-note"><span class="status-dot is-{{ t }}" aria-hidden="true"></span>{% if failed > 0 %}{{ nav.t("Results may be incomplete") }}{% else %}{{ nav.t("No failures") }}{% endif %}</span></a></li>
+{% let t = self.control_tone() %}<li><a class="dash-check is-{{ t }}"{% if nav.is_admin %} href="/admin/schedules"{% endif %}><span class="dash-check-label"><i class="fas fa-vial" aria-hidden="true"></i> {{ nav.t("EICAR control") }}</span>
+<span class="dash-check-value">{% if controls.is_empty() %}–{% else %}{{ controls.len() - self.controls_failed() }}<span class="dash-check-of"> / {{ controls.len() }}</span>{% endif %}</span>
+<span class="dash-check-note"><span class="status-dot is-{{ t }}" aria-hidden="true"></span>{% if controls.is_empty() %}{{ nav.t("Not scheduled") }}{% else if self.controls_failed() > 0 %}{{ nav.t("Failed, scan results cannot be trusted") }}{% else %}{{ nav.t("Passing") }}{% endif %}</span></a></li>
+{% if agents_total > 0 %}{% let t = self.agents_tone() %}<li><a class="dash-check is-{{ t }}"{% if nav.is_admin %} href="/admin/agents"{% endif %}><span class="dash-check-label"><i class="fas fa-network-wired" aria-hidden="true"></i> {{ nav.t("Agents") }}</span>
+<span class="dash-check-value">{{ agents_online }}<span class="dash-check-of"> / {{ agents_total }}</span></span>
+<span class="dash-check-note"><span class="status-dot is-{{ t }}" aria-hidden="true"></span>{% if agents_online < agents_enabled %}{{ agents_enabled - agents_online }} {{ nav.t("offline") }}{% else %}{{ nav.t("All online") }}{% endif %}</span></a></li>{% endif %}
+</ul>
+</section>
+{% if nav.is_operator && !recent_hits.is_empty() %}<section class="card">
+<div class="card-head"><h2 class="card-title">{{ nav.t("Latest detections") }}</h2><div class="card-actions"><a class="btn btn-sm btn-outline-secondary" href="/detections">{{ nav.t("all detections") }}</a></div></div>
+<div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th>{{ nav.t("Found") }}</th><th>{{ nav.t("File") }}</th><th>{{ nav.t("Signature") }}</th><th>{{ nav.t("Host") }}</th></tr></thead><tbody>
+{% for d in recent_hits %}<tr><td class="small text-nowrap"><a href="/jobs/{{ d.job_id }}">{{ d.at }}</a></td><td class="small path">{{ crate::web::wbr(d.path)|safe }}</td><td><span class="sig-text">{{ d.signature }}</span></td><td class="small">{{ d.host }}</td></tr>{% endfor %}
+</tbody></table></div></section>{% endif %}
+<h2 class="ops-kicker">{{ nav.t("Trends") }}</h2>
+<div class="stat-grid stat-grid-fit">
+{% for k in kpis %}{% if k.href.is_empty() %}<div class="stat{% if !k.tone.is_empty() %} is-{{ k.tone }}{% endif %}">{% else %}<a class="stat{% if !k.tone.is_empty() %} is-{{ k.tone }}{% endif %}" href="{{ k.href }}">{% endif %}
+<span class="stat-label">{{ k.label }}</span><strong class="stat-value">{{ k.value }}</strong>{% if !k.delta.is_empty() %}<span class="stat-delta">{{ k.delta }}</span>{% endif %}
 {% if k.href.is_empty() %}</div>{% else %}</a>{% endif %}{% endfor %}
 </div>
-<section class="card mt-3"><div class="card-body">
-<div class="d-flex justify-content-between align-items-center flex-wrap gap-2"><h2 class="h5 mb-0">{{ nav.t("Activity") }}</h2>
-<div class="chart-legend small"><span class="lg lg-ok"></span>{{ nav.t("clean") }} <span class="lg lg-hit"></span>{{ nav.t("detections") }} <span class="lg lg-err"></span>{{ nav.t("failed") }}</div></div>
-<div class="chart-wrap">{{ chart|safe }}</div>
-{% if nav.is_operator %}<p class="small muted mb-0">{{ nav.t("Click a bar to see those jobs.") }}</p>{% endif %}
-</div></section>
+<section class="card">
+<div class="card-head"><h2 class="card-title">{{ nav.t("Activity") }}</h2>
+<div class="card-actions chart-legend small" aria-hidden="true"><span class="lg-item"><span class="lg lg-ok"></span>{{ nav.t("clean") }}</span><span class="lg-item"><span class="lg lg-hit"></span>{{ nav.t("detections") }}</span><span class="lg-item"><span class="lg lg-err"></span>{{ nav.t("failed") }}</span></div></div>
+<div class="card-body"><div class="chart-wrap">{{ chart|safe }}</div>
+{% if nav.is_operator %}<p class="chart-note">{{ nav.t("Click a bar to see those jobs.") }}</p>{% endif %}</div>
+</section>
 {% if nav.is_operator %}
-<div class="grid-three mt-3">
-<section class="card"><div class="card-body"><h2 class="h6">{{ nav.t("Top signatures") }}</h2>
-{% for t in top_sigs %}<a class="toprow" href="{{ t.href }}"><span class="toprow-label text-break">{{ t.label }}</span><span class="toprow-n">{{ t.count }}</span><progress value="{{ t.count }}" max="{{ t.max }}"></progress></a>{% else %}<p class="muted small mb-0">{{ nav.t("Nothing found in this period.") }}</p>{% endfor %}
+<div class="ops-grid-3">
+<section class="card"><div class="card-head"><h2 class="card-title">{{ nav.t("Top signatures") }}</h2></div><div class="card-body">
+{% for t in top_sigs %}<a class="toprow" href="{{ t.href }}"><span class="toprow-label text-break">{{ t.label }}</span><span class="toprow-n">{{ t.count }}</span><progress value="{{ t.count }}" max="{{ t.max }}"></progress></a>{% else %}<p class="ops-empty"><i class="fas fa-check" aria-hidden="true"></i> {{ nav.t("Nothing found in this period.") }}</p>{% endfor %}
 </div></section>
-<section class="card"><div class="card-body"><h2 class="h6">{{ nav.t("Folders with detections") }}</h2>
-{% for t in top_folders %}<a class="toprow" href="{{ t.href }}"><span class="toprow-label text-break">{{ t.label }}</span><span class="toprow-n">{{ t.count }}</span><progress value="{{ t.count }}" max="{{ t.max }}"></progress></a>{% else %}<p class="muted small mb-0">{{ nav.t("Nothing found in this period.") }}</p>{% endfor %}
+<section class="card"><div class="card-head"><h2 class="card-title">{{ nav.t("Folders with detections") }}</h2></div><div class="card-body">
+{% for t in top_folders %}<a class="toprow" href="{{ t.href }}"><span class="toprow-label text-break">{{ t.label }}</span><span class="toprow-n">{{ t.count }}</span><progress value="{{ t.count }}" max="{{ t.max }}"></progress></a>{% else %}<p class="ops-empty"><i class="fas fa-check" aria-hidden="true"></i> {{ nav.t("Nothing found in this period.") }}</p>{% endfor %}
 </div></section>
-<section class="card"><div class="card-body"><h2 class="h6">{{ nav.t("Hosts with detections") }}</h2>
-{% for t in top_hosts %}<a class="toprow" href="{{ t.href }}"><span class="toprow-label">{{ t.label }}</span><span class="toprow-n">{{ t.count }}</span><progress value="{{ t.count }}" max="{{ t.max }}"></progress></a>{% else %}<p class="muted small mb-0">{{ nav.t("Nothing found in this period.") }}</p>{% endfor %}
+<section class="card"><div class="card-head"><h2 class="card-title">{{ nav.t("Hosts with detections") }}</h2></div><div class="card-body">
+{% for t in top_hosts %}<a class="toprow" href="{{ t.href }}"><span class="toprow-label">{{ t.label }}</span><span class="toprow-n">{{ t.count }}</span><progress value="{{ t.count }}" max="{{ t.max }}"></progress></a>{% else %}<p class="ops-empty"><i class="fas fa-check" aria-hidden="true"></i> {{ nav.t("Nothing found in this period.") }}</p>{% endfor %}
 </div></section>
 </div>
-{% if !recent_hits.is_empty() %}<section class="card mt-3"><div class="card-body table-responsive">
-<h2 class="h5">{{ nav.t("Latest detections") }} <a class="small" href="/detections">{{ nav.t("all detections") }}</a></h2>
-<table class="table table-sm align-middle"><thead><tr><th>{{ nav.t("Found") }}</th><th>{{ nav.t("File") }}</th><th>{{ nav.t("Signature") }}</th><th>{{ nav.t("Host") }}</th></tr></thead><tbody>
-{% for d in recent_hits %}<tr><td class="small text-nowrap"><a href="/jobs/{{ d.job_id }}">{{ d.at }}</a></td><td class="small path">{{ crate::web::wbr(d.path)|safe }}</td><td><span class="badge bg-danger">{{ d.signature }}</span></td><td class="small">{{ d.host }}</td></tr>{% endfor %}
-</tbody></table></div></section>{% endif %}
 {% endif %}
-<div class="grid-two mt-3">
-<section class="card"><div class="card-body table-responsive">
-<h2 class="h5">{{ nav.t("clamd endpoints") }}</h2>
-{% if endpoints.is_empty() %}<p class="muted">{{ nav.t("No endpoints configured.") }}</p>{% else %}
-<table class="table align-middle">
-<thead><tr><th>{{ nav.t("Name") }}</th><th>{{ nav.t("Status") }}</th></tr></thead>
-<tbody>
+<div class="ops-grid-2">
+<section class="card"><div class="card-head"><h2 class="card-title">{{ nav.t("clamd endpoints") }}</h2></div>
+{% if endpoints.is_empty() %}<div class="card-body"><p class="ops-empty">{{ nav.t("No endpoints configured.") }}</p></div>{% else %}
+<ul class="ops-list">
 {% for (e, age, stale) in endpoints %}
-<tr><td><strong>{{ e.name }}</strong>{% if e.is_default %} <span class="badge bg-primary">{{ nav.t("default") }}</span>{% endif %}<div class="small muted"><code>{{ e.address }}</code></div></td>
-<td>{% match e.status %}
-{% when Status::Up with (v) %}<span class="badge bg-success">{{ nav.t("reachable") }}</span> <span class="small">{{ v }}</span>{% if !age.is_empty() %}<div class="small{% if *stale %} text-danger{% else %} muted{% endif %}">{{ age }}{% if *stale %}{{ nav.t(": check freshclam") }}{% endif %}</div>{% endif %}
-{% when Status::Down with (m) %}<span class="badge bg-danger">{{ nav.t("unreachable") }}</span> <span class="small">{{ m }}</span>
-{% when Status::Disabled %}<span class="badge bg-secondary">{{ nav.t("disabled") }}</span>
-{% endmatch %}</td></tr>
+<li class="ops-list-row"><div class="ops-list-main"><strong>{{ e.name }}</strong>{% if e.is_default %} <span class="badge badge-accent">{{ nav.t("default") }}</span>{% endif %}<div class="small muted"><code>{{ e.address }}</code></div></div>
+<div class="ops-list-side">{% match e.status %}
+{% when Status::Up with (v) %}<span class="badge badge-ok">{{ nav.t("reachable") }}</span> <span class="small muted">{{ v }}</span>{% if !age.is_empty() %}<div class="small{% if *stale %} text-danger{% else %} muted{% endif %}">{{ age }}{% if *stale %}{{ nav.t(": check freshclam") }}{% endif %}</div>{% endif %}
+{% when Status::Down with (m) %}<span class="badge badge-danger">{{ nav.t("unreachable") }}</span> <span class="small muted">{{ m }}</span>
+{% when Status::Disabled %}<span class="badge badge-muted">{{ nav.t("disabled") }}</span>
+{% endmatch %}</div></li>
 {% endfor %}
-</tbody></table>{% endif %}
-</div></section>
-<section class="card"><div class="card-body">
-<h2 class="h5">{{ nav.t("EICAR checks") }}</h2>
-{% if controls.is_empty() %}<p class="muted mb-0">{{ nav.t("No schedule runs the EICAR control yet.") }}</p>{% else %}
-<ul class="mb-0">{% for (name, at, ok) in controls %}<li><strong>{{ name }}</strong>: {% if *ok %}<span class="text-success">{{ nav.t("detected") }}</span>{% else %}<span class="text-danger">{{ nav.t("failed, scan results cannot be trusted") }}</span>{% endif %} <span class="small muted">{{ at }}</span></li>{% endfor %}</ul>{% endif %}
+</ul>{% endif %}
+</section>
+<section class="card"><div class="card-head"><h2 class="card-title">{{ nav.t("EICAR checks") }}</h2></div><div class="card-body">
+{% if controls.is_empty() %}<p class="ops-empty">{{ nav.t("No schedule runs the EICAR control yet.") }}</p>{% else %}
+<ul class="ops-list ops-list-flush">{% for (name, at, ok) in controls %}<li class="ops-list-row"><div class="ops-list-main"><strong>{{ name }}</strong><div class="small muted">{{ at }}</div></div><div class="ops-list-side">{% if *ok %}<span class="badge badge-ok">{{ nav.t("detected") }}</span>{% else %}<span class="badge badge-danger">{{ nav.t("failed, scan results cannot be trusted") }}</span>{% endif %}</div></li>{% endfor %}</ul>{% endif %}
 </div></section>
 </div>
-{% if nav.is_operator %}<section class="card mt-3"><div class="card-body table-responsive">
-<h2 class="h5">{{ nav.t("Recent jobs") }} <a class="small" href="/jobs">{{ nav.t("all jobs") }}</a></h2>
-<table class="table table-sm align-middle">
+{% if nav.is_operator %}<section class="card">
+<div class="card-head"><h2 class="card-title">{{ nav.t("Recent jobs") }}</h2><div class="card-actions"><a class="btn btn-sm btn-outline-secondary" href="/jobs">{{ nav.t("all jobs") }}</a></div></div>
+<div class="table-responsive"><table class="table table-sm align-middle">
 <thead><tr><th>{{ nav.t("Submitted") }}</th><th>{{ nav.t("Type") }}</th><th>{{ nav.t("Target") }}</th><th>{{ nav.t("Result") }}</th></tr></thead>
 <tbody>
 {% for r in recent %}<tr>
 <td class="small text-nowrap"><a href="/jobs/{{ r.id }}">{{ r.submitted }}</a></td>
-<td>{{ r.kind }}</td>
+<td><span class="kind">{{ r.kind }}</span></td>
 <td class="small path">{{ crate::web::wbr(r.target)|safe }}</td>
-<td>{% if r.verdict.is_empty() %}<span class="badge bg-secondary">{{ r.status }}</span>{% else %}<span class="badge {{ self.badge(r.verdict) }}">{{ r.verdict }}</span>{% endif %}{% if !r.signatures.is_empty() %} <span class="small">{{ r.signatures }}</span>{% endif %}</td>
+<td>{% if r.verdict.is_empty() %}<span class="badge badge-muted">{{ r.status }}</span>{% else %}<span class="badge {{ self.badge(r.verdict) }}">{{ r.verdict }}</span>{% endif %}{% if !r.signatures.is_empty() %} <span class="small">{{ r.signatures }}</span>{% endif %}</td>
 </tr>{% else %}<tr><td colspan="4" class="muted">{{ nav.t("No jobs yet.") }}</td></tr>{% endfor %}
-</tbody></table>
-</div></section>{% endif %}
+</tbody></table></div>
+</section>{% endif %}
 </div>
-{% endblock %}
+</div>{% endblock %}
