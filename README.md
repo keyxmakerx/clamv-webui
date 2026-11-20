@@ -31,22 +31,66 @@ A small, self-hosted web console and API for [ClamAV](https://www.clamav.net/). 
 
 ## Quick start
 
-`docker-compose.yml` runs the UI next to its own `clamav/clamav` container. Put the files you want to scan in `./scan`.
-
 ```sh
-mkdir -p data scan && sudo chown 10001:10001 data   # the app runs as UID 10001 and must own ./data
 docker compose up -d
 ```
 
+That is all the setup [docker-compose.yml](docker-compose.yml) needs. It runs Palisade next to its own clamd, keeps its data in a Docker volume, and scans what you put in `./scan`.
+
 1. Open http://localhost:8080.
-2. On first start an `admin` account is created. Its password is written to `data/bootstrap-admin-password`, which is owned by UID 10001, so open it as root.
-3. Sign in, choose a new password, then delete that file.
+2. Copy the first `admin` password to a file you own. It is never printed:
+   `docker compose cp palisade:/app/data/bootstrap-admin-password ./admin-password`
+3. Sign in as `admin` and choose a new password. Palisade removes its copy shortly after; delete `./admin-password` too.
+4. Open **Admin > Setup**. It shows what works, what is missing, and how to turn it on.
 
-clamd downloads its signatures on first start, which takes a few minutes. Until then the dashboard shows the endpoint as unreachable. If the container keeps restarting, `docker compose logs palisade` names the cause.
+To choose the first password yourself, put it in a file and set `BOOTSTRAP_ADMIN_PASSWORD_FILE` to it (for example as a Docker secret) before the first start.
 
-Passkeys need HTTPS. Set `TLS_SELF_SIGNED=true`, or put a reverse proxy in front ([guide](docs/REVERSE_PROXY.md)) and set `PUBLIC_URL`. To use a clamd you already run, start from `docker-compose.external-clamd.yml` instead.
+clamd loads its signatures on first start, which can take a few minutes. Until then Palisade shows it as unreachable, and the log says `clamd.ready` once it answers. If a container keeps restarting, `docker compose logs palisade` names the setting at fault and how to fix it.
 
-Lost the admin password? Run `docker compose exec palisade /app/palisade reset-admin`. It writes a new one to a file and prints only the file's path.
+Lost the admin password? Run `docker compose exec palisade /app/palisade reset-admin`, then copy the new one out with the command from step 2.
+
+### Minimal or full
+
+| Feature | `docker-compose.yml` | `docker-compose.full.yml` |
+|---|---|---|
+| Uploads, folder scans, schedules, watched folders | Yes | Yes |
+| HTTPS (self-signed; agents need it) | No | Yes |
+| CrowdSec console | No | Yes, watcher set up for you |
+| Quarantine | No | Yes, once `./scan` is writable by UID 10001 |
+| Prometheus `/metrics` | No | Yes, token generated for you |
+| Canary file | No | Yes, `./canary/passwords.kdbx` |
+| Alerts (webhook, ntfy, Slack, ...) | No | Uncomment the webhook lines |
+| AIDE, rkhunter, Falco, auditd | No | Uncomment once the host has them |
+
+For the full set, run `docker compose -f docker-compose.full.yml up -d`, or save that file as `docker-compose.yml`. Both files use the same volume, so you keep your data when you switch. The full file generates its own passwords into a volume, so it needs no preparation either. To use a clamd you already run, start from [docker-compose.external-clamd.yml](docker-compose.external-clamd.yml).
+
+### Turning on more features
+
+These match the items on **Admin > Setup**. Each one is an environment variable on the `palisade` service; restart with `docker compose up -d` after a change.
+
+- **Folders to scan**: mount them read-only and list them in `SCAN_ROOTS`, e.g. `- /srv/media:/srv/media:ro` and `SCAN_ROOTS: /scan,/srv/media`. Mount them into the clamav container at the same path too.
+- **HTTPS**: `TLS_SELF_SIGNED: "true"`, plus `TLS_SELF_SIGNED_NAMES` with the names you browse to. Or use a [reverse proxy](docs/REVERSE_PROXY.md) and set `PUBLIC_URL`.
+- **Passkeys**: HTTPS with a certificate your browser trusts (a reverse proxy is easiest) and `PUBLIC_URL`, since passkeys are tied to its host name.
+- **Alerts**: put your destinations in a file and set `WEBHOOK_URL_FILE` ([formats](docs/CONFIGURATION.md#alerts-webhook-ntfy-gotify-slack-discord)).
+- **CrowdSec**: copy the `crowdsec` and `secrets-init` services from the full file. They register Palisade's watcher for you.
+- **Quarantine**: `QUARANTINE_DIR: /app/data/quarantine`, and mount the scan folder read-write.
+- **Metrics**: `METRICS_TOKEN_FILE` with a token of 16 or more characters.
+- **Canaries**: add decoy files on the **Canaries** page, or list them in `CANARY_FILES`.
+- **AIDE, rkhunter, Falco**: install them on the host, then mount their logs read-only ([details](docs/CONFIGURATION.md#managed-host-checks-and-firewall)).
+- **Sign-in with SSO or LDAP**: see [OIDC](docs/CONFIGURATION.md#oidc-single-sign-on) and [LDAP](docs/CONFIGURATION.md#ldap).
+- **Other hosts**: see [Agents](#agents) below.
+
+### Backups
+
+The `palisade-data` volume holds everything Palisade keeps: the database, `secret.key` (it encrypts 2FA secrets), the TLS certificate that agents pin, and quarantined files. Copy it out while Palisade is stopped, and keep the copy private:
+
+```sh
+docker compose stop palisade
+docker compose cp palisade:/app/data ./palisade-backup
+docker compose start palisade
+```
+
+With `DATABASE_URL` pointing at PostgreSQL, MySQL or MariaDB, back up that database as well.
 
 ## Agents
 

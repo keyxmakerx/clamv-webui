@@ -260,7 +260,8 @@ pub async fn check_host(
     tracing::warn!(event = "http.host_refused", host = %host.as_deref().unwrap_or("").chars().take(100).collect::<String>(), "request for an unknown host name refused");
     (
         StatusCode::MISDIRECTED_REQUEST,
-        "Unknown host name. Open this app at its PUBLIC_URL.",
+        "Palisade does not answer to this host name. Open it at the address set in PUBLIC_URL, \
+         or add the host name you used to ALLOWED_HOSTS and restart.",
     )
         .into_response()
 }

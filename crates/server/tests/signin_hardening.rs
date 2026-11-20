@@ -221,6 +221,18 @@ async fn unknown_host_names_are_refused_with_public_url() {
             .await
             .expect("res");
         assert_eq!(res.status() == StatusCode::OK, ok, "{host}");
+        if !ok {
+            assert_eq!(res.status(), StatusCode::MISDIRECTED_REQUEST);
+            let body = text(res).await;
+            assert!(
+                body.contains("PUBLIC_URL") && body.contains("ALLOWED_HOSTS"),
+                "the refusal names the settings to change: {body}"
+            );
+            assert!(
+                !body.contains("clamav.example.com"),
+                "the configured address is not revealed"
+            );
+        }
     }
     let res = app
         .clone()

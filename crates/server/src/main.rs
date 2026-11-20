@@ -18,12 +18,16 @@ async fn main() -> ExitCode {
                 Ok(file) => {
                     println!("New admin password written to {}", file.display());
                     println!(
+                        "With Docker, copy it to the host without printing it: docker compose cp palisade:{} ./admin-password",
+                        file.display()
+                    );
+                    println!(
                         "Sign-in locks are kept in memory: restart the server to clear one now."
                     );
                     ExitCode::SUCCESS
                 }
                 Err(e) => {
-                    tracing::error!(error = %e, "reset-admin failed");
+                    tracing::error!(error = %format_args!("{e:#}"), "reset-admin failed");
                     ExitCode::FAILURE
                 }
             }
@@ -33,7 +37,7 @@ async fn main() -> ExitCode {
             match palisade::agent::client::run(cli.config).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
-                    tracing::error!(error = %e, "agent failed");
+                    tracing::error!(error = %format_args!("{e:#}"), "agent failed");
                     ExitCode::FAILURE
                 }
             }
@@ -50,7 +54,8 @@ async fn main() -> ExitCode {
             match app::serve(cli.config).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
-                    tracing::error!(error = %e, "fatal");
+                    // The message names the setting and the fix; see app::preflight.
+                    tracing::error!(error = %format_args!("{e:#}"), "cannot start");
                     ExitCode::FAILURE
                 }
             }

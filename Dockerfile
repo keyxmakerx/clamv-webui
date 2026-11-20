@@ -19,6 +19,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 WORKDIR /app
 COPY --from=build --chown=0:0 /out/palisade /app/palisade
 # Same UID/GID as the Java image, so existing volumes keep working.
+# A fresh named volume mounted here starts with this owner and mode, so compose needs no chown.
 COPY --from=build --chown=10001:10001 /out/data /app/data
 VOLUME ["/app/data"]
 USER 10001:10001

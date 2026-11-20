@@ -12,7 +12,13 @@ pub fn files(cfg: &Config) -> anyhow::Result<(PathBuf, PathBuf)> {
     if let (Some(c), Some(k)) = (&cfg.tls_cert_file, &cfg.tls_key_file) {
         return Ok((c.clone(), k.clone()));
     }
-    self_signed(&cfg.data_dir.join("tls"), &cfg.tls_self_signed_names)
+    let dir = cfg.data_dir.join("tls");
+    self_signed(&dir, &cfg.tls_self_signed_names).map_err(|e| {
+        anyhow::anyhow!(
+            "cannot create the self-signed certificate in {} ({e}); DATA_DIR must be writable",
+            dir.display()
+        )
+    })
 }
 
 /// How long a new self-signed certificate is valid.
@@ -169,9 +175,18 @@ pub fn fingerprint(cert_pem: &Path) -> Option<String> {
 pub async fn config(cfg: &Config) -> anyhow::Result<(RustlsConfig, PathBuf)> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let (cert, key) = files(cfg)?;
-    let rc = RustlsConfig::from_pem_file(&cert, &key)
-        .await
-        .map_err(|e| anyhow::anyhow!("TLS certificate {}: {e}", cert.display()))?;
+    let rc = RustlsConfig::from_pem_file(&cert, &key).await.map_err(|e| {
+        let fix = if cfg.tls_cert_file.is_some() {
+            "TLS_CERT_FILE and TLS_KEY_FILE must be PEM files this container can read"
+        } else {
+            "the files in DATA_DIR/tls are damaged; remove that folder to make a new certificate (agents then need the new fingerprint)"
+        };
+        anyhow::anyhow!(
+            "TLS certificate {} or key {}: {e}; {fix}",
+            cert.display(),
+            key.display()
+        )
+    })?;
     Ok((rc, cert))
 }
 
@@ -205,5 +220,41 @@ mod tests {
         self_signed(&dir, &["nas".into(), "100.82.0.5".into()]).expect("old format");
         assert_eq!(fingerprint(&c), fp2, "old-format stamp reused");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn cfg(args: &[&str]) -> Config {
+        use clap::Parser;
+        let mut all = vec!["palisade"];
+        all.extend_from_slice(args);
+        crate::config::Cli::try_parse_from(all)
+            .expect("parse")
+            .config
+    }
+
+    #[tokio::test]
+    async fn startup_errors_name_the_fix() {
+        let e = config(&cfg(&[
+            "--tls-cert-file",
+            "/nonexistent/cert.pem",
+            "--tls-key-file",
+            "/nonexistent/key.pem",
+        ]))
+        .await
+        .expect_err("missing files")
+        .to_string();
+        assert!(e.contains("TLS_CERT_FILE and TLS_KEY_FILE"), "{e}");
+        // DATA_DIR is a file, so the certificate folder cannot be made.
+        let file = std::env::temp_dir().join(format!("palisade-tls-file-{}", crate::db::new_id()));
+        std::fs::write(&file, b"").expect("write");
+        let e = config(&cfg(&[
+            "--tls-self-signed",
+            "--data-dir",
+            file.to_str().expect("utf8"),
+        ]))
+        .await
+        .expect_err("not a folder")
+        .to_string();
+        assert!(e.contains("DATA_DIR must be writable"), "{e}");
+        let _ = std::fs::remove_file(&file);
     }
 }
