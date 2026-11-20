@@ -329,6 +329,20 @@ async fn agent_pins_the_server_certificate() {
 
     let wrong = ["00"; 32].join(":");
     let mut c = agent_cli(&url, &token, clamd, &data);
+    c.config.agent_server_fingerprint = Some(wrong.clone());
+    // The log line says what to fix, not just that TLS failed.
+    let e = palisade::agent::client::check(c.config.clone())
+        .await
+        .expect_err("wrong pin");
+    assert!(
+        e.contains("wrong AGENT_SERVER_FINGERPRINT") && e.contains("Admin > Agents"),
+        "{e}"
+    );
+    let e = palisade::agent::client::check(agent_cli(&url, &token, clamd, &data).config)
+        .await
+        .expect_err("no pin");
+    assert!(e.contains("not trusted"), "{e}");
+    let mut c = agent_cli(&url, &token, clamd, &data);
     c.config.agent_server_fingerprint = Some(wrong);
     let h = tokio::spawn(palisade::agent::client::run(c.config));
     tokio::time::sleep(Duration::from_millis(800)).await;
@@ -804,6 +818,9 @@ async fn agents_refuse_what_their_host_does_not_allow() {
                 .contains("AGENT_ALLOW")
         );
     }
+    // The Agents page shows the latest refusal with what to add.
+    let (_, what) = srv.st.agents.last_problem(agent.id).expect("problem");
+    assert!(what.contains("to AGENT_ALLOW on that host"), "{what}");
     handle.abort();
 }
 

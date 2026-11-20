@@ -51,6 +51,8 @@ pub struct Hub {
     tx: watch::Sender<u64>,
     /// Agents refused for their protocol version: id to (their protocol, their version).
     mismatch: std::sync::Mutex<std::collections::HashMap<i64, (u32, String)>>,
+    /// The latest problem seen with each agent, for the Agents page: id to (when, what to do).
+    problems: std::sync::Mutex<std::collections::HashMap<i64, (i64, String)>>,
 }
 
 impl Default for Hub {
@@ -58,6 +60,7 @@ impl Default for Hub {
         Self {
             tx: watch::channel(0).0,
             mismatch: std::sync::Mutex::default(),
+            problems: std::sync::Mutex::default(),
         }
     }
 }
@@ -76,6 +79,24 @@ impl Hub {
         } else {
             format!("Agent v{version} is newer than this server: update the server.")
         })
+    }
+
+    /// Remember the latest problem with an agent; it stays until replaced or cleared.
+    pub fn note_problem(&self, agent_id: i64, what: impl Into<String>) {
+        if let Ok(mut g) = self.problems.lock() {
+            g.insert(agent_id, (now_ms(), what.into()));
+        }
+    }
+
+    pub fn clear_problem(&self, agent_id: i64) {
+        if let Ok(mut g) = self.problems.lock() {
+            g.remove(&agent_id);
+        }
+    }
+
+    /// (when, what to do) for the latest problem with this agent.
+    pub fn last_problem(&self, agent_id: i64) -> Option<(i64, String)> {
+        self.problems.lock().ok()?.get(&agent_id).cloned()
     }
 
     fn set_mismatch(&self, agent_id: i64, v: Option<(u32, String)>) {
@@ -163,6 +184,10 @@ impl FromRequestParts<Arc<AppState>> for Caller {
             Ok(Some(agent)) if agent.enabled => Ok(Self { agent, ip }),
             Ok(Some(agent)) => {
                 tracing::warn!(event = "agent.disabled", agent = %agent.name, ip = %ip, "disabled agent tried to connect");
+                st.agents.note_problem(
+                    agent.id,
+                    format!("Tried to connect from {ip} while disabled: enable it, or stop the agent on that host."),
+                );
                 Err(reply(StatusCode::FORBIDDEN, "agent disabled"))
             }
             Ok(None) => {
@@ -370,6 +395,9 @@ async fn result(
         crate::schedule::control_done(&st, &job, &c.agent.name, report).await;
         return StatusCode::NO_CONTENT.into_response();
     }
+    if let Some(f) = &req.failure {
+        note_refusal(&st, &c.agent, &job, &f.code);
+    }
     if job.kind == crate::quarantine::KIND {
         crate::quarantine::agent_result(
             &st,
@@ -386,6 +414,23 @@ async fn result(
         (None, None) => scan::failure(scan::SCAN_FAILED, "The agent sent an empty result."),
     };
     stored_reply(scan::finish(&st, &job, &c.agent.name, o).await)
+}
+
+/// Keep a refusal by the agent's own AGENT_ALLOW for the Agents page, naming what to add.
+fn note_refusal(st: &AppState, a: &Agent, job: &Job, code: &str) {
+    let perm = policy::classify(&job.kind, &job.target).map_or("it", policy::Perm::name);
+    let what = match code {
+        policy::REFUSED => format!(
+            "Refused a {} job: add {perm} to AGENT_ALLOW on that host if you want to allow it.",
+            job.kind
+        ),
+        policy::RATE_LIMITED => format!(
+            "Refused a {} job: too many {perm} actions in the last hour; it allows more later.",
+            job.kind
+        ),
+        _ => return,
+    };
+    st.agents.note_problem(a.id, what);
 }
 
 /// 503 when the result could not be stored, so the agent keeps it queued and sends it again.

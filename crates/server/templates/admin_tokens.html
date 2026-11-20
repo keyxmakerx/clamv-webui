@@ -4,7 +4,7 @@
 <h1 class="h3">{{ nav.t("API tokens") }}</h1>
 <p class="muted">{{ nav.t("For") }} <code>clamctl</code>{{ nav.t(", its MCP server and scripts. Send as") }} <code>Authorization: Bearer …</code>.</p>
 {% if let Some(sec) = secret %}<div class="alert alert-warning" role="alert"><strong>{{ nav.t("New token secret:") }}</strong>
-<div class="mt-2"><code class="text-break user-select-all">{{ sec }}</code></div>
+<div class="mt-2 d-flex gap-2 align-items-start"><code id="new-token" class="text-break user-select-all">{{ sec }}</code><button class="btn btn-sm btn-outline-secondary" type="button" data-copy="new-token">{{ nav.t("Copy") }}</button></div>
 <div class="small mt-2">{{ nav.t("Store it in a password manager or a secret file now. Only its hash is kept.") }}</div></div>{% endif %}
 <section class="card mt-3"><div class="card-body">
 <h2 class="h5">{{ nav.t("Issue token") }}</h2>
