@@ -192,8 +192,8 @@ cargo test                 # SQLite; set TEST_DATABASE_URLS to also test other d
 docker build -t palisade .
 ```
 
-CI builds and tests on every push, checks dependencies with `cargo deny`, runs CodeQL and Trivy, starts the image once, and publishes `ghcr.io/keyxmakerx/palisade:latest` (amd64) plus a short commit tag for rollback.
+CI builds and tests on every push, checks dependencies with `cargo deny`, runs CodeQL and Trivy, starts the image once, and publishes `ghcr.io/keyxmakerx/palisade:edge` from `main` (amd64) plus a short commit tag for rollback.
 
-Releases: set `version` in `Cargo.toml`, merge, then push a tag `vX.Y.Z` on that commit. CI checks the tag matches, publishes `:X.Y.Z` and `:X.Y`, and creates the GitHub release that the dashboard's update notice looks for. Compose files stay on `:latest`.
+Releases: set `version` in `Cargo.toml`, merge, then push a tag `vX.Y.Z` on that commit. CI checks the tag matches, publishes `:X.Y.Z`, `:X.Y` and `:latest`, and creates the GitHub release that the dashboard's update notice looks for. Compose files stay on `:latest`, which moves only on a release, so a migration merged to `main` never reaches them early. Use `:edge` to follow `main`.
 
 Schema changes go in a new numbered file under `crates/server/migrations/<backend>/` with a line in `crates/server/migrations.sha256`; files already on `main` never change (CI refuses it).

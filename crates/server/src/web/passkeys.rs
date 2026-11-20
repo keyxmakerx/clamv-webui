@@ -18,6 +18,7 @@ use crate::auth::Role;
 use crate::auth::webauthn::{self, b64u, unb64u};
 use crate::db::audit::AuditEntry;
 use crate::db::passkeys::MAX_PASSKEYS;
+use crate::db::users::User;
 
 pub fn routes() -> Router<Arc<AppState>> {
     Router::new()
@@ -426,6 +427,18 @@ async fn login(
     if !u.enabled {
         return jerr(StatusCode::FORBIDDEN, "Your account is disabled.");
     }
+    // A passwordless sign-in by an SSO or LDAP user asks the provider again,
+    // so an account removed, disabled or moved out of its groups there loses
+    // access here too (v1-sso-passkey). After a provider sign-in (`second`)
+    // that check has just happened.
+    let u = if second {
+        u
+    } else {
+        match recheck_external(&st, u, &info).await {
+            Ok(u) => u,
+            Err(r) => return r,
+        }
+    };
     let resp = if second {
         let Some(p) = pending(&st, &headers).await else {
             return jerr(StatusCode::UNAUTHORIZED, "Sign in again.");
@@ -690,5 +703,97 @@ async fn stepup(
     match super::integrity::dispatch(&st, &u, &info, p.host, act, true).await {
         Ok(msg) => jok(json!({ "ok": true, "message": msg })),
         Err(m) => jerr(StatusCode::BAD_REQUEST, &m),
+    }
+}
+
+/// For a passwordless passkey sign-in: local users pass as they are; LDAP
+/// users are looked up again (role refreshed, refused if gone); SSO users,
+/// whose provider cannot be asked without them, sign in there first.
+async fn recheck_external(st: &AppState, u: User, info: &RequestInfo) -> Result<User, Response> {
+    use crate::auth::external::{ProvisionError, provision};
+    let ids = match st.db.identities_of(&u.id).await {
+        Ok(ids) => ids,
+        Err(e) => {
+            tracing::error!(event = "auth.passkey_recheck_failed", error = %e, "could not read linked identities");
+            return Err(jerr(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Sign-in is unavailable right now. Try again shortly.",
+            ));
+        }
+    };
+    if ids.is_empty() && !u.is_external() {
+        return Ok(u);
+    }
+    let deny = |why: &'static str, msg: &'static str, status: StatusCode| {
+        let username = u.username.clone();
+        async move {
+            tracing::warn!(event = "auth.passkey_denied", user = %username, ip = %info.ip, reason = why, "passkey sign-in refused after provider check");
+            st.db
+                .audit(AuditEntry {
+                    username: Some(username),
+                    action: "LOGIN_PASSKEY",
+                    outcome: "DENIED",
+                    transport: Some("UI"),
+                    ip: Some(info.ip.to_string()),
+                    user_agent: info.user_agent.clone(),
+                    details: Some(why.into()),
+                    ..Default::default()
+                })
+                .await;
+            Err(jerr(status, msg))
+        }
+    };
+    let ldap = ids.iter().find(|(source, _, _)| source == "LDAP");
+    let (Some(dir), Some((_, issuer, subject))) = (&st.ldap, ldap) else {
+        return deny(
+            "provider sign-in required",
+            "Sign in with single sign-on first; your passkey is asked for next.",
+            StatusCode::FORBIDDEN,
+        )
+        .await;
+    };
+    let id = match dir.lookup(issuer, subject).await {
+        Ok(Some(id)) => id,
+        Ok(None) => {
+            return deny(
+                "not found in directory",
+                "Your directory account was not found. Ask an admin.",
+                StatusCode::FORBIDDEN,
+            )
+            .await;
+        }
+        Err(e) => {
+            tracing::error!(event = "ldap.unavailable", error = ?e, "passkey sign-in could not reach the directory");
+            return Err(jerr(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "The directory could not be reached. Try again shortly.",
+            ));
+        }
+    };
+    let Some(role) = dir.role_for(&id.groups) else {
+        return deny(
+            "no matching group",
+            "Your directory account no longer has access. Ask an admin.",
+            StatusCode::FORBIDDEN,
+        )
+        .await;
+    };
+    match provision(st, &id, role).await {
+        Ok(fresh) if fresh.id == u.id => Ok(fresh),
+        Ok(_) => {
+            deny(
+                "directory identity changed",
+                "Your directory account changed. Sign in with your directory password.",
+                StatusCode::FORBIDDEN,
+            )
+            .await
+        }
+        Err(ProvisionError::Disabled) => {
+            Err(jerr(StatusCode::FORBIDDEN, "Your account is disabled."))
+        }
+        Err(ProvisionError::Unavailable) => Err(jerr(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Sign-in is unavailable right now. Try again shortly.",
+        )),
     }
 }

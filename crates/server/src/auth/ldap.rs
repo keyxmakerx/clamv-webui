@@ -147,7 +147,8 @@ impl Ldap {
             .map_err(|_| LdapError::Unavailable("directory timed out".into()))?
     }
 
-    async fn run(&self, username: &str, password: &str) -> Result<Identity, LdapError> {
+    /// A connection already bound as the service account.
+    async fn service(&self) -> Result<ldap3::Ldap, LdapError> {
         let down = |e: ldap3::LdapError| LdapError::Unavailable(e.to_string());
         let settings = LdapConnSettings::new()
             .set_conn_timeout(Duration::from_secs(5))
@@ -162,36 +163,38 @@ impl Ldap {
             .map_err(down)?
             .success()
             .map_err(|_| LdapError::Unavailable("service account bind failed".into()))?;
-        let filter = self.filter.replace("{username}", &ldap_escape(username));
-        let attrs = vec![
+        Ok(ldap)
+    }
+
+    fn attrs(&self) -> Vec<&str> {
+        vec![
             self.group_attr.as_str(),
             "entryUUID",
             "objectGUID",
             "uid",
             "sAMAccountName",
-        ];
+            "userAccountControl",
+        ]
+    }
+
+    /// The entries the configured user filter finds for a name.
+    async fn find(
+        &self,
+        ldap: &mut ldap3::Ldap,
+        username: &str,
+    ) -> Result<Vec<SearchEntry>, LdapError> {
+        let down = |e: ldap3::LdapError| LdapError::Unavailable(e.to_string());
+        let filter = self.filter.replace("{username}", &ldap_escape(username));
         let (entries, _) = ldap
-            .search(&self.base, Scope::Subtree, &filter, attrs)
+            .search(&self.base, Scope::Subtree, &filter, self.attrs())
             .await
             .map_err(down)?
             .success()
             .map_err(down)?;
-        // Exactly one match, or nobody: ambiguity is a failure, not a guess.
-        let [entry] = entries.as_slice() else {
-            let _ = ldap.unbind().await;
-            return Err(LdapError::Bad);
-        };
-        let e = SearchEntry::construct(entry.clone());
-        let ok = ldap
-            .simple_bind(&e.dn, password)
-            .await
-            .map_err(down)?
-            .success()
-            .is_ok();
-        let _ = ldap.unbind().await;
-        if !ok {
-            return Err(LdapError::Bad);
-        }
+        Ok(entries.into_iter().map(SearchEntry::construct).collect())
+    }
+
+    fn identity(&self, e: &SearchEntry, username: &str) -> Identity {
         let first = |k: &str| e.attrs.get(k).and_then(|v| v.first()).cloned();
         let subject = first("entryUUID")
             .or_else(|| {
@@ -210,14 +213,122 @@ impl Ldap {
             .find(|(k, _)| k.eq_ignore_ascii_case(&self.group_attr))
             .map(|(_, v)| v.clone())
             .unwrap_or_default();
-        Ok(Identity {
+        Identity {
             source: "LDAP",
             issuer: self.url.clone(),
             subject,
             name,
             groups,
-        })
+        }
     }
+
+    async fn run(&self, username: &str, password: &str) -> Result<Identity, LdapError> {
+        let down = |e: ldap3::LdapError| LdapError::Unavailable(e.to_string());
+        let mut ldap = self.service().await?;
+        let entries = self.find(&mut ldap, username).await?;
+        // Exactly one match, or nobody: ambiguity is a failure, not a guess.
+        let [e] = entries.as_slice() else {
+            let _ = ldap.unbind().await;
+            return Err(LdapError::Bad);
+        };
+        let ok = ldap
+            .simple_bind(&e.dn, password)
+            .await
+            .map_err(down)?
+            .success()
+            .is_ok();
+        let _ = ldap.unbind().await;
+        if !ok {
+            return Err(LdapError::Bad);
+        }
+        Ok(self.identity(e, username))
+    }
+
+    /// Look an already linked user up again without their password, for a
+    /// passkey sign-in: found by the stored subject, then through the
+    /// configured user filter, so a removed, filtered-out or (Active
+    /// Directory) disabled account is `Ok(None)`.
+    pub async fn lookup(&self, issuer: &str, subject: &str) -> Result<Option<Identity>, LdapError> {
+        if issuer != self.url || subject.is_empty() || subject.len() > 512 {
+            return Ok(None);
+        }
+        tokio::time::timeout(TIMEOUT, self.run_lookup(subject))
+            .await
+            .map_err(|_| LdapError::Unavailable("directory timed out".into()))?
+    }
+
+    async fn run_lookup(&self, subject: &str) -> Result<Option<Identity>, LdapError> {
+        let down = |e: ldap3::LdapError| LdapError::Unavailable(e.to_string());
+        let mut ldap = self.service().await?;
+        let (base, scope, filter) = subject_search(&self.base, subject);
+        let found = match ldap.search(&base, scope, &filter, self.attrs()).await {
+            Ok(r) => match r.success() {
+                Ok((entries, _)) => entries,
+                // 32: no such object (a DN subject that is gone).
+                Err(ldap3::LdapError::LdapResult { result }) if result.rc == 32 => Vec::new(),
+                Err(e) => return Err(down(e)),
+            },
+            Err(e) => return Err(down(e)),
+        };
+        let [entry] = found.as_slice() else {
+            let _ = ldap.unbind().await;
+            return Ok(None);
+        };
+        let e = SearchEntry::construct(entry.clone());
+        let id = self.identity(&e, "");
+        // The same filter as a password sign-in must still match this entry, and only it.
+        let again = if id.name.is_empty() {
+            Vec::new()
+        } else {
+            self.find(&mut ldap, &id.name).await?
+        };
+        let _ = ldap.unbind().await;
+        let [same] = again.as_slice() else {
+            return Ok(None);
+        };
+        if !same.dn.eq_ignore_ascii_case(&e.dn) || ad_disabled(same) {
+            return Ok(None);
+        }
+        Ok(Some(self.identity(same, &id.name)))
+    }
+}
+
+/// Where to find a stored subject: entryUUID, hex objectGUID, or a DN.
+fn subject_search(base: &str, subject: &str) -> (String, Scope, String) {
+    let is_hex = |s: &str| s.chars().all(|c| c.is_ascii_hexdigit());
+    if subject.len() == 32 && is_hex(subject) {
+        let bytes: String = subject
+            .as_bytes()
+            .chunks(2)
+            .map(|p| format!("\\{}", String::from_utf8_lossy(p)))
+            .collect();
+        (
+            base.to_owned(),
+            Scope::Subtree,
+            format!("(objectGUID={bytes})"),
+        )
+    } else if subject.contains('=') {
+        (
+            subject.to_owned(),
+            Scope::Base,
+            "(objectClass=*)".to_owned(),
+        )
+    } else {
+        (
+            base.to_owned(),
+            Scope::Subtree,
+            format!("(entryUUID={})", ldap_escape(subject)),
+        )
+    }
+}
+
+/// Active Directory's "account disabled" bit.
+fn ad_disabled(e: &SearchEntry) -> bool {
+    e.attrs
+        .get("userAccountControl")
+        .and_then(|v| v.first())
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .is_some_and(|f| f & 2 != 0)
 }
 
 #[cfg(test)]
@@ -230,6 +341,17 @@ mod tests {
         assert!(g.contains(&"clamav admins".to_owned()));
         assert!(g.contains(&"cn=clamav admins,ou=groups,dc=lan".to_owned()));
         assert!(g.contains(&"staff".to_owned()));
+    }
+
+    #[test]
+    fn subjects_are_searched_safely() {
+        let (b, _, f) = subject_search("dc=lan", "0a1b2c3d4e5f60718293a4b5c6d7e8f9");
+        assert_eq!(b, "dc=lan");
+        assert!(f.starts_with("(objectGUID=\\0a\\1b"));
+        let (b, s, _) = subject_search("dc=lan", "uid=alice,ou=people,dc=lan");
+        assert_eq!((b.as_str(), s), ("uid=alice,ou=people,dc=lan", Scope::Base));
+        let (_, _, f) = subject_search("dc=lan", "x)(uid=*");
+        assert!(!f.contains(")(uid=*"), "{f}");
     }
 
     #[test]

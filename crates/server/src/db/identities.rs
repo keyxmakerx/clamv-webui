@@ -50,6 +50,20 @@ impl Db {
         Ok(())
     }
 
+    /// The (source, issuer, subject) of every identity linked to a user.
+    pub async fn identities_of(
+        &self,
+        user_id: &str,
+    ) -> Result<Vec<(String, String, String)>, DbError> {
+        let rows: Vec<(String, String, String)> = sqlx::query_as(self.sql(
+            "SELECT source, issuer, subject FROM external_identities WHERE user_id = ? ORDER BY principal_name",
+        ))
+        .bind(user_id)
+        .fetch_all(self.pool())
+        .await?;
+        Ok(rows)
+    }
+
     /// True when the user signs in through an external provider.
     pub async fn is_external_user(&self, user_id: &str) -> Result<bool, DbError> {
         let n: i64 = sqlx::query_scalar(
