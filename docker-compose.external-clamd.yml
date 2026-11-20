@@ -1,4 +1,5 @@
-# UI only: joins an existing network and uses a clamd it does not own.
+# UI only: joins an existing Docker network and uses a clamd it does not own. Start: docker compose -f docker-compose.external-clamd.yml up -d
+# First password, copied to a file you own without printing it: docker compose -f docker-compose.external-clamd.yml cp palisade:/app/data/bootstrap-admin-password ./admin-password
 services:
   palisade:
     image: ghcr.io/keyxmakerx/palisade:latest
@@ -14,13 +15,13 @@ services:
       SCAN_ROOTS: /data,/documents,/games  # clamd must see these at the same paths
       # QUARANTINE_DIR: /app/data/quarantine  # opt-in; needs read-write scan roots
       LOG_FORMAT: json  # one JSON object per line for fluent-bit
-      # TLS_SELF_SIGNED: "true"  # HTTPS for clamctl and agents; certificate lands in ./data/tls
+      # TLS_SELF_SIGNED: "true"  # HTTPS for passkeys, clamctl and agents; the certificate is kept in the data volume
       # TLS_SELF_SIGNED_NAMES: 100.82.x.y  # the mesh IP or name clients connect to; changing it means new agent fingerprints
       # WEBHOOK_URL_FILE: /run/secrets/webhook_url  # alert URLs, comma-separated; ntfy+, gotify+ or slack+ prefix for those
       # WEBHOOK_ALLOWED_CIDRS: 100.82.0.0/16  # needed when the receiver is on the mesh
       # METRICS_TOKEN_FILE: /run/secrets/metrics_token  # enables /metrics for Prometheus
-      # CROWDSEC_LAPI_URL: http://crowdsec:8080  # CrowdSec console; watcher from cscli machines add
-      # CROWDSEC_PASSWORD_FILE: /run/secrets/crowdsec_pw  # that watcher's password
+      # CROWDSEC_LAPI_URL: http://crowdsec:8080  # CrowdSec pages; docker-compose.full.yml shows how the watcher is registered
+      # CROWDSEC_PASSWORD_FILE: /run/secrets/crowdsec_pw  # that watcher's password (CROWDSEC_MACHINE_ID, default palisade)
       # OIDC_ISSUER: https://auth.example.lan  # SSO; also set OIDC_CLIENT_ID, OIDC_CLIENT_SECRET_FILE, OIDC_REDIRECT_URI
       # OIDC_ADMIN_GROUPS: clamav-admins  # nobody without a listed group can sign in via SSO
       # LDAP_URL: ldaps://dc.example.lan  # directory sign-in; also LDAP_BIND_DN, LDAP_BIND_PASSWORD_FILE, LDAP_USER_BASE, LDAP_ADMIN_GROUPS
@@ -36,7 +37,7 @@ services:
     security_opt:
       - no-new-privileges:true
     volumes:
-      - ./data:/app/data  # app state; owned by UID 10001
+      - palisade-data:/app/data  # database, keys and certificates (back this up); upgrading from ./data? keep ./data:/app/data
       - /data:/data:ro
       # - /var/log/aide:/var/log/aide:ro  # AIDE reports, read every 5 min
       # - /var/log/rkhunter.log:/var/log/rkhunter.log:ro  # rkhunter report
@@ -47,6 +48,9 @@ services:
       # - /var/lib/palisade/timers:/var/lib/palisade/timers  # AIDE/rkhunter timer times (after host-setup)
       - /documents:/documents:ro
       - /games:/games:ro
+
+volumes:
+  palisade-data:  # starts owned by the app's UID 10001, copied from the image
 
 networks:
   media:

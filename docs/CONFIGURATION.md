@@ -1,9 +1,24 @@
 # Configuration
 
-Every option is an environment variable (or a `--flag`; run `palisade --help`). Secrets also take a `*_FILE` variant for Docker secrets, which wins over the plain variable.
+Every option is an environment variable (or a `--flag`; run `palisade --help`). Secrets also take a `*_FILE` variant for Docker secrets, which wins over the plain variable. A secret file must be readable by UID 10001 (`sudo chown 10001 <file>`, mode 600).
 
+`docker-compose.yml` needs only `SCAN_ROOTS`; every other setting has a working default. `docker-compose.full.yml` shows the rest turned on, one comment per line. **Admin > Setup** lists what is on and what is missing.
 
 Back to the [README](../README.md). How the parts fit together: [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## When Palisade does not start
+
+`docker compose logs palisade` ends with one `cannot start` line. It names the setting at fault and how to fix it, for example:
+
+- `DATA_DIR /app/data is not writable`: use the named volume from `docker-compose.yml`, or run `sudo chown -R 10001:10001 <data folder>` on the host.
+- `cannot read METRICS_TOKEN_FILE ...`: the file is not mounted at that path, or UID 10001 cannot read it.
+- `cannot listen on 0.0.0.0:8080`: another program has the port; free it or set `LISTEN_ADDR`.
+
+Problems that do not stop Palisade are logged once at start as `config.warning`, such as a `SCAN_ROOTS` folder that is not mounted. A browser that gets "Palisade does not answer to this host name" is using a name outside `PUBLIC_URL`; open that address or add the name to `ALLOWED_HOSTS`.
+
+## Data volume and backups
+
+`DATA_DIR` (`/app/data`, the `palisade-data` volume in the compose files) holds the SQLite database, `secret.key`, the self-signed certificate in `tls/`, the quarantine folder if you use the suggested path, and a one-time `bootstrap-admin-password` until `admin` sets its own password. A fresh named volume starts owned by UID 10001, so it needs no `chown`. To back it up, stop Palisade and run `docker compose cp palisade:/app/data ./palisade-backup`. Keep the copy private: `secret.key` decrypts stored 2FA secrets. An external database needs its own backup.
 
 ## Core
 
@@ -11,10 +26,10 @@ Back to the [README](../README.md). How the parts fit together: [ARCHITECTURE.md
 |---|---|---|
 | `LISTEN_ADDR` | `0.0.0.0:8080` | Web and API listener |
 | `HEALTH_PORT` | `8081` | Plain-HTTP `/health` for container checks |
-| `DATA_DIR` | `./data` (`/app/data` in the image) | SQLite database, TLS files, bootstrap password |
+| `DATA_DIR` | `./data` (`/app/data` in the image) | SQLite database, keys, TLS files, one-time admin password; see [backups](#data-volume-and-backups) |
 | `DATABASE_URL(_FILE)` | SQLite in `DATA_DIR` | `sqlite://`, `postgres://`, `mysql://` or `mariadb://` |
 | `LOG_FORMAT` / `LOG_LEVEL` | `plain` / `info` | `json` for one object per line |
-| `BOOTSTRAP_ADMIN_PASSWORD` | generated | First admin password; a supplied one is not forced to change |
+| `BOOTSTRAP_ADMIN_PASSWORD(_FILE)` | generated | First admin password (12+ characters); a supplied one is not forced to change. Unset: a random one goes to `DATA_DIR/bootstrap-admin-password`; copy it out with `docker compose cp palisade:/app/data/bootstrap-admin-password ./admin-password`. Palisade removes that file once `admin` has a new password |
 | `AIDE_LOG` / `RKHUNTER_LOG` | `/var/log/aide/aide.log` / `/var/log/rkhunter.log` | Host reports to read (mount read-only); on agents too. Empty turns one off |
 | `FALCO_EVENTS` / `FALCO_MIN_PRIORITY` | `/var/log/falco/events.json` / `warning` | Falco JSON alert file to follow (mount read-only); lowest priority kept |
 | `UPDATE_CHECK` | `true` | Look up the latest GitHub release once a day and tell admins on the dashboard; sends only the version |
@@ -26,7 +41,7 @@ Back to the [README](../README.md). How the parts fit together: [ARCHITECTURE.md
 | `CLAMD_ENDPOINT` | `tcp://clamav:3310` | Default endpoint (`tcp://host:port` or `unix:///path`), created on first start only; change it later under **Admin > clamd Endpoints** |
 | `CLAMD_HOST_ALLOWLIST` | empty | Hosts admins may add endpoints for; empty allows only the host of `CLAMD_ENDPOINT` |
 | `CLAMD_MAX_STREAM_MB` | `1024` | Upload size limit; raise clamd's `StreamMaxLength` to match (see below) |
-| `SCAN_ROOTS` | empty | Comma-separated paths that path scans, schedules and watches may use; clamd must see them at the same paths |
+| `SCAN_ROOTS` | empty | Comma-separated paths that path scans, schedules and watches may use; clamd must see them at the same paths. A missing folder is logged at start, not fatal |
 | `SCAN_CONCURRENCY` | `2` | Path scans running at once |
 | `SCHEDULE_TZ` | `TZ`, else `UTC` | Default time zone for schedules (IANA name, e.g. `Europe/Berlin`); each schedule can set its own |
 | `UPLOAD_MAX_FILES` | `10` | Files per upload |
@@ -85,12 +100,14 @@ Destinations: a plain `https://…` URL gets the JSON event, and Discord webhook
 | Variable | Default | Purpose |
 |---|---|---|
 | `CROWDSEC_LAPI_URL` | unset | Local API, e.g. `http://crowdsec:8080`; turns on the CrowdSec pages |
-| `CROWDSEC_MACHINE_ID` | `palisade` | Watcher added with `cscli machines add palisade --password "$(cat crowdsec_pw)"` |
+| `CROWDSEC_MACHINE_ID` | `palisade` | Watcher (machine) name Palisade signs in with |
 | `CROWDSEC_PASSWORD(_FILE)` | unset | That watcher's password |
 | `CROWDSEC_CA_FILE` | unset | Extra CA for an https LAPI |
 | `CROWDSEC_INCLUDE_CAPI` | `false` | Also show the community blocklist (large) |
 | `CROWDSEC_READ_ONLY` | `false` | Hide the ban and unban buttons |
 | `CROWDSEC_LOOKBACK_HOURS` | `168` | Hours of alerts kept in memory (nothing is stored in the database) |
+
+`docker-compose.full.yml` sets this up for you: a one-shot `secrets-init` service writes a random password into a volume, and the CrowdSec container registers the watcher `palisade` with it on every start (its `AGENT_USERNAME` and `AGENT_PASSWORD` variables). For a CrowdSec you already run, make a password file with `openssl rand -hex 24 > crowdsec_password`, mount it into your CrowdSec container and set `AGENT_USERNAME=palisade` and `AGENT_PASSWORD` from it there (see the `crowdsec` service in `docker-compose.full.yml`), or on a host install run `sudo cscli machines add palisade --password "$(cat crowdsec_password)" -f /dev/null` once (`-f /dev/null` keeps cscli from printing or overwriting credentials), then `sudo chown 10001 crowdsec_password` and point `CROWDSEC_PASSWORD_FILE` at it.
 
 Palisade refreshes every minute and re-reads the whole window hourly. Bans are sent the way `cscli decisions add` sends them, so every bouncer applies them. Deleting alerts needs CrowdSec's `trusted_ips`, so Palisade doesn't offer it. A LAPI that stops answering is logged (`crowdsec.lapi_down`) and notified, and so is its recovery.
 
@@ -134,7 +151,7 @@ The agent writes its own JSON line for every job it runs (`agent.action`) or ref
 
 ## Metrics
 
-`METRICS_TOKEN(_FILE)` (16+ characters) enables `/metrics` and `/actuator/prometheus`, read with `Authorization: Bearer <token>`. Without a token both return 404. See `dashboards/prometheus.yml.example`.
+`METRICS_TOKEN(_FILE)` (16+ characters) enables `/metrics` and `/actuator/prometheus`, read with `Authorization: Bearer <token>`. Without a token both return 404. See `dashboards/prometheus.yml.example`. `docker-compose.full.yml` generates the token into the `palisade-secrets` volume; mount that volume into Prometheus and use the file as its `bearer_token_file`.
 
 ## OIDC single sign-on
 

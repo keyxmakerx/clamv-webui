@@ -85,6 +85,8 @@ struct FirewallPage {
     /// Shown inside the refreshed part, so a background check can show it.
     confirmed: bool,
     dir: String,
+    /// This server has the firewall folder mounted (else the page explains how).
+    dir_mounted: bool,
     /// The tool the host writes Palisade's plan through.
     backend: &'static str,
 }
@@ -294,6 +296,7 @@ async fn show(st: &AppState, mut nav: Nav, host: Option<i64>) -> Response {
             pending,
             confirmed,
             dir: crate::firewall::DIR.to_owned(),
+            dir_mounted: crate::firewall::dir().is_dir(),
             backend: s.backend(),
             nav,
         },

@@ -54,6 +54,8 @@ pub struct AppState {
     pub firewalls: crate::firewall::Snapshots,
     /// Passkey confirmations in flight: challenge handle to (user, host, action, expiry).
     pub stepups: std::sync::Mutex<std::collections::HashMap<String, Stepup>>,
+    /// File-system facts for the Setup page and the sign-in hint.
+    pub setup_fs: crate::web::setup::FsCache,
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +111,7 @@ impl AppState {
                 .iter()
                 .filter_map(|c| crate::webhook::Cidr::parse(c).ok())
                 .collect(),
+            setup_fs: crate::web::setup::FsCache::new(&cfg),
             sealer: crate::auth::sealed::Sealer::new(
                 cfg.secret_key_file
                     .clone()
@@ -271,39 +274,93 @@ pub async fn reset_admin(cfg: &Config) -> anyhow::Result<std::path::PathBuf> {
     crate::auth::bootstrap::reset_admin(&db, &cfg.data_dir).await
 }
 
-pub async fn serve(cfg: Config) -> anyhow::Result<()> {
-    prepare_data_dir(&cfg.data_dir)?;
-    crate::webhook::Target::from_config(&cfg)?;
-    if let Some(p) = &cfg.metrics_token_file {
-        std::fs::read_to_string(p)
-            .map_err(|e| anyhow::anyhow!("cannot read METRICS_TOKEN_FILE {}: {e}", p.display()))?;
+/// Check the settings that are fatal when wrong, before anything starts. Each error names
+/// the setting and how to fix it.
+pub fn preflight(cfg: &Config) -> anyhow::Result<()> {
+    let files = [
+        ("WEBHOOK_URL_FILE", &cfg.webhook_url_file),
+        ("METRICS_TOKEN_FILE", &cfg.metrics_token_file),
+        ("OIDC_CLIENT_SECRET_FILE", &cfg.oidc_client_secret_file),
+        ("LDAP_BIND_PASSWORD_FILE", &cfg.ldap_bind_password_file),
+    ];
+    for (var, path) in files {
+        if let Some(p) = path {
+            crate::config::read_setting_file(var, p)?;
+        }
     }
+    crate::webhook::Target::from_config(cfg)?;
     if cfg.metrics_token().is_some_and(|t| t.len() < 16) {
-        anyhow::bail!("METRICS_TOKEN must be at least 16 characters");
+        anyhow::bail!(
+            "METRICS_TOKEN must be at least 16 characters; make one with: openssl rand -hex 32 > metrics_token"
+        );
     }
     if let Some(z) = &cfg.schedule_tz {
-        crate::cron::zone(z).map_err(|e| anyhow::anyhow!("SCHEDULE_TZ: {e}"))?;
+        crate::cron::zone(z).map_err(|e| {
+            anyhow::anyhow!("SCHEDULE_TZ: {e}; use an IANA name such as Europe/Berlin")
+        })?;
+    }
+    cfg.bootstrap_admin_password()?;
+    Ok(())
+}
+
+/// Problems that do not stop the server; logged once at start with how to fix each.
+pub fn startup_warnings(cfg: &Config) -> Vec<String> {
+    let mut w = cfg.scan_root_problems();
+    if cfg.scan_roots.iter().all(|r| r.as_os_str().is_empty()) {
+        w.push(
+            "SCAN_ROOTS is empty, so path scans, schedules and watched folders are off (uploads still work); set SCAN_ROOTS=/scan and mount a folder there".to_owned(),
+        );
+    }
+    if let (Some(_), Some(p)) = (&cfg.crowdsec_lapi_url, &cfg.crowdsec_password_file)
+        && let Err(e) = crate::config::read_setting_file("CROWDSEC_PASSWORD_FILE", p)
+    {
+        w.push(format!("{e}; the CrowdSec pages stay off until then"));
+    }
+    w
+}
+
+pub async fn serve(cfg: Config) -> anyhow::Result<()> {
+    prepare_data_dir(&cfg.data_dir)?;
+    preflight(&cfg)?;
+    for w in startup_warnings(&cfg) {
+        tracing::warn!(event = "config.warning", "{w}");
+    }
+    if let Some(w) = crate::quarantine::prepare_dir(cfg.quarantine_dir.as_deref()) {
+        tracing::warn!(event = "config.warning", "{w}");
     }
     let url = cfg.database_url()?;
     let db = Db::open(&url, cfg.database_max_connections)
         .await
-        .map_err(|e| anyhow::anyhow!("database {}: {e}", redact_url(&url)))?;
+        .map_err(|e| {
+            let fix = if url.starts_with("sqlite:") {
+                "DATA_DIR must be writable (a named volume, or chown the host folder to the app's uid)"
+            } else {
+                "check DATABASE_URL and that the database server is up and reachable from this container"
+            };
+            anyhow::anyhow!("database {}: {e}; {fix}", redact_url(&url))
+        })?;
     tracing::info!(database = %redact_url(&url), "database ready");
     let mut cfg = crate::settings::overlay(cfg, &db.list_settings().await.unwrap_or_default());
     crate::auth::oidc::Oidc::from_config(&cfg)?;
     crate::auth::ldap::Ldap::from_config(&cfg)?;
     for c in &cfg.trusted_proxies {
-        crate::webhook::Cidr::parse(c).map_err(|e| anyhow::anyhow!("TRUSTED_PROXIES: {e}"))?;
+        crate::webhook::Cidr::parse(c).map_err(|e| {
+            anyhow::anyhow!(
+                "TRUSTED_PROXIES: {e}; list proxy networks as CIDRs, e.g. 172.16.0.0/12"
+            )
+        })?;
     }
     if cfg.tls_enabled() {
         cfg.cookie_secure = true;
     }
-    crate::auth::bootstrap::ensure_admin(
-        &db,
-        &cfg.data_dir,
-        cfg.bootstrap_admin_password.as_deref(),
-    )
-    .await?;
+    let supplied = cfg.bootstrap_admin_password()?;
+    crate::auth::bootstrap::ensure_admin(&db, &cfg.data_dir, supplied.as_deref())
+        .await
+        .map_err(|e| match &cfg.bootstrap_admin_password_file {
+            Some(_) => anyhow::anyhow!("{e} (read from BOOTSTRAP_ADMIN_PASSWORD_FILE)"),
+            None => e,
+        })?;
+    bootstrap_file_cleanup(&db, &cfg.data_dir, true).await;
     seed_endpoint(&db, &cfg).await?;
     let state = Arc::new(AppState::new(cfg.clone(), db.clone()));
     spawn_housekeeping(state.clone());
@@ -322,6 +379,8 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     crate::crowdsec::spawn(state.clone());
     crate::hostchecks::spawn(state.clone());
     crate::firewall::spawn(state.clone());
+    spawn_clamd_wait(state.clone());
+    crate::web::setup::spawn_fs_refresh(state.clone());
     let app = router(state, &cfg).into_make_service_with_connect_info::<std::net::SocketAddr>();
     let scheme = if cfg.tls_enabled() { "https" } else { "http" };
     tracing::info!(listen = %cfg.listen, scheme, clamd = %cfg.clamd_endpoint, data_dir = %cfg.data_dir.display(), version = env!("CARGO_PKG_VERSION"), "started");
@@ -330,8 +389,14 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
         tracing::info!(event = "tls.ready", cert = %cert.display(), sha256 = crate::tls::fingerprint(&cert).as_deref().unwrap_or("?"), "serving HTTPS");
         // The container HEALTHCHECK speaks plain HTTP to loopback only.
         let health = Router::new().route("/healthz", get(healthz));
-        let hl =
-            tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, cfg.health_port)).await?;
+        let hl = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, cfg.health_port))
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "cannot open the health port 127.0.0.1:{} ({e}); set HEALTH_PORT to a free port",
+                    cfg.health_port
+                )
+            })?;
         tokio::spawn(async move {
             let _ = axum::serve(hl, health).await;
         });
@@ -344,9 +409,12 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
         axum_server::bind_rustls(cfg.listen, tls)
             .handle(handle)
             .serve(app)
-            .await?;
+            .await
+            .map_err(|e| listen_error(cfg.listen, &e))?;
     } else {
-        let listener = tokio::net::TcpListener::bind(cfg.listen).await?;
+        let listener = tokio::net::TcpListener::bind(cfg.listen)
+            .await
+            .map_err(|e| listen_error(cfg.listen, &e))?;
         axum::serve(listener, app)
             .with_graceful_shutdown(shutdown())
             .await?;
@@ -372,17 +440,27 @@ async fn shutdown() {
     tokio::select! { () = ctrl_c => {}, () = term => {} }
 }
 
+fn listen_error(addr: std::net::SocketAddr, e: &std::io::Error) -> anyhow::Error {
+    anyhow::anyhow!(
+        "cannot listen on {addr} ({e}); free that port or set LISTEN_ADDR to another address"
+    )
+}
+
 /// Create DATA_DIR and make it private: it holds the database and secrets.
-fn prepare_data_dir(dir: &std::path::Path) -> anyhow::Result<()> {
-    std::fs::create_dir_all(dir)
-        .map_err(|e| anyhow::anyhow!("cannot create DATA_DIR {}: {e}", dir.display()))?;
+pub fn prepare_data_dir(dir: &std::path::Path) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir).map_err(|e| {
+        anyhow::anyhow!(
+            "cannot create DATA_DIR {} ({e}); mount a writable volume there (the compose files use a named volume) or set DATA_DIR to a writable folder",
+            dir.display()
+        )
+    })?;
     // A bind mount Docker created is owned by root; say so instead of failing on the database.
     let probe = dir.join(".write-test");
     if let Err(e) = std::fs::write(&probe, b"") {
         anyhow::bail!(
-            "DATA_DIR {} is not writable ({e}); on the host run: chown {} <data folder>",
+            "DATA_DIR {} is not writable ({e}); use a named volume (see docker-compose.yml), or on the host run: sudo chown -R {} <data folder>",
             dir.display(),
-            owner_hint()
+            crate::config::run_as()
         );
     }
     let _ = std::fs::remove_file(&probe);
@@ -396,16 +474,77 @@ fn prepare_data_dir(dir: &std::path::Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `uid:gid` this process runs as, for the chown hint.
-fn owner_hint() -> String {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if let Ok(m) = std::fs::metadata("/proc/self") {
-            return format!("{}:{}", m.uid(), m.gid());
-        }
+/// Where `auth::bootstrap` writes a generated admin password.
+pub fn bootstrap_file(data_dir: &std::path::Path) -> std::path::PathBuf {
+    crate::auth::bootstrap::file(data_dir)
+}
+
+/// A one-time admin password file is useless once `admin` has chosen its own password (or is
+/// gone); remove it so it does not linger in a volume the operator cannot easily reach.
+/// While it is still needed and `announce` is set, say how to copy it out without printing it.
+pub async fn bootstrap_file_cleanup(db: &Db, data_dir: &std::path::Path, announce: bool) {
+    let file = bootstrap_file(data_dir);
+    if !file.exists() {
+        return;
     }
-    "10001:10001".to_owned()
+    let still_needed = match db.user_by_username("admin").await {
+        Ok(Some(u)) => u.must_change_password,
+        Ok(None) => false,
+        Err(_) => return,
+    };
+    if still_needed {
+        if announce {
+            tracing::warn!(
+                event = "auth.bootstrap_pending",
+                file = %file.display(),
+                "admin's one-time password is in this file; with Docker, copy it to the host without printing it: docker compose cp palisade:{} ./admin-password",
+                file.display()
+            );
+        }
+        return;
+    }
+    match std::fs::remove_file(&file) {
+        Ok(()) => tracing::info!(
+            event = "auth.bootstrap_removed",
+            file = %file.display(),
+            "removed the one-time admin password file: admin has set its own password"
+        ),
+        Err(e) => tracing::warn!(
+            event = "auth.bootstrap_remove_failed",
+            file = %file.display(),
+            error = %e,
+            "could not remove the old one-time admin password file"
+        ),
+    }
+}
+
+/// On first start clamd may still be loading signatures. Log once that it is not reachable yet
+/// and again when it answers, so the logs show progress instead of silence.
+fn spawn_clamd_wait(state: Arc<AppState>) {
+    tokio::spawn(async move {
+        let mut warned = false;
+        // About 20 minutes: enough for a first signature download on a slow line.
+        for _ in 0..80 {
+            let Ok(Some(ep)) = state.db.default_endpoint().await else {
+                return;
+            };
+            let Ok(addr) = ep.parsed() else { return };
+            match state.clamd(addr).ping().await {
+                Ok(()) => {
+                    if warned {
+                        tracing::info!(event = "clamd.ready", endpoint = %ep.address, "clamd answers now; scans can run");
+                    }
+                    return;
+                }
+                Err(e) if !warned => {
+                    warned = true;
+                    tracing::warn!(event = "clamd.waiting", endpoint = %ep.address, error = %e, "clamd is not reachable yet; on first start it loads its signatures, which can take a few minutes");
+                }
+                Err(_) => {}
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+        }
+    });
 }
 
 /// Periodic cleanup of expired sessions and old jobs (N5).
@@ -414,6 +553,7 @@ fn spawn_housekeeping(state: Arc<AppState>) {
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(600));
         loop {
             tick.tick().await;
+            bootstrap_file_cleanup(&state.db, &state.cfg.data_dir, false).await;
             match state
                 .db
                 .purge_expired_sessions(state.cfg.session_idle_ms())
@@ -544,6 +684,122 @@ mod tests {
             .await
             .expect("res");
         assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    fn cfg(args: &[&str]) -> Config {
+        let mut all = vec!["palisade"];
+        all.extend_from_slice(args);
+        crate::config::Cli::try_parse_from(all)
+            .expect("parse")
+            .config
+    }
+
+    fn temp(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("palisade-app-{name}-{}", crate::db::new_id()))
+    }
+
+    #[test]
+    fn data_dir_errors_say_how_to_fix() {
+        // A file where DATA_DIR should be: cannot be created, even as root.
+        let file = temp("file");
+        std::fs::write(&file, b"").expect("write");
+        let e = prepare_data_dir(&file.join("data"))
+            .expect_err("not a folder")
+            .to_string();
+        assert!(e.contains("cannot create DATA_DIR"), "{e}");
+        assert!(e.contains("named volume"), "{e}");
+        let _ = std::fs::remove_file(&file);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let dir = temp("ro");
+            std::fs::create_dir_all(&dir).expect("mkdir");
+            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).expect("chmod");
+            // Root writes anyway; the check only means something for other users.
+            if std::fs::write(dir.join("probe"), b"").is_err() {
+                let e = prepare_data_dir(&dir).expect_err("read-only").to_string();
+                assert!(e.contains("is not writable"), "{e}");
+                assert!(e.contains("sudo chown -R"), "{e}");
+                assert!(e.contains("named volume"), "{e}");
+            }
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    #[test]
+    fn preflight_names_the_setting_and_the_fix() {
+        assert!(preflight(&cfg(&[])).is_ok(), "defaults start");
+        let e = preflight(&cfg(&["--metrics-token-file", "/nonexistent/metrics"]))
+            .expect_err("missing")
+            .to_string();
+        assert!(
+            e.contains("METRICS_TOKEN_FILE") && e.contains("mount the file"),
+            "{e}"
+        );
+        let e = preflight(&cfg(&["--metrics-token", "short"]))
+            .expect_err("short")
+            .to_string();
+        assert!(e.contains("openssl rand -hex 32 > metrics_token"), "{e}");
+        let e = preflight(&cfg(&["--schedule-tz", "Mars/Olympus"]))
+            .expect_err("zone")
+            .to_string();
+        assert!(
+            e.contains("SCHEDULE_TZ") && e.contains("Europe/Berlin"),
+            "{e}"
+        );
+        let e = preflight(&cfg(&[
+            "--bootstrap-admin-password-file",
+            "/nonexistent/pw",
+        ]))
+        .expect_err("missing")
+        .to_string();
+        assert!(e.contains("BOOTSTRAP_ADMIN_PASSWORD_FILE"), "{e}");
+    }
+
+    #[test]
+    fn missing_scan_roots_warn_instead_of_failing() {
+        let c = cfg(&["--scan-roots", "/nonexistent/palisade-scan"]);
+        assert!(preflight(&c).is_ok());
+        let w = startup_warnings(&c);
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(w[0].contains("/nonexistent/palisade-scan"), "{w:?}");
+        let w = startup_warnings(&cfg(&[]));
+        assert!(w.iter().any(|l| l.contains("SCAN_ROOTS is empty")), "{w:?}");
+        let w = startup_warnings(&cfg(&[
+            "--crowdsec-lapi-url",
+            "http://crowdsec:8080",
+            "--crowdsec-password-file",
+            "/nonexistent/cs",
+        ]));
+        assert!(
+            w.iter().any(|l| l.contains("CROWDSEC_PASSWORD_FILE")),
+            "{w:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn one_time_password_file_goes_once_admin_chose_a_password() {
+        let dir = temp("boot");
+        let db = Db::open("sqlite::memory:", 1).await.expect("db");
+        crate::auth::bootstrap::ensure_admin(&db, &dir, None)
+            .await
+            .expect("bootstrap");
+        let file = bootstrap_file(&dir);
+        assert!(file.exists(), "generated password written");
+        bootstrap_file_cleanup(&db, &dir, true).await;
+        assert!(file.exists(), "kept while admin must change it");
+        let admin = db
+            .user_by_username("admin")
+            .await
+            .expect("q")
+            .expect("admin");
+        db.set_password(&admin.id, &admin.password_hash, false, false)
+            .await
+            .expect("changed");
+        bootstrap_file_cleanup(&db, &dir, false).await;
+        assert!(!file.exists(), "removed after the change");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]

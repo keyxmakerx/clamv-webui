@@ -1,4 +1,5 @@
-# Agent: scans this host's folders with its own clamd and reports to a palisade server.
+# Agent: scans this host's folders with its own clamd and reports to a Palisade server.
+# Admin > Agents on the server shows the token once and a ready-made copy of this file; save the token as ./agent_token.
 services:
   palisade-agent:
     image: ghcr.io/keyxmakerx/palisade:latest
@@ -11,7 +12,7 @@ services:
       AGENT_TOKEN_FILE: /run/secrets/agent_token  # token from Admin > Agents
       AGENT_SERVER_FINGERPRINT: AB:CD:EF:...  # server certificate SHA-256 from Admin > Agents; or AGENT_CA_FILE for a private CA
       # AGENT_ALLOW_PLAINTEXT: "true"  # accept http:// (token unencrypted); only on a private VPN or mesh
-      # AGENT_QUEUE_DIR: /queue  # keep unsent results across agent restarts; mount a writable volume
+      AGENT_QUEUE_DIR: /app/data/queue  # keeps unsent results across agent restarts (in the volume below)
       CLAMD_ENDPOINT: tcp://clamav:3310  # this host's clamd
       SCAN_ROOTS: /data  # folders this agent may scan; clamd must see the same paths
       # REALTIME_PATHS: /data/downloads  # scan files here as soon as they are written
@@ -30,8 +31,8 @@ services:
     security_opt:
       - no-new-privileges:true
     volumes:
-      - /data:/data:ro
-      # - ./queue:/queue  # for AGENT_QUEUE_DIR; chown 10001
+      - agent-data:/app/data  # unsent results; starts owned by the app's UID 10001
+      - /data:/data:ro  # the folders in SCAN_ROOTS; clamd must see the same paths
       # - /var/log/aide:/var/log/aide:ro  # AIDE reports, read every 5 min
       # - /var/log/rkhunter.log:/var/log/rkhunter.log:ro  # rkhunter report
       # - /var/log/audit:/var/log/audit:ro  # lets canary alerts name who touched them
@@ -42,7 +43,10 @@ services:
 
 secrets:
   agent_token:
-    file: ./agent_token  # token from Admin > Agents; chown 10001 and chmod 600
+    file: ./agent_token  # token from Admin > Agents; on the host: sudo chown 10001 agent_token && sudo chmod 600 agent_token
+
+volumes:
+  agent-data:
 
 networks:
   media:

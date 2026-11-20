@@ -3,7 +3,9 @@
 {% block content %}
 <h1 class="h3">{{ nav.t("Quarantine") }}</h1>
 <p class="muted">{{ nav.t("Quarantine moves an infected file out of its scan root into a locked folder, after clamd confirms it is still infected. Start it from") }} <a href="/detections">{{ nav.t("Detections") }}</a>{% if auto %}{{ nav.t("; every new detection is also quarantined on its own (") }}<code>QUARANTINE_AUTO</code>){% endif %}{{ nav.t(". Putting a file back or deleting it for good needs your passkey.") }}</p>
-{% if !enabled %}<div class="alert alert-secondary py-2 small">{{ nav.t("Quarantine is off on this server: set") }} <code>QUARANTINE_DIR</code> {{ nav.t("to a folder Palisade can write, and mount the scan roots you want to quarantine from read-write. Agents have their own") }} <code>QUARANTINE_DIR</code> {{ nav.t("and need") }} <code>quarantine</code> {{ nav.t("in") }} <code>AGENT_ALLOW</code>.</div>{% else %}<p class="small muted">{{ nav.t("This server keeps quarantined files in") }} <code>{{ dir }}</code>.</p>{% endif %}
+{% if !enabled %}{% let g = crate::web::setup::guide("quarantine") %}{% include "_empty.html" %}
+<p class="small muted mt-2">Agents keep their own <code>QUARANTINE_DIR</code> and need <code>quarantine</code> in <code>AGENT_ALLOW</code>.</p>{% else %}<p class="small muted">{{ nav.t("This server keeps quarantined files in") }} <code>{{ dir }}</code>.</p>{% endif %}
+{% if held > 0 %}<p class="small"><strong>{{ held }}</strong> {{ nav.t("file(s) in quarantine,") }} <strong>{{ held_size }}</strong> {{ nav.t("in total. Delete files you no longer need to free the space.") }}</p>{% endif %}
 <div id="passkey-error" class="alert alert-danger py-2 small d-none" role="alert"></div>
 <div id="stepup-ok" class="alert alert-success py-2 small d-none" role="status"></div>
 <section class="card mt-2"><div class="card-body table-responsive">

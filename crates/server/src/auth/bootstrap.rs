@@ -1,10 +1,34 @@
 //! First start: create the `admin` account if there are no users.
 
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::auth::{Role, password, token};
 use crate::db::Db;
+
+/// Name of the file that holds a generated one-time admin password.
+pub const FILE_NAME: &str = "bootstrap-admin-password";
+
+/// Where a generated one-time admin password is written.
+pub fn file(data_dir: &Path) -> PathBuf {
+    data_dir.join(FILE_NAME)
+}
+
+/// Remove the one-time password file once admin has chosen their own password,
+/// so a stale secret does not sit on disk. The file only ever holds a password
+/// that no longer works at this point.
+pub fn forget(data_dir: &Path) {
+    let f = file(data_dir);
+    match std::fs::remove_file(&f) {
+        Ok(()) => {
+            tracing::info!(event = "auth.bootstrap_file_removed", file = %f.display(), "one-time admin password file removed")
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => {
+            tracing::warn!(event = "auth.bootstrap_file_kept", file = %f.display(), error = %e, "could not remove the one-time admin password file; delete it by hand")
+        }
+    }
+}
 
 pub async fn ensure_admin(db: &Db, data_dir: &Path, supplied: Option<&str>) -> anyhow::Result<()> {
     if db.count_users().await? > 0 {
@@ -22,7 +46,7 @@ pub async fn ensure_admin(db: &Db, data_dir: &Path, supplied: Option<&str>) -> a
     db.create_user("admin", &hash, Role::Admin, generated)
         .await?;
     if generated {
-        let file = data_dir.join("bootstrap-admin-password");
+        let file = file(data_dir);
         write_private(&file, &pw)?;
         // The password itself is never logged.
         tracing::warn!(
@@ -55,7 +79,7 @@ pub async fn reset_admin(db: &Db, data_dir: &Path) -> anyhow::Result<std::path::
             db.create_user("admin", &hash, Role::Admin, true).await?;
         }
     }
-    let file = data_dir.join("bootstrap-admin-password");
+    let file = file(data_dir);
     write_private(&file, &pw)?;
     tracing::warn!(event = "auth.admin_reset", file = %file.display(), "admin password reset; read it from the file, then delete the file");
     db.audit(crate::db::audit::AuditEntry {

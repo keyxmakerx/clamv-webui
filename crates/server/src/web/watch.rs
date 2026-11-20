@@ -6,7 +6,7 @@ use askama::Template;
 use axum::Router;
 use axum::extract::{Form, Path, State};
 use axum::http::StatusCode;
-use axum::response::Response;
+use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use serde::Deserialize;
 
@@ -27,6 +27,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .route("/admin/watch/{id}/enabled", post(toggle))
         .route("/admin/watch/{id}/delete", post(delete))
         .route("/admin/watch/{id}/edit", post(edit))
+        .route("/admin/watch/{id}/scan", post(scan_now))
 }
 
 pub struct Row {
@@ -268,6 +269,37 @@ async fn delete(
         Some(format!("Stopped watching {}.", w.path)),
     )
     .await
+}
+
+/// Scan the whole folder now, as a path scan on its endpoint, and show the job.
+async fn scan_now(
+    State(st): State<Arc<AppState>>,
+    auth: Auth,
+    info: RequestInfo,
+    Path(id): Path<String>,
+    Form(f): Form<CsrfForm>,
+) -> Response {
+    let (s, me, w) = match target(&st, auth, f.csrf.as_deref(), &id).await {
+        Ok(x) => x,
+        Err(r) => return r,
+    };
+    if let Some(r) = super::scan::rate_limited(&st, &me, &info) {
+        return r;
+    }
+    let run_on = w.endpoint_id.map(|e| e.to_string());
+    match super::scan::queue_path(&st, &me, &info, &w.path, run_on.as_deref()).await {
+        Ok(job) => {
+            super::scan::audit_scan(&st, &me, &info, &job, "SCAN_PATH").await;
+            st.runner.poke();
+            Redirect::to(&format!("/jobs/{}", job.id)).into_response()
+        }
+        Err(super::scan::Queue::Refused(m)) => {
+            result(&st, &s, &me, Some(format!("{}: {m}", w.path)), None).await
+        }
+        Err(super::scan::Queue::Unavailable) => {
+            error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.")
+        }
+    }
 }
 
 /// Change a watched folder's path or endpoint. A new path is treated like a

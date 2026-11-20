@@ -26,6 +26,54 @@ use crate::scan;
 
 const MAX_PATHS: usize = 50;
 
+/// Common schedules offered in the form: (cron, label). "custom" means the cron field.
+pub const PRESETS: [(&str, &str); 5] = [
+    ("0 2 * * *", "Nightly at 02:00"),
+    ("0 3 * * 0", "Weekly, Sunday at 03:00"),
+    ("0 3 1 * *", "Monthly, on the 1st at 03:00"),
+    ("0 */6 * * *", "Every 6 hours"),
+    ("0 12 * * *", "Daily at 12:00"),
+];
+
+/// The preset a fresh form starts on.
+const DEFAULT_PRESET: &str = "0 2 * * *";
+
+/// A plain-words name for a cron line, or empty when it has none.
+fn cron_label(cron: &str) -> &'static str {
+    match cron.trim() {
+        "@hourly" => "Every hour",
+        "@daily" => "Daily at 00:00",
+        "@weekly" => "Weekly, Sunday at 00:00",
+        "@monthly" => "Monthly, on the 1st at 00:00",
+        c => PRESETS.iter().find(|p| p.0 == c).map_or("", |p| p.1),
+    }
+}
+
+/// The preset select's value for a cron line: the preset itself, or "custom".
+fn preset_for(cron: &str) -> String {
+    let c = cron.trim();
+    if PRESETS.iter().any(|p| p.0 == c) {
+        c.to_owned()
+    } else {
+        "custom".to_owned()
+    }
+}
+
+/// The cron line a form asks for: a typed cron line wins, else the preset.
+fn chosen_cron(preset: &str, cron: &str) -> Result<String, String> {
+    if !cron.trim().is_empty() {
+        return Ok(cron.trim().to_owned());
+    }
+    match preset.trim() {
+        "" | "custom" => Ok(String::new()),
+        p => PRESETS
+            .iter()
+            .find(|x| x.0 == p)
+            .map(|x| x.0.to_owned())
+            .ok_or_else(|| "Unknown schedule preset.".to_owned()),
+    }
+}
+
 /// `HH:MM` → minute of the day.
 fn parse_hhmm(v: &str) -> Result<Option<i64>, String> {
     let v = v.trim();
@@ -56,6 +104,8 @@ fn fmt_in(tz: &jiff::tz::TimeZone, ms: i64) -> String {
 #[derive(Default)]
 pub struct Draft {
     name: String,
+    /// A cron line from PRESETS, or "custom" for the cron field.
+    preset: String,
     cron: String,
     paths: String,
     endpoint: String,
@@ -79,6 +129,10 @@ pub struct Row {
     id: String,
     name: String,
     cron: String,
+    /// The cron line in words, e.g. "Nightly at 02:00", or empty.
+    cron_label: &'static str,
+    /// The edit form's preset select value.
+    preset: String,
     next: String,
     paths: Vec<String>,
     endpoint: String,
@@ -111,6 +165,7 @@ struct SchedulesPage {
     default_zone: String,
     draft: Draft,
     preview: Vec<String>,
+    presets: &'static [(&'static str, &'static str)],
 }
 
 impl SchedulesPage {
@@ -129,12 +184,22 @@ async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
         Ok(x) => x,
         Err(r) => return r,
     };
-    show(&st, Nav::new("schedules", &s, &u), fresh(), Vec::new()).await
+    // Start from every scan root, so a nightly scan of everything is one click.
+    let mut draft = fresh();
+    draft.paths = st
+        .cfg
+        .scan_roots
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    show(&st, Nav::new("schedules", &s, &u), draft, Vec::new()).await
 }
 
 fn fresh() -> Draft {
     Draft {
         eicar: true,
+        preset: DEFAULT_PRESET.to_owned(),
         ..Draft::default()
     }
 }
@@ -180,6 +245,8 @@ async fn row(st: &AppState, s: Schedule, names: &super::scan::Names) -> Row {
         last_job: s.last_job_id.clone().unwrap_or_default(),
         id: s.id,
         name: s.name,
+        cron_label: cron_label(&s.cron),
+        preset: preset_for(&s.cron),
         cron: s.cron,
         paths: s.paths,
         enabled: s.enabled,
@@ -222,6 +289,7 @@ async fn show(st: &AppState, nav: Nav, draft: Draft, preview: Vec<String>) -> Re
             default_zone: crate::schedule::default_zone(&st.cfg).0,
             draft,
             preview,
+            presets: &PRESETS,
         },
     )
 }
@@ -257,6 +325,9 @@ struct CreateForm {
     csrf: Option<String>,
     #[serde(default)]
     name: String,
+    /// A cron line from PRESETS; empty or "custom" uses `cron`.
+    #[serde(default)]
+    preset: String,
     #[serde(default)]
     cron: String,
     #[serde(default)]
@@ -364,10 +435,16 @@ async fn check(st: &AppState, f: &CreateForm, preview_only: bool) -> Result<Chec
     {
         return Err("Names are 1 to 100 characters.".into());
     }
-    let cron = f.cron.trim();
-    let parsed = cron
-        .parse::<Cron>()
-        .map_err(|e| format!("Schedule: {e}."))?;
+    let cron = chosen_cron(&f.preset, &f.cron)?;
+    let cron = cron.as_str();
+    if cron.is_empty() {
+        return Err("Pick how often it runs, or write a cron line under Custom.".into());
+    }
+    let parsed = cron.parse::<Cron>().map_err(|e| {
+        format!(
+            "When (cron): {e}. Pick a preset, or write five fields like 30 2 * * * (02:30 daily)."
+        )
+    })?;
     let upcoming = crate::schedule::next_runs(&parsed, window, &tz, now_ms(), 5);
     let mut c = Checked {
         name: name.to_owned(),
@@ -468,6 +545,11 @@ async fn create(
     };
     let draft = || Draft {
         name: f.name.clone(),
+        preset: if f.preset.is_empty() {
+            "custom".to_owned()
+        } else {
+            f.preset.clone()
+        },
         cron: f.cron.clone(),
         paths: f.paths.clone(),
         endpoint: f.endpoint.clone().unwrap_or_default(),
@@ -637,4 +719,27 @@ async fn delete(
         )),
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn presets_parse_and_typed_cron_wins() {
+        for (c, label) in PRESETS {
+            assert!(c.parse::<Cron>().is_ok(), "{c}");
+            assert_eq!(cron_label(c), label);
+            assert_eq!(preset_for(c), c);
+        }
+        assert_eq!(preset_for("5 4 * * *"), "custom");
+        assert_eq!(cron_label("@daily"), "Daily at 00:00");
+        assert_eq!(chosen_cron("0 2 * * *", "").as_deref(), Ok("0 2 * * *"));
+        assert_eq!(
+            chosen_cron("0 2 * * *", " 5 4 * * * ").as_deref(),
+            Ok("5 4 * * *")
+        );
+        assert_eq!(chosen_cron("custom", "").as_deref(), Ok(""));
+        assert!(chosen_cron("1 1 1 1 1", "").is_err(), "only listed presets");
+    }
 }

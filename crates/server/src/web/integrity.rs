@@ -287,6 +287,8 @@ struct IntegrityPage {
     rkhunter: String,
     falco: Vec<FalcoRow>,
     falco_path: String,
+    /// This server's Falco file is mounted (else the page explains how).
+    falco_mounted: bool,
     managed: Vec<Managed>,
 }
 
@@ -373,6 +375,7 @@ async fn show(st: &AppState, nav: Nav) -> Response {
             rkhunter: st.cfg.rkhunter_log.display().to_string(),
             falco,
             falco_path: st.cfg.falco_events.display().to_string(),
+            falco_mounted: st.cfg.falco_events.exists(),
         },
     )
 }

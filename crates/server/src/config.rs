@@ -575,6 +575,10 @@ pub struct Config {
     )]
     pub bootstrap_admin_password: Option<String>,
 
+    /// File holding the first admin password (Docker secret). Wins over BOOTSTRAP_ADMIN_PASSWORD.
+    #[arg(long, env = "BOOTSTRAP_ADMIN_PASSWORD_FILE", global = true)]
+    pub bootstrap_admin_password_file: Option<std::path::PathBuf>,
+
     /// Per-request timeout for UI and API calls, in seconds.
     #[arg(
         long,
@@ -645,9 +649,7 @@ impl Config {
     /// Resolve the database URL without ever logging it.
     pub fn database_url(&self) -> anyhow::Result<String> {
         if let Some(path) = &self.database_url_file {
-            let raw = std::fs::read_to_string(path).map_err(|e| {
-                anyhow::anyhow!("cannot read DATABASE_URL_FILE {}: {e}", path.display())
-            })?;
+            let raw = read_setting_file("DATABASE_URL_FILE", path)?;
             return Ok(raw.trim().to_owned());
         }
         if let Some(url) = &self.database_url {
@@ -678,6 +680,47 @@ impl Config {
         (!t.is_empty()).then(|| t.to_owned())
     }
 
+    /// The first admin password from BOOTSTRAP_ADMIN_PASSWORD_FILE or BOOTSTRAP_ADMIN_PASSWORD.
+    /// An empty file counts as unset, so a random one is generated.
+    pub fn bootstrap_admin_password(&self) -> anyhow::Result<Option<String>> {
+        let raw = match &self.bootstrap_admin_password_file {
+            Some(p) => read_setting_file("BOOTSTRAP_ADMIN_PASSWORD_FILE", p)?,
+            None => match &self.bootstrap_admin_password {
+                Some(p) => p.clone(),
+                None => return Ok(None),
+            },
+        };
+        let t = raw.trim();
+        Ok((!t.is_empty()).then(|| t.to_owned()))
+    }
+
+    /// SCAN_ROOTS entries that will not work, each with how to fix it. Missing roots are not
+    /// fatal: path scans inside them fail until the folder is mounted.
+    pub fn scan_root_problems(&self) -> Vec<String> {
+        self.scan_roots
+            .iter()
+            .filter(|r| !r.as_os_str().is_empty())
+            .filter_map(|r| {
+                let fix = match std::fs::read_dir(r) {
+                    Ok(_) => return None,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        "mount a folder there (e.g. ./scan:/scan:ro) or remove it from SCAN_ROOTS"
+                            .to_owned()
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => format!(
+                        "let uid {} read it, e.g. on the host: chmod o+rx <folder>",
+                        run_as()
+                    ),
+                    Err(_) => "it must be a folder; fix SCAN_ROOTS".to_owned(),
+                };
+                Some(format!(
+                    "SCAN_ROOTS entry {} cannot be read; {fix}",
+                    r.display()
+                ))
+            })
+            .collect()
+    }
+
     pub fn session_idle_ms(&self) -> i64 {
         i64::from(self.session_idle_minutes.max(1)) * 60_000
     }
@@ -697,5 +740,132 @@ impl Config {
 
     pub fn request_timeout(&self) -> Duration {
         Duration::from_secs(self.request_timeout_secs)
+    }
+}
+
+/// Read a `*_FILE` setting; the error says how to fix the usual causes.
+pub fn read_setting_file(var: &str, path: &std::path::Path) -> anyhow::Result<String> {
+    std::fs::read_to_string(path).map_err(|e| {
+        let fix = match e.kind() {
+            std::io::ErrorKind::NotFound => {
+                "mount the file into the container at that path, or correct the path".to_owned()
+            }
+            std::io::ErrorKind::PermissionDenied => format!(
+                "on the host run: sudo chown {} <file> (keep it chmod 600)",
+                run_as()
+            ),
+            _ => "it must be a readable file".to_owned(),
+        };
+        anyhow::anyhow!("cannot read {var} {} ({e}); {fix}", path.display())
+    })
+}
+
+/// `uid:gid` this process runs as, for chown hints.
+pub fn run_as() -> String {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(m) = std::fs::metadata("/proc/self") {
+            return format!("{}:{}", m.uid(), m.gid());
+        }
+    }
+    "10001:10001".to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg(args: &[&str]) -> Config {
+        let mut all = vec!["palisade"];
+        all.extend_from_slice(args);
+        Cli::try_parse_from(all).expect("parse").config
+    }
+
+    fn temp(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!("palisade-cfg-{name}-{}", crate::db::new_id()))
+    }
+
+    #[test]
+    fn bare_minimum_defaults_need_no_settings() {
+        let c = cfg(&[]);
+        assert_eq!(c.clamd_endpoint.to_string(), "tcp://clamav:3310");
+        assert!(c.clamd_host_allowlist.is_empty());
+        assert_eq!(c.clamd_max_stream_mb, 1024);
+        assert!(!c.tls_enabled(), "HTTPS stays opt-in");
+        assert!(!c.agent_allow_plaintext, "plaintext agents stay refused");
+        assert!(c.bootstrap_admin_password().expect("pw").is_none());
+    }
+
+    #[test]
+    fn bootstrap_password_file_wins_and_is_trimmed() {
+        let f = temp("bootstrap");
+        std::fs::write(&f, "  from-the-file-123\n").expect("write");
+        let p = f.to_str().expect("utf8");
+        let c = cfg(&[
+            "--bootstrap-admin-password",
+            "from-the-flag-123",
+            "--bootstrap-admin-password-file",
+            p,
+        ]);
+        assert_eq!(
+            c.bootstrap_admin_password().expect("pw").as_deref(),
+            Some("from-the-file-123")
+        );
+        std::fs::write(&f, "\n").expect("write");
+        assert!(
+            c.bootstrap_admin_password().expect("pw").is_none(),
+            "empty file"
+        );
+        std::fs::remove_file(&f).expect("rm");
+        let e = c
+            .bootstrap_admin_password()
+            .expect_err("missing")
+            .to_string();
+        assert!(e.contains("BOOTSTRAP_ADMIN_PASSWORD_FILE"), "{e}");
+        assert!(e.contains("mount the file"), "{e}");
+        let c = cfg(&["--bootstrap-admin-password", "from-the-flag-123"]);
+        assert_eq!(
+            c.bootstrap_admin_password().expect("pw").as_deref(),
+            Some("from-the-flag-123")
+        );
+    }
+
+    #[test]
+    fn unreadable_secret_files_say_how_to_fix() {
+        let e = read_setting_file("METRICS_TOKEN_FILE", std::path::Path::new("/nonexistent/x"))
+            .expect_err("missing")
+            .to_string();
+        assert!(
+            e.starts_with("cannot read METRICS_TOKEN_FILE /nonexistent/x"),
+            "{e}"
+        );
+        assert!(e.contains("mount the file"), "{e}");
+        let e = cfg(&["--database-url-file", "/nonexistent/db"])
+            .database_url()
+            .expect_err("missing")
+            .to_string();
+        assert!(e.contains("DATABASE_URL_FILE"), "{e}");
+    }
+
+    #[test]
+    fn missing_scan_roots_are_reported_not_fatal() {
+        let ok = temp("root");
+        std::fs::create_dir_all(&ok).expect("mkdir");
+        let file = temp("file");
+        std::fs::write(&file, b"").expect("write");
+        let roots = format!(
+            "{},/nonexistent/palisade-scan,{}",
+            ok.display(),
+            file.display()
+        );
+        let problems = cfg(&["--scan-roots", &roots]).scan_root_problems();
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        assert!(problems[0].contains("/nonexistent/palisade-scan"));
+        assert!(problems[0].contains("mount a folder there"));
+        assert!(problems[1].contains("must be a folder"));
+        assert!(cfg(&[]).scan_root_problems().is_empty());
+        let _ = std::fs::remove_dir_all(&ok);
+        let _ = std::fs::remove_file(&file);
     }
 }

@@ -23,6 +23,7 @@ pub mod schedules;
 pub mod search;
 pub mod session;
 pub mod settings;
+pub mod setup;
 pub mod timeline;
 pub mod tokens;
 pub mod ux;
@@ -86,6 +87,7 @@ pub fn routes() -> Router<Arc<AppState>> {
         .merge(crowdsec::routes())
         .merge(firewall::routes())
         .merge(quarantine::routes())
+        .merge(setup::routes())
         .route(
             "/{*path}",
             get(asset).layer(tower_http::compression::CompressionLayer::new()),
@@ -228,6 +230,22 @@ pub(crate) struct LoginPage {
     pub sso: Option<String>,
     pub ldap: bool,
     pub source: String,
+    /// Where the one-time admin password file is, while it still exists (never its content).
+    pub first_run: Option<FirstRun>,
+}
+
+/// First-start sign-in hint: where to find the one-time admin password.
+pub(crate) struct FirstRun {
+    /// The file inside the container.
+    pub file: String,
+}
+
+/// Set only while the generated password file is still there.
+pub(crate) fn first_run(st: &AppState) -> Option<FirstRun> {
+    st.setup_fs
+        .get()
+        .bootstrap_file
+        .map(|file| FirstRun { file })
 }
 
 #[derive(Deserialize)]
@@ -260,6 +278,7 @@ async fn login_page(
             sso: st.oidc.as_ref().map(|o| o.label().to_owned()),
             ldap: st.ldap.is_some(),
             source: String::new(),
+            first_run: first_run(&st),
         },
     )
 }
@@ -298,6 +317,7 @@ async fn login(
                 sso: st.oidc.as_ref().map(|o| o.label().to_owned()),
                 ldap: st.ldap.is_some(),
                 source: source.clone(),
+                first_run: first_run(&st),
             },
         )
     };
@@ -327,7 +347,7 @@ async fn login(
             Err(D::Unavailable) => {
                 return page(
                     StatusCode::SERVICE_UNAVAILABLE,
-                    "The directory is unavailable right now.",
+                    "The directory (LDAP) did not answer. Try again, or sign in with a local account.",
                 );
             }
         };
@@ -358,7 +378,10 @@ async fn login(
             );
         }
         Err(Failure::Unavailable) => {
-            return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+            return page(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Sign-in is unavailable: the database did not answer. Try again in a minute; if it keeps failing, check the server log.",
+            );
         }
     };
     mfa::after_password(&st, auth, &user, &req_parts, "UI").await
@@ -392,7 +415,7 @@ pub(crate) async fn begin_session(
             tracing::error!(error = %e, "session create failed");
             return Err(error_page(
                 StatusCode::SERVICE_UNAVAILABLE,
-                "Service unavailable.",
+                "Signed in, but the session could not be saved: the database did not answer. Try again in a minute.",
             ));
         }
     };
@@ -409,8 +432,11 @@ pub(crate) async fn begin_session(
         })
         .await;
     tracing::info!(event = "auth.login", user = %user.username, ip = %info.ip, transport, "signed in");
+    // An admin lands on Setup while it is not done (and not hidden), instead of an empty dashboard.
     let to = if user.must_change_password {
         "/account/password"
+    } else if setup::land_on_setup(st, user).await {
+        "/admin/setup"
     } else {
         "/dashboard"
     };
@@ -459,6 +485,8 @@ struct PasswordPage {
     csrf: String,
     must_change: bool,
     error: Option<String>,
+    /// Signing in with the generated one-time password for the first time.
+    first_admin: bool,
 }
 
 async fn password_page(auth: Auth) -> Response {
@@ -474,6 +502,7 @@ async fn password_page(auth: Auth) -> Response {
             csrf: s.csrf_token,
             must_change: u.must_change_password,
             error,
+            first_admin: u.must_change_password && u.username == "admin",
         },
     )
 }
@@ -509,6 +538,7 @@ async fn change_password(
                 csrf: s.csrf_token.clone(),
                 must_change: u.must_change_password,
                 error: Some(msg.to_owned()),
+                first_admin: u.must_change_password && u.username == "admin",
             },
         )
     };
@@ -523,11 +553,19 @@ async fn change_password(
     .await
     {
         Ok(_) => {}
-        Err(Failure::Locked) => return fail("Too many attempts. Try again later."),
-        Err(Failure::Bad) => return fail("Current password is wrong."),
+        Err(Failure::Locked) => {
+            return fail("Too many wrong attempts. Wait 15 minutes, then try again.");
+        }
+        Err(Failure::Bad) => {
+            return fail(if u.must_change_password && u.username == "admin" {
+                "Current password is wrong. It is the one-time password you just signed in with."
+            } else {
+                "Current password is wrong."
+            });
+        }
         Err(Failure::Busy) => return fail("The server is busy. Try again in a moment."),
         Err(Failure::Unavailable) => {
-            return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+            return fail("The database did not answer. Try again in a minute.");
         }
     }
     if f.new != f.confirm {
@@ -539,12 +577,25 @@ async fn change_password(
     let new_pw = f.new.clone();
     let hash = match tokio::task::spawn_blocking(move || password::hash(&new_pw)).await {
         Ok(Ok(h)) => h,
-        Ok(Err(e)) => return fail(&e.to_string()),
-        Err(_) => return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable."),
+        Ok(Err(password::PasswordError::Length)) => {
+            return fail(&format!(
+                "The new password must be {} to {} characters.",
+                password::MIN_LEN,
+                password::MAX_LEN
+            ));
+        }
+        Ok(Err(_)) | Err(_) => {
+            return fail("The new password could not be saved. Try again in a moment.");
+        }
     };
     if let Err(e) = st.db.set_password(&u.id, &hash, false, true).await {
         tracing::error!(error = %e, "password update failed");
-        return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+        return fail("The new password could not be saved: the database did not answer.");
+    }
+    // The generated password no longer works; do not leave it on disk.
+    if u.must_change_password && u.username == "admin" {
+        crate::auth::bootstrap::forget(&st.cfg.data_dir);
+        st.setup_fs.bootstrap_removed();
     }
     st.db
         .audit(AuditEntry {
@@ -581,6 +632,8 @@ struct DashboardPage {
     recent: Vec<scan::JobRow>,
     controls: Vec<(String, String, bool)>,
     update: Option<crate::update::Release>,
+    /// Admins only: required or recommended setup that needs attention.
+    setup: Option<setup::Banner>,
 }
 
 impl DashboardPage {
@@ -712,11 +765,20 @@ async fn dashboard(
         Ok(x) => x,
         Err(r) => return r,
     };
+    // The banner sits outside the refreshed region, so background refreshes skip the checks.
+    let setup = if ux::is_refresh(&headers) {
+        None
+    } else {
+        setup::banner(&st, &u, &setup::ctx_of(&st, &headers, true)).await
+    };
     let list = match st.db.list_endpoints().await {
         Ok(l) => l,
         Err(e) => {
             tracing::error!(error = %e, "list endpoints failed");
-            return error_page(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable.");
+            return error_page(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "The dashboard could not load: the database did not answer. Try again in a minute; if it keeps failing, check the server log.",
+            );
         }
     };
     // Raw clamd errors go to the log; the page shows a short reason.
@@ -944,6 +1006,7 @@ async fn dashboard(
                 .allows(Role::Admin)
                 .then(|| st.updates.available())
                 .flatten(),
+            setup,
         },
     )
 }

@@ -37,6 +37,19 @@ pub fn path_key(path: &str) -> String {
     crate::auth::token::hash_secret(path)
 }
 
+/// A LIKE pattern (escape `!`) for everything under `dir`.
+fn like_under(dir: &str) -> String {
+    let esc: String = dir
+        .trim_end_matches('/')
+        .chars()
+        .flat_map(|c| match c {
+            '!' | '%' | '_' => vec!['!', c],
+            c => vec![c],
+        })
+        .collect();
+    format!("{esc}/%")
+}
+
 impl Db {
     pub async fn list_watches(&self) -> Result<Vec<Watch>, DbError> {
         let rows = sqlx::query(self.sql(
@@ -181,19 +194,37 @@ impl Db {
 
     /// Forget every file recorded under a folder (after its watch is removed).
     pub async fn forget_processed_under(&self, dir: &str) -> Result<u64, DbError> {
-        let esc: String = dir
-            .trim_end_matches('/')
-            .chars()
-            .flat_map(|c| match c {
-                '!' | '%' | '_' => vec!['!', c],
-                c => vec![c],
-            })
-            .collect();
         let r = sqlx::query(self.sql("DELETE FROM processed_files WHERE path LIKE ? ESCAPE '!'"))
-            .bind(format!("{esc}/%"))
+            .bind(like_under(dir))
             .execute(self.pool())
             .await?;
         Ok(r.rows_affected())
+    }
+
+    /// Paths recorded under a folder before `before_ms`, at most `limit` of them.
+    pub async fn processed_under(
+        &self,
+        dir: &str,
+        before_ms: i64,
+        limit: i64,
+    ) -> Result<Vec<String>, DbError> {
+        Ok(sqlx::query_scalar(self.sql(
+            "SELECT path FROM processed_files WHERE path LIKE ? ESCAPE '!' AND processed_at < ? LIMIT ?",
+        ))
+        .bind(like_under(dir))
+        .bind(before_ms)
+        .bind(limit)
+        .fetch_all(self.pool())
+        .await?)
+    }
+
+    /// Forget one recorded file (it was deleted), so the table does not grow forever.
+    pub async fn forget_processed(&self, path: &str) -> Result<(), DbError> {
+        sqlx::query(self.sql("DELETE FROM processed_files WHERE path_sha256 = ?"))
+            .bind(path_key(path))
+            .execute(self.pool())
+            .await?;
+        Ok(())
     }
 
     /// Forget files handled before `before_ms`; they are checked again on the next pass (N5).

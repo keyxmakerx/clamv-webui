@@ -9,7 +9,7 @@
 <thead><tr><th>{{ nav.t("Threat") }}</th>{% for h in hosts %}<th>{{ h.name }}</th>{% endfor %}</tr></thead>
 <tbody>
 {% for t in threats %}<tr><th class="cov-threat" scope="row">{{ t.name }}<small>{{ t.what }}</small></th>
-{% for c in t.cells %}<td><span class="cov cov-{{ c.state }}">{{ c.text }}</span></td>{% endfor %}</tr>
+{% for c in t.cells %}<td><span class="cov cov-{{ c.state }}">{{ c.text }}</span>{% if loop.first && nav.is_admin && c.state != "ok" && !t.setup.is_empty() %} <a class="small" href="/admin/setup#{{ t.setup }}">Set up</a>{% endif %}</td>{% endfor %}</tr>
 {% endfor %}</tbody></table>
 </div></section>
 <div class="host-grid mt-3">

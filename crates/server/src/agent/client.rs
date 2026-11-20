@@ -62,13 +62,24 @@ fn build(cfg: Config) -> anyhow::Result<Agent> {
     if !base.username().is_empty() || base.password().is_some() {
         anyhow::bail!("AGENT_SERVER_URL must not contain credentials");
     }
+    if let Some(f) = &cfg.agent_token_file
+        && let Err(e) = std::fs::read_to_string(f)
+    {
+        anyhow::bail!(
+            "cannot read AGENT_TOKEN_FILE {}: {e}; create it as Admin > Agents shows and run chown 10001:10001 on it",
+            f.display()
+        );
+    }
     let Some(token) = cfg.agent_token() else {
         anyhow::bail!(
-            "set AGENT_TOKEN or AGENT_TOKEN_FILE to the token shown when the agent was added"
+            "set AGENT_TOKEN_FILE to a file holding the token shown when the agent was added (Admin > Agents); the file is empty or unset"
         );
     };
     if !token.starts_with(crate::db::agents::SECRET_PREFIX) {
-        anyhow::bail!("AGENT_TOKEN is not an agent token");
+        anyhow::bail!(
+            "the agent token does not start with {}: copy the whole token from Admin > Agents (New token makes another)",
+            crate::db::agents::SECRET_PREFIX
+        );
     }
     if cfg.scan_roots.is_empty() {
         anyhow::bail!("set SCAN_ROOTS to the folders this agent may scan");
@@ -94,8 +105,9 @@ fn build(cfg: Config) -> anyhow::Result<Agent> {
     if base.scheme() == "http" {
         if !cfg.agent_allow_plaintext {
             anyhow::bail!(
-                "AGENT_SERVER_URL is plain http://: use https:// with AGENT_SERVER_FINGERPRINT (shown in Admin > Agents), \
-                 or set AGENT_ALLOW_PLAINTEXT=true on this host if the link is a private VPN or mesh"
+                "AGENT_SERVER_URL is plain http://, which would send the token and results unencrypted, so the agent refuses it. \
+                 Best: set TLS_SELF_SIGNED=true on the server, then use https:// with AGENT_SERVER_FINGERPRINT from Admin > Agents. \
+                 Only if the link is already a private VPN or mesh (WireGuard, Tailscale): set AGENT_ALLOW_PLAINTEXT=true on this host"
             );
         }
         tracing::warn!(
@@ -150,6 +162,9 @@ fn build(cfg: Config) -> anyhow::Result<Agent> {
 }
 
 pub async fn run(cfg: Config) -> anyhow::Result<()> {
+    if let Some(w) = crate::quarantine::prepare_dir(cfg.quarantine_dir.as_deref()) {
+        tracing::warn!(event = "config.warning", "{w}");
+    }
     let a = Arc::new(build(cfg)?);
     spawn_health(a.clone()).await?;
     tracing::info!(event = "agent.started", server = %a.base, clamd = %a.cfg.clamd_endpoint, roots = ?a.cfg.scan_roots, slots = a.cfg.scan_concurrency.max(1), version = env!("CARGO_PKG_VERSION"), "agent started");
@@ -205,7 +220,7 @@ async fn spawn_health(a: Arc<Agent>) -> anyhow::Result<()> {
 async fn poll_loop(a: Arc<Agent>) {
     let mut backoff = Duration::from_secs(1);
     let mut connected = false;
-    let mut warned = false;
+    let mut warned: Option<String> = None;
     loop {
         let free = u32::try_from(a.slots.available_permits()).unwrap_or(u32::MAX);
         let req = PollRequest {
@@ -257,7 +272,7 @@ async fn poll_loop(a: Arc<Agent>) {
                 if !connected {
                     tracing::info!(event = "agent.connected", server = %a.base, queued = a.outbox.len(), "connected to server");
                     connected = true;
-                    warned = false;
+                    warned = None;
                     a.outbox.ready.notify_one();
                 }
                 backoff = Duration::from_secs(1);
@@ -272,23 +287,26 @@ async fn poll_loop(a: Arc<Agent>) {
             }
             Err(PollError::Refused(status)) => {
                 connected = false;
+                warned = None;
                 tracing::error!(
                     event = "agent.rejected",
                     status = status.as_u16(),
-                    "server refused this agent (token revoked, agent disabled, or version mismatch: update the older of agent and server); retrying in 60 s"
+                    "server refused this agent: {}; retrying in 60 s",
+                    refused_hint(status)
                 );
                 tokio::time::sleep(Duration::from_secs(60)).await;
             }
-            Err(PollError::Other(e)) => {
+            Err(PollError::Other { hint, detail }) => {
                 if connected {
-                    tracing::warn!(event = "agent.disconnected", error = %e, "lost the server; retrying");
+                    tracing::warn!(event = "agent.disconnected", server = %a.base, error = %detail, "lost the server: {hint}; retrying");
                     connected = false;
-                } else if !warned {
-                    // Say it once: a wrong AGENT_SERVER_URL must not fail in silence.
-                    tracing::warn!(event = "agent.unreachable", server = %a.base, error = %e, "cannot reach the server; check AGENT_SERVER_URL from this host; retrying");
-                    warned = true;
+                    warned = Some(hint);
+                } else if warned.as_deref() != Some(hint.as_str()) {
+                    // Say it once per cause: a wrong AGENT_SERVER_URL must not fail in silence.
+                    tracing::warn!(event = "agent.unreachable", server = %a.base, error = %detail, "cannot reach the server: {hint}; retrying");
+                    warned = Some(hint);
                 } else {
-                    tracing::debug!(error = %e, "server still unreachable");
+                    tracing::debug!(error = %detail, "server still unreachable");
                 }
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(Duration::from_secs(60));
@@ -299,14 +317,27 @@ async fn poll_loop(a: Arc<Agent>) {
 
 enum PollError {
     Refused(reqwest::StatusCode),
-    Other(String),
+    /// What to do about it, and the error as the HTTP stack reported it.
+    Other {
+        hint: String,
+        detail: String,
+    },
+}
+
+impl PollError {
+    fn other(hint: String, detail: impl Into<String>) -> Self {
+        Self::Other {
+            hint,
+            detail: detail.into(),
+        }
+    }
 }
 
 async fn poll_once(a: &Agent, req: &PollRequest) -> Result<PollResponse, PollError> {
     let url = a
         .base
         .join("agent/v1/poll")
-        .map_err(|e| PollError::Other(e.to_string()))?;
+        .map_err(|e| PollError::other("AGENT_SERVER_URL is not usable".into(), e.to_string()))?;
     let r = a
         .http
         .post(url)
@@ -314,17 +345,26 @@ async fn poll_once(a: &Agent, req: &PollRequest) -> Result<PollResponse, PollErr
         .json(req)
         .send()
         .await
-        .map_err(|e| PollError::Other(without_url(&e)))?;
+        .map_err(|e| {
+            let detail = error_chain(&e);
+            PollError::other(explain(&detail, e.is_timeout(), &a.base), detail)
+        })?;
     let s = r.status();
     if matches!(s.as_u16(), 401 | 403 | 426) {
         return Err(PollError::Refused(s));
     }
     if !s.is_success() {
-        return Err(PollError::Other(format!("HTTP {s}")));
+        return Err(PollError::other(
+            status_hint(s, &a.base),
+            format!("HTTP {s}"),
+        ));
     }
-    r.json::<PollResponse>()
-        .await
-        .map_err(|e| PollError::Other(without_url(&e)))
+    r.json::<PollResponse>().await.map_err(|e| {
+        PollError::other(
+            "the answer was not from a Palisade server: check that AGENT_SERVER_URL points at Palisade".into(),
+            error_chain(&e),
+        )
+    })
 }
 
 fn without_url(e: &reqwest::Error) -> String {
@@ -333,6 +373,142 @@ fn without_url(e: &reqwest::Error) -> String {
         s = s.replace(u.as_str(), "<server>");
     }
     s
+}
+
+/// The error and every cause under it, e.g. the TLS reason behind "error sending request".
+fn error_chain(e: &reqwest::Error) -> String {
+    let mut s = without_url(e);
+    let mut src = std::error::Error::source(e);
+    while let Some(c) = src {
+        let t = c.to_string();
+        if !s.contains(&t) {
+            s.push_str(": ");
+            s.push_str(&t);
+        }
+        src = c.source();
+    }
+    s
+}
+
+/// What the operator should do about a failed connection, from the error text.
+fn explain(detail: &str, timeout: bool, base: &Url) -> String {
+    let low = detail.to_ascii_lowercase();
+    let host = base.host_str().unwrap_or("?");
+    let at = match base.port_or_known_default() {
+        Some(p) => format!("{host}:{p}"),
+        None => host.to_owned(),
+    };
+    let has = |words: &[&str]| words.iter().any(|w| low.contains(w));
+    if has(&["agent_server_fingerprint"]) {
+        "server certificate changed or wrong AGENT_SERVER_FINGERPRINT; copy it from Admin > Agents"
+            .into()
+    } else if has(&["notvalidforname"]) {
+        format!(
+            "the server's certificate is not for {host}: use the name on the certificate in AGENT_SERVER_URL, or pin it with AGENT_SERVER_FINGERPRINT"
+        )
+    } else if has(&["certificate", "unknownissuer"]) {
+        "the server's certificate is not trusted: set AGENT_SERVER_FINGERPRINT from Admin > Agents (self-signed), or AGENT_CA_FILE (private CA)".into()
+    } else if has(&[
+        "invalidcontenttype",
+        "corrupt message",
+        "wrong version number",
+    ]) {
+        format!(
+            "{at} does not answer HTTPS: set TLS_SELF_SIGNED=true on the server, or fix the port in AGENT_SERVER_URL"
+        )
+    } else if has(&[
+        "dns error",
+        "failed to lookup",
+        "name or service not known",
+        "no address associated",
+        "nodename nor servname",
+    ]) {
+        format!(
+            "cannot resolve {host} from this host: fix the name in AGENT_SERVER_URL ({base}) or use the server's IP address"
+        )
+    } else if has(&["connection refused"]) {
+        format!(
+            "{at} refused the connection: is the server running and its port published? Check AGENT_SERVER_URL ({base})"
+        )
+    } else if has(&[
+        "no route to host",
+        "network is unreachable",
+        "host is unreachable",
+    ]) {
+        format!("no route to {at}: check this host's network or VPN, and AGENT_SERVER_URL ({base})")
+    } else if timeout || has(&["timed out", "deadline has elapsed"]) {
+        format!(
+            "no answer from {at}: a firewall may drop the connection, or AGENT_SERVER_URL ({base}) has the wrong address"
+        )
+    } else if base.scheme() == "http"
+        && has(&[
+            "connection closed",
+            "connection reset",
+            "incomplete message",
+        ])
+    {
+        format!(
+            "{at} closed the connection: if the server uses HTTPS, write https:// in AGENT_SERVER_URL"
+        )
+    } else {
+        format!("cannot reach {at}; check AGENT_SERVER_URL ({base}) from this host")
+    }
+}
+
+/// What a refusal (401, 403, 426) means for this agent.
+fn refused_hint(s: reqwest::StatusCode) -> &'static str {
+    match s.as_u16() {
+        401 => {
+            "token revoked or wrong file: the server does not know this token (it was replaced with New token, or the agent was removed). Check AGENT_TOKEN_FILE, or copy a new token from Admin > Agents"
+        }
+        403 => "this agent is disabled in Admin > Agents; enable it there",
+        426 => {
+            "agent and server speak different protocol versions; update the older one (Admin > Agents says which)"
+        }
+        _ => "refused",
+    }
+}
+
+/// What any other HTTP error means.
+fn status_hint(s: reqwest::StatusCode, base: &Url) -> String {
+    match s.as_u16() {
+        404 | 405 => format!(
+            "no Palisade agent API at {base}: check AGENT_SERVER_URL; a reverse proxy must pass /agent/ through"
+        ),
+        421 => "the server refused the host name; use the address from Admin > Agents".into(),
+        502..=504 => format!(
+            "a proxy in front of the server answered HTTP {}: the server may be down",
+            s.as_u16()
+        ),
+        500..=599 => format!("the server had a problem (HTTP {}); retrying", s.as_u16()),
+        _ => format!("unexpected answer HTTP {} from {base}", s.as_u16()),
+    }
+}
+
+/// One poll that only checks the link: settings, TLS, token. Ok, or what to fix.
+pub async fn check(cfg: Config) -> Result<(), String> {
+    let a = build(cfg).map_err(|e| e.to_string())?;
+    let req = PollRequest {
+        protocol: PROTOCOL,
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        clamd_version: None,
+        roots: roots_text(&a.cfg),
+        slots: 1,
+        free: 0,
+        running: Vec::new(),
+        wait: false,
+        canaries: Vec::new(),
+        host_checks: None,
+        kinds: super::proto::KINDS
+            .iter()
+            .map(|k| (*k).to_owned())
+            .collect(),
+    };
+    match poll_once(&a, &req).await {
+        Ok(_) => Ok(()),
+        Err(PollError::Refused(s)) => Err(refused_hint(s).to_owned()),
+        Err(PollError::Other { hint, .. }) => Err(hint),
+    }
 }
 
 /// clamd's version string, refreshed at most once a minute.
@@ -1097,5 +1273,65 @@ mod tests {
         assert!(build(cfg(&plain)).is_err(), "plain HTTP refused by default");
         plain.extend(["--agent-allow-plaintext", "true"]);
         assert!(build(cfg(&plain)).is_ok(), "allowed on this host");
+        let mut file = good.to_vec();
+        file.splice(2..4, ["--agent-token-file", "/nonexistent/agent_token"]);
+        let e = build(cfg(&file)).err().expect("missing file").to_string();
+        assert!(
+            e.contains("AGENT_TOKEN_FILE /nonexistent/agent_token"),
+            "{e}"
+        );
+    }
+
+    #[test]
+    fn connection_errors_say_what_to_do() {
+        let base: Url = "https://nas.lan:8080".parse().expect("url");
+        let e = |d: &str| explain(d, false, &base);
+        assert!(
+            e("error sending request: client error (Connect): unexpected error: server certificate does not match AGENT_SERVER_FINGERPRINT")
+                .contains("copy it from Admin > Agents")
+        );
+        assert!(e("invalid peer certificate: UnknownIssuer").contains("AGENT_CA_FILE"));
+        assert!(
+            e("received corrupt message of type InvalidContentType").contains("TLS_SELF_SIGNED")
+        );
+        assert!(
+            e("dns error: failed to lookup address information").contains("cannot resolve nas.lan")
+        );
+        assert!(
+            e("tcp connect error: Connection refused (os error 111)")
+                .contains("nas.lan:8080 refused")
+        );
+        assert!(explain("operation timed out", true, &base).contains("firewall"));
+        let plain: Url = "http://nas.lan:8080".parse().expect("url");
+        assert!(
+            explain("connection closed before message completed", false, &plain)
+                .contains("https://")
+        );
+        assert!(
+            refused_hint(reqwest::StatusCode::UNAUTHORIZED).contains("token revoked or wrong file")
+        );
+        assert!(refused_hint(reqwest::StatusCode::FORBIDDEN).contains("disabled"));
+        assert!(status_hint(reqwest::StatusCode::NOT_FOUND, &base).contains("/agent/"));
+    }
+
+    #[tokio::test]
+    async fn a_refused_connection_names_the_url() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = l.local_addr().expect("addr").port();
+        drop(l);
+        let tok = format!("{}abc", crate::db::agents::SECRET_PREFIX);
+        let url = format!("http://127.0.0.1:{port}");
+        let c = cfg(&[
+            "--agent-server-url",
+            &url,
+            "--agent-token",
+            &tok,
+            "--scan-roots",
+            "/data",
+            "--agent-allow-plaintext",
+            "true",
+        ]);
+        let e = check(c).await.expect_err("nothing listens");
+        assert!(e.contains(&format!("127.0.0.1:{port} refused")), "{e}");
     }
 }

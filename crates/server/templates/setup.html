@@ -1,0 +1,28 @@
+{% extends "shell.html" %}
+{% block title %}Setup · Palisade{% endblock %}
+{% block content %}
+<div class="page-head"><h1 class="h3">Setup</h1></div>
+<p class="muted">What works on this server, what is missing, and exactly what to add to <code>docker-compose.yml</code> for each. After changing the compose file run <code>docker compose up -d</code>; this page checks again on every visit.</p>
+<div id="r-setup" data-refresh-region data-refresh="{% if report.pending() %}15{% else %}120{% endif %}">
+<div class="kpi-grid mb-3">
+<div class="kpi {% if attention > 0 %}kpi-warn{% else %}kpi-ok{% endif %}"><span class="kpi-label">Need attention</span><strong class="kpi-value">{{ attention }}</strong></div>
+<div class="kpi kpi-ok"><span class="kpi-label">Working</span><strong class="kpi-value">{{ ok }}</strong></div>
+<div class="kpi"><span class="kpi-label">Optional, not set up</span><strong class="kpi-value">{{ off }}</strong></div>
+</div>
+{% if attention > 0 %}<form method="post" action="/admin/setup/dismiss" class="mb-3"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><input type="hidden" name="next" value="setup"><button class="btn btn-sm btn-outline-secondary" type="submit">Hide the dashboard reminder until something new comes up</button></form>{% endif %}
+{% for (gkey, gname, gnote) in [("required", "Required", "Palisade cannot scan properly without these."), ("recommended", "Recommended", "It runs without them, but not safely for long."), ("optional", "Optional", "Turn on what you use.")] %}
+<h2 class="h5 mt-4 mb-1">{{ gname }}</h2><p class="small muted mb-2">{{ gnote }}</p>
+<section class="card"><div class="card-body setup-list">
+{% for r in self.group(gkey) %}{% let g = r.guide %}
+<details class="setup-row" id="{{ g.key }}"{% if r.health.needs_action() %} open{% endif %}>
+<summary><span class="badge {{ r.health.badge() }}">{{ r.health.label() }}</span> <strong>{{ g.title }}</strong> <span class="setup-detail small">{{ r.detail }}</span></summary>
+<div class="setup-fix">
+<p class="small mb-2">{{ g.gives }}</p>
+{% let snip_suffix = "" %}{% include "_setup_fix.html" %}
+</div>
+</details>
+{% endfor %}
+</div></section>
+{% endfor %}
+</div>
+{% endblock %}

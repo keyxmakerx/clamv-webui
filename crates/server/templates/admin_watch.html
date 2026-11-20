@@ -5,16 +5,18 @@
 <p class="muted">{{ nav.t("Every") }} {{ poll }} {{ nav.t("s, new or changed files are queued for scanning. Files changed in the last minute wait until they settle. Symlinks are not followed.") }}</p>
 <section class="card mt-3"><div class="card-body">
 <h2 class="h5">{{ nav.t("Watch a folder") }}</h2>
-{% if roots.is_empty() %}<p class="muted">{{ nav.t("Set") }} <code>SCAN_ROOTS</code> {{ nav.t("to watch folders.") }}</p>{% else %}
+{% if roots.is_empty() %}<p class="muted mb-0">Folders can only be watched inside <code>SCAN_ROOTS</code>, which is not set yet.</p>{% else %}
 <form method="post" action="/admin/watch" class="row g-3 align-items-end">
 <input type="hidden" name="_csrf" value="{{ nav.csrf }}">
-<div class="col-md-5"><label class="form-label" for="wp">{{ nav.t("Folder") }}</label><input class="form-control" id="wp" name="path" required maxlength="4096" placeholder="{% if let Some(r) = roots.first() %}{{ r }}/downloads{% endif %}" autocomplete="off"></div>
+<div class="col-md-5"><label class="form-label" for="wp">{{ nav.t("Folder") }}</label><input class="form-control" id="wp" name="path" required maxlength="4096" list="watch-roots" placeholder="{% if let Some(r) = roots.first() %}{{ r }}/downloads{% endif %}" autocomplete="off"><datalist id="watch-roots">{% for r in roots %}<option value="{{ r }}">{% endfor %}</datalist>
+<div class="form-text">{{ nav.t("A folder inside") }} {% for r in roots %}<code>{{ r }}</code>{% if !loop.last %}, {% endif %}{% endfor %}</div></div>
 <div class="col-md-3"><label class="form-label" for="we">{{ nav.t("Endpoint") }}</label><select class="form-select" id="we" name="endpoint">
 {% for e in endpoints %}<option value="{% if !e.is_default %}{{ e.id }}{% endif %}"{% if e.is_default %} selected{% endif %}>{{ e.name }}{% if e.is_default %} {{ nav.t("(default)") }}{% endif %}</option>{% endfor %}</select></div>
 <div class="col-md-2"><label class="form-check-label small"><input class="form-check-input" type="checkbox" name="existing" value="1"> {{ nav.t("also scan files already there") }}</label></div>
 <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">{{ nav.t("Watch") }}</button></div>
 </form>{% endif %}
 </div></section>
+{% if roots.is_empty() %}{% let g = crate::web::setup::guide("scan-roots") %}{% include "_empty.html" %}{% endif %}
 <section class="card mt-3"><div class="card-body table-responsive">
 <table class="table table-sm align-middle">
 <thead><tr><th>{{ nav.t("Folder") }}</th><th>{{ nav.t("Endpoint") }}</th><th>{{ nav.t("Added") }}</th><th><span class="visually-hidden">{{ nav.t("Actions") }}</span></th></tr></thead>
@@ -24,6 +26,7 @@
 <td class="small">{{ r.endpoint }}</td>
 <td class="small">{{ r.created }}</td>
 <td><div class="d-flex gap-2">
+<form method="post" action="/admin/watch/{{ r.id }}/scan"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-primary" type="submit" title="{{ nav.t("Scan every file in this folder now, changed or not") }}">{{ nav.t("Scan now") }}</button></form>
 <form method="post" action="/admin/watch/{{ r.id }}/enabled"><input type="hidden" name="_csrf" value="{{ nav.csrf }}">{% if !r.enabled %}<input type="hidden" name="enabled" value="1">{% endif %}<button class="btn btn-sm btn-outline-secondary" type="submit">{% if r.enabled %}{{ nav.t("Pause") }}{% else %}{{ nav.t("Resume") }}{% endif %}</button></form>
 <details class="edit"><summary class="btn btn-sm btn-outline-secondary">{{ nav.t("Edit") }}</summary>
 <form method="post" action="/admin/watch/{{ r.id }}/edit" class="edit-form">

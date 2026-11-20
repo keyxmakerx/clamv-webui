@@ -244,6 +244,33 @@
     });
   }
 
+  // ---- copy buttons: data-copy names the element whose text is copied ----
+  function copyText(btn) {
+    var el = document.getElementById(btn.getAttribute("data-copy"));
+    if (!el) return;
+    // Keep the button's own markup (icon and label) to put back afterwards.
+    var label = btn.innerHTML;
+    var done = function (ok) {
+      btn.textContent = ok ? "Copied" : "Select and copy";
+      btn.classList.add("copied");
+      setTimeout(function () { btn.innerHTML = label; btn.classList.remove("copied"); }, 1500);
+    };
+    // Without a secure context the clipboard API is missing: select the text instead.
+    var selectIt = function () {
+      var r = document.createRange();
+      r.selectNodeContents(el);
+      var s = window.getSelection();
+      s.removeAllRanges();
+      s.addRange(r);
+      done(false);
+    };
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(el.textContent).then(function () { done(true); }, selectIt);
+    } else {
+      selectIt();
+    }
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     rememberFilters();
     document.querySelectorAll("#theme-toggle, [data-theme-toggle]").forEach(function (btn) {
@@ -267,7 +294,17 @@
       }
       var f = ev.target.closest("[data-forget]");
       if (f) set("filters:" + f.getAttribute("data-forget"), null);
+      var c = ev.target.closest("[data-copy]");
+      if (c) copyText(c);
     });
+    // A link to a Setup row (#key) opens that row.
+    function openHash() {
+      var id = location.hash.slice(1);
+      var d = id && document.getElementById(id);
+      if (d && d.tagName === "DETAILS") d.open = true;
+    }
+    window.addEventListener("hashchange", openHash);
+    openHash();
     initPrefs();
     stackTables(document);
     initRefresh();

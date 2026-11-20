@@ -90,6 +90,18 @@ jobs:
         env:
           TEST_LDAP_CA: ${{ runner.temp }}/ldap-ca.pem
 
+  compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Every compose file is valid (no image pulls)
+        run: |
+          for f in docker-compose*.yml; do
+            echo "checking $f"
+            docker compose -f "$f" config -q
+          done
+
   deny:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -100,7 +112,7 @@ jobs:
           command: check advisories bans licenses sources
 
   image:
-    needs: [check, migrations, db, ldap, deny]
+    needs: [check, migrations, db, ldap, deny, compose]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -129,8 +141,9 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Start the image once (a broken image never reaches a tag)
         run: |
+          # A fresh named volume, as docker-compose.yml uses: it must start writable for UID 10001.
           docker run -d --name smoke --read-only --tmpfs /tmp --cap-drop ALL \
-            --security-opt no-new-privileges -p 18080:8080 palisade:scan
+            --security-opt no-new-privileges -v palisade-smoke:/app/data -p 18080:8080 palisade:scan
           for i in $(seq 30); do
             if docker exec smoke /app/palisade healthcheck >/dev/null 2>&1 \
               && curl -fsS http://127.0.0.1:18080/healthz >/dev/null; then
