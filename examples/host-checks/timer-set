@@ -1,30 +1,30 @@
 #!/bin/sh
-# Set when clamv's daily AIDE and rkhunter timers fire, from the times clamv asked for.
+# Set when Palisade's daily AIDE and rkhunter timers fire, from the times Palisade asked for.
 set -u
-dir=/var/lib/clamv/timers
-run=/run/clamv-timers
+dir=/var/lib/palisade/timers
+run=/run/palisade-timers
 owner=$(stat -c %u "$dir")
 [ "$owner" != 0 ] || exit 1
 for tool in aide rkhunter; do
   want=$dir/$tool.want
   [ -f "$want" ] && [ ! -L "$want" ] || continue
-  # One open descriptor, and only a regular file clamv's user owns: a link to another file is never read.
+  # One open descriptor, and only a regular file Palisade's user owns: a link to another file is never read.
   exec 3<"$want"
   [ "$(stat -L -c '%u %F' /proc/$$/fd/3 2>/dev/null)" = "$owner regular file" ] || { exec 3<&-; continue; }
   t=$(head -c 16 <&3 | head -n 1)
   exec 3<&-
-  d=/etc/systemd/system/clamv-$tool-check.timer.d
+  d=/etc/systemd/system/palisade-$tool-check.timer.d
   case "$t" in
     random)
-      rm -f "$d/clamv-time.conf" ;;
+      rm -f "$d/palisade-time.conf" ;;
     [01][0-9]:[0-5][0-9]|2[0-3]:[0-5][0-9])
       printf '[Timer]\nOnCalendar=\nOnCalendar=*-*-* %s:00\nRandomizedDelaySec=0\n' "$t" >"$run/$tool.conf"
-      mv -f "$run/$tool.conf" "$d/clamv-time.conf" ;;
+      mv -f "$run/$tool.conf" "$d/palisade-time.conf" ;;
     *)
       continue ;;
   esac
   printf '%s\n' "$t" >"$run/$tool.applied" && mv -f "$run/$tool.applied" "$dir/$tool.applied"
 done
 systemctl daemon-reload
-systemctl try-restart clamv-aide-check.timer clamv-rkhunter-check.timer
+systemctl try-restart palisade-aide-check.timer palisade-rkhunter-check.timer
 exit 0

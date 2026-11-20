@@ -1,11 +1,11 @@
-# clamv: accept AIDE's current state as the new baseline (needs a passkey in clamv).
+# Palisade: accept AIDE's current state as the new baseline (needs a passkey in Palisade).
 [Unit]
-Description=clamv host check: accept AIDE baseline
+Description=Palisade host check: accept AIDE baseline
 ConditionPathExists=/usr/bin/aide
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/libexec/clamv/aide-accept
+ExecStart=/usr/local/libexec/palisade/aide-accept
 Nice=19
 IOSchedulingClass=idle
 ProtectSystem=strict

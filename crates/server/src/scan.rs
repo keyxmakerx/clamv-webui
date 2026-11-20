@@ -547,7 +547,7 @@ mod tests {
     #[tokio::test]
     async fn finish_reports_whether_the_result_was_saved() {
         use clap::Parser;
-        let cli = crate::config::Cli::parse_from(["clamv-webui"]);
+        let cli = crate::config::Cli::parse_from(["palisade"]);
         let db = crate::db::Db::open("sqlite::memory:", 1).await.expect("db");
         let st = AppState::new(cli.config.clone(), db);
         let new = || jobs::NewJob {
@@ -572,7 +572,7 @@ mod tests {
 
     #[tokio::test]
     async fn paths_stay_inside_roots() {
-        let base = std::env::temp_dir().join(format!("clamv-roots-{}", crate::db::new_id()));
+        let base = std::env::temp_dir().join(format!("palisade-roots-{}", crate::db::new_id()));
         let root = base.join("root");
         let outside = base.join("outside");
         std::fs::create_dir_all(root.join("sub")).expect("mkdir");

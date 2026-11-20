@@ -66,7 +66,7 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
-      - run: cargo test --locked -p clamv-webui --test db
+      - run: cargo test --locked -p palisade --test db
 
   ldap:
     runs-on: ubuntu-latest
@@ -86,7 +86,7 @@ jobs:
           docker cp crates/server/tests/fixtures/ldap-seed.ldif ldap:/tmp/seed.ldif
           docker exec ldap ldapadd -x -H ldap://localhost -D cn=admin,dc=lan,dc=test -w adminpw -f /tmp/seed.ldif
           docker exec ldap cat /container/service/:ssl-tools/assets/default-ca/default-ca.pem > "$RUNNER_TEMP/ldap-ca.pem"
-      - run: cargo test --locked -p clamv-webui --test ldap -- --nocapture
+      - run: cargo test --locked -p palisade --test ldap -- --nocapture
         env:
           TEST_LDAP_CA: ${{ runner.temp }}/ldap-ca.pem
 
@@ -124,15 +124,15 @@ jobs:
         with:
           context: .
           load: true
-          tags: clamv-webui:scan
+          tags: palisade:scan
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Start the image once (a broken image never reaches a tag)
         run: |
           docker run -d --name smoke --read-only --tmpfs /tmp --cap-drop ALL \
-            --security-opt no-new-privileges -p 18080:8080 clamv-webui:scan
+            --security-opt no-new-privileges -p 18080:8080 palisade:scan
           for i in $(seq 30); do
-            if docker exec smoke /app/clamv-webui healthcheck >/dev/null 2>&1 \
+            if docker exec smoke /app/palisade healthcheck >/dev/null 2>&1 \
               && curl -fsS http://127.0.0.1:18080/healthz >/dev/null; then
               echo "image started and answers /healthz"; docker rm -f smoke >/dev/null; exit 0
             fi
@@ -151,7 +151,7 @@ jobs:
       - name: Trivy (SARIF)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: clamv-webui:scan
+          image-ref: palisade:scan
           format: sarif
           output: trivy.sarif
           ignore-unfixed: true
@@ -163,7 +163,7 @@ jobs:
       - name: Trivy gate (fixable HIGH/CRITICAL fail the build)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: clamv-webui:scan
+          image-ref: palisade:scan
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: '1'

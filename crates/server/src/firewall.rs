@@ -1,7 +1,7 @@
-//! Host firewall. clamv reads each host's rules through a fixed snapshot unit,
+//! Host firewall. Palisade reads each host's rules through a fixed snapshot unit,
 //! shows who owns them (Docker, CrowdSec, ufw, firewalld...), and writes only
-//! its own nftables table, `inet clamv`, through a fixed apply unit that checks
-//! the plan in an empty network namespace and rolls back unless clamv confirms
+//! its own nftables table, `inet palisade`, through a fixed apply unit that checks
+//! the plan in an empty network namespace and rolls back unless Palisade confirms
 //! it can still reach the host. See examples/host-checks.
 
 use std::collections::HashMap;
@@ -84,7 +84,7 @@ pub fn check(mut rules: Vec<Rule>) -> Result<Vec<Rule>, String> {
     Ok(rules)
 }
 
-/// The inside of `table inet clamv`, exactly as written to plan.nft.
+/// The inside of `table inet palisade`, exactly as written to plan.nft.
 pub fn body(rules: &[Rule]) -> String {
     let mut s = String::from(
         "  chain input {\n    type filter hook input priority -5; policy accept;\n    ct state established,related accept\n    iif \"lo\" accept\n",
@@ -123,7 +123,7 @@ pub fn hash(body: &str) -> String {
 pub fn owner(family: &str, table: &str, chains: &[String]) -> &'static str {
     let any = |p: &str| chains.iter().any(|c| c.starts_with(p));
     match (family, table) {
-        ("inet", "clamv") => "clamv",
+        ("inet", "palisade") => "palisade",
         (_, t) if t.starts_with("crowdsec") => "CrowdSec",
         (_, "firewalld") => "firewalld",
         _ if any("CROWDSEC") => "CrowdSec",
@@ -404,7 +404,7 @@ pub fn waiting(dir: &Path, hash: &str) -> bool {
     })
 }
 
-/// Tell the waiting apply unit that clamv still reaches this host.
+/// Tell the waiting apply unit that Palisade still reaches this host.
 pub fn confirm(dir: &Path, hash: &str) {
     let tmp = dir.join(".confirm.tmp");
     if std::fs::write(&tmp, hash).is_ok() {
@@ -448,7 +448,7 @@ impl Snapshots {
 }
 
 /// Shared with the host's firewall units, which use this fixed path too.
-pub const DIR: &str = "/var/lib/clamv/firewall";
+pub const DIR: &str = "/var/lib/palisade/firewall";
 
 pub fn dir() -> &'static Path {
     Path::new(DIR)
@@ -498,7 +498,7 @@ table inet firewalld {
 \tchain filter_INPUT {
 \t}
 }
-table inet clamv {
+table inet palisade {
 \tchain input {
 \t}
 }
@@ -533,7 +533,7 @@ rolled_back 1763100000 abc123
                 ("filter", "Docker"),
                 ("crowdsec", "CrowdSec"),
                 ("firewalld", "firewalld"),
-                ("clamv", "clamv")
+                ("palisade", "palisade")
             ]
         );
         assert_eq!(s.legacy_rules, 1);

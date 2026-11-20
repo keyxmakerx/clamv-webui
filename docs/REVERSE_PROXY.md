@@ -1,6 +1,6 @@
 # Behind a reverse proxy
 
-Run clamv-webui on its own host name (for example `clamav.example.com`). Serving it under a path such as `/clamav/` is not supported.
+Run Palisade on its own host name (for example `clamav.example.com`). Serving it under a path such as `/clamav/` is not supported.
 
 ## What the app needs
 
@@ -29,7 +29,7 @@ clamav.example.com {
     request_body {
         max_size 1100MB
     }
-    reverse_proxy clamv-webui:8080 {
+    reverse_proxy palisade:8080 {
         transport http {
             read_timeout 120s
         }
@@ -69,7 +69,7 @@ server {
     client_max_body_size 1100m;
 
     location / {
-        proxy_pass http://clamv-webui:8080;
+        proxy_pass http://palisade:8080;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;

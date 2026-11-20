@@ -185,7 +185,7 @@ impl Oidc {
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(10))
-            .user_agent(concat!("clamv-webui/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("palisade/", env!("CARGO_PKG_VERSION")))
             .tls_backend_preconfigured(tls)
             .build()
             .map_err(|e| anyhow::anyhow!("OIDC client: {e}"))?;

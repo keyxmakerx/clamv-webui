@@ -1,5 +1,5 @@
 {% extends "shell.html" %}
-{% block title %}{{ nav.t("Schedules · ClamAV Web UI") }}{% endblock %}
+{% block title %}{{ nav.t("Schedules · Palisade") }}{% endblock %}
 {% block content %}
 <h1 class="h3">{{ nav.t("Scheduled scans") }}</h1>
 <p class="muted">{{ nav.t("Cron times and scan windows are in each schedule's time zone (default") }} <code>{{ default_zone }}</code>{{ nav.t(", set with") }} <code>SCHEDULE_TZ</code>{{ nav.t("). A run is skipped while the previous one is still going. With the EICAR control on, each run first checks that clamd flags the EICAR test file; a miss logs") }} <code>eicar.control_failed</code>.</p>

@@ -29,7 +29,7 @@ The fixes below came out of that audit.
 
 ### Clearing a lock
 
-Locks live in memory. Restart the container (`docker restart clamv-webui`) to clear all of them at once; otherwise they expire after 15 minutes. `reset-admin` resets the admin password and second factors but does not clear a running server's locks.
+Locks live in memory. Restart the container (`docker restart palisade`) to clear all of them at once; otherwise they expire after 15 minutes. `reset-admin` resets the admin password and second factors but does not clear a running server's locks.
 
 ## "Confirm it's you"
 

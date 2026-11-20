@@ -1,0 +1,24 @@
+# Palisade: set the daily AIDE and rkhunter times; one fixed script, writes only the two timer drop-ins.
+[Unit]
+Description=Palisade host checks: set the daily timer times
+ConditionPathExists=/usr/local/libexec/palisade/timer-set
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/palisade/timer-set
+ProtectSystem=strict
+RuntimeDirectory=palisade-timers
+RuntimeDirectoryMode=0700
+ReadWritePaths=/var/lib/palisade/timers /etc/systemd/system/palisade-aide-check.timer.d /etc/systemd/system/palisade-rkhunter-check.timer.d
+PrivateTmp=yes
+PrivateNetwork=yes
+RestrictAddressFamilies=AF_UNIX
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_SYS_ADMIN
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native

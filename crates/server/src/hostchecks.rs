@@ -1,5 +1,5 @@
 //! Managed AIDE and rkhunter. Each host installs fixed, sandboxed systemd
-//! units once (examples/host-checks); clamv, running unprivileged, may only
+//! units once (examples/host-checks); Palisade, running unprivileged, may only
 //! start those units and switch their timers, which a polkit rule enforces.
 //! Results still arrive by reading the reports (see `integrity`).
 
@@ -31,56 +31,56 @@ pub struct Action {
 pub const ACTIONS: [Action; 12] = [
     Action {
         name: "aide.check",
-        unit: "clamv-aide-check.service",
+        unit: "palisade-aide-check.service",
         stop: false,
         passkey: false,
         label: "Run AIDE now",
     },
     Action {
         name: "rkhunter.check",
-        unit: "clamv-rkhunter-check.service",
+        unit: "palisade-rkhunter-check.service",
         stop: false,
         passkey: false,
         label: "Run rkhunter now",
     },
     Action {
         name: "aide.accept",
-        unit: "clamv-aide-accept.service",
+        unit: "palisade-aide-accept.service",
         stop: false,
         passkey: true,
         label: "Accept AIDE baseline",
     },
     Action {
         name: "rkhunter.propupd",
-        unit: "clamv-rkhunter-propupd.service",
+        unit: "palisade-rkhunter-propupd.service",
         stop: false,
         passkey: true,
         label: "Update rkhunter properties",
     },
     Action {
         name: "aide.timer.on",
-        unit: "clamv-aide-check.timer",
+        unit: "palisade-aide-check.timer",
         stop: false,
         passkey: false,
         label: "Daily AIDE on",
     },
     Action {
         name: "aide.timer.off",
-        unit: "clamv-aide-check.timer",
+        unit: "palisade-aide-check.timer",
         stop: true,
         passkey: false,
         label: "Daily AIDE off",
     },
     Action {
         name: "rkhunter.timer.on",
-        unit: "clamv-rkhunter-check.timer",
+        unit: "palisade-rkhunter-check.timer",
         stop: false,
         passkey: false,
         label: "Daily rkhunter on",
     },
     Action {
         name: "rkhunter.timer.off",
-        unit: "clamv-rkhunter-check.timer",
+        unit: "palisade-rkhunter-check.timer",
         stop: true,
         passkey: false,
         label: "Daily rkhunter off",
@@ -88,7 +88,7 @@ pub const ACTIONS: [Action; 12] = [
     // Started only through `set_time`, which writes the time first.
     Action {
         name: "timers.set",
-        unit: "clamv-timer-set.service",
+        unit: "palisade-timer-set.service",
         stop: false,
         passkey: false,
         label: "Set timer times",
@@ -96,24 +96,24 @@ pub const ACTIONS: [Action; 12] = [
     // Firewall units are started only by the firewall code, never from a host-check job.
     Action {
         name: "firewall.snapshot",
-        unit: "clamv-firewall-snapshot.service",
+        unit: "palisade-firewall-snapshot.service",
         stop: false,
         passkey: false,
         label: "Read firewall",
     },
     Action {
         name: "firewall.apply",
-        unit: "clamv-firewall-apply.service",
+        unit: "palisade-firewall-apply.service",
         stop: false,
         passkey: true,
         label: "Apply firewall plan",
     },
     Action {
         name: "firewall.remove",
-        unit: "clamv-firewall-remove.service",
+        unit: "palisade-firewall-remove.service",
         stop: false,
         passkey: true,
-        label: "Remove clamv's firewall table",
+        label: "Remove Palisade's firewall table",
     },
 ];
 
@@ -123,7 +123,7 @@ pub fn check_action(name: &str) -> Option<&'static Action> {
 }
 
 /// Shared with the host's timer-set unit, which uses this fixed path too.
-pub const TIMER_DIR: &str = "/var/lib/clamv/timers";
+pub const TIMER_DIR: &str = "/var/lib/palisade/timers";
 
 /// A daily time, `HH:MM`, or `random` for systemd's own randomised daily run.
 pub fn valid_time(t: &str) -> bool {
@@ -178,7 +178,7 @@ pub async fn set_time(tool: &str, time: &str) -> Result<(), RunError> {
     run(a).await
 }
 
-/// The time the host last applied for a tool, if clamv ever set one.
+/// The time the host last applied for a tool, if Palisade ever set one.
 fn applied_time(tool: &str) -> Option<String> {
     use std::io::Read;
     let f = std::fs::File::open(std::path::Path::new(TIMER_DIR).join(format!("{tool}.applied")))
@@ -193,7 +193,7 @@ pub fn action(name: &str) -> Option<&'static Action> {
     ACTIONS.iter().find(|a| a.name == name)
 }
 
-/// What a host's systemd says about clamv's units.
+/// What a host's systemd says about Palisade's units.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnitStates {
     #[serde(default)]
@@ -205,7 +205,7 @@ pub struct UnitStates {
     pub aide_timer: Option<bool>,
     #[serde(default)]
     pub rkhunter_timer: Option<bool>,
-    /// The daily time clamv set (`HH:MM` or `random`); None when it never set one.
+    /// The daily time Palisade set (`HH:MM` or `random`); None when it never set one.
     #[serde(default)]
     pub aide_at: Option<String>,
     #[serde(default)]
@@ -255,10 +255,10 @@ pub fn message(code: &str) -> &'static str {
     match code {
         NO_BUS => "No system D-Bus here; mount /run/dbus/system_bus_socket into the container.",
         DENIED => {
-            "systemd refused; run host-setup on the host and run clamv as the clamv user (uid 10001)."
+            "systemd refused; run host-setup on the host and run Palisade as the palisade user (uid 10001)."
         }
         NOT_INSTALLED => {
-            "The clamv host units are not installed; run the image with host-setup on the host."
+            "The Palisade host units are not installed; run the image with host-setup on the host."
         }
         _ => "systemd could not start the unit; see the host's journal.",
     }
@@ -348,15 +348,15 @@ mod imp {
             loaded(load).then(|| active.as_deref() == Some("active"))
         };
         UnitStates {
-            aide: loaded(prop(&c, "clamv-aide-check.service", "LoadState").await),
-            rkhunter: loaded(prop(&c, "clamv-rkhunter-check.service", "LoadState").await),
+            aide: loaded(prop(&c, "palisade-aide-check.service", "LoadState").await),
+            rkhunter: loaded(prop(&c, "palisade-rkhunter-check.service", "LoadState").await),
             aide_timer: timer(
-                prop(&c, "clamv-aide-check.timer", "LoadState").await,
-                prop(&c, "clamv-aide-check.timer", "ActiveState").await,
+                prop(&c, "palisade-aide-check.timer", "LoadState").await,
+                prop(&c, "palisade-aide-check.timer", "ActiveState").await,
             ),
             rkhunter_timer: timer(
-                prop(&c, "clamv-rkhunter-check.timer", "LoadState").await,
-                prop(&c, "clamv-rkhunter-check.timer", "ActiveState").await,
+                prop(&c, "palisade-rkhunter-check.timer", "LoadState").await,
+                prop(&c, "palisade-rkhunter-check.timer", "ActiveState").await,
             ),
             aide_at: None,
             rkhunter_at: None,
@@ -461,7 +461,7 @@ mod tests {
     fn the_allow_list_is_fixed() {
         assert_eq!(
             action("aide.check").map(|a| a.unit),
-            Some("clamv-aide-check.service")
+            Some("palisade-aide-check.service")
         );
         assert!(action("aide.accept").is_some_and(|a| a.passkey));
         assert!(action("rkhunter.timer.off").is_some_and(|a| a.stop && !a.passkey));
@@ -484,9 +484,9 @@ mod tests {
         );
         assert_eq!(parse_timer_target("aide.timer.at 99:99"), None);
         assert_eq!(parse_timer_target("sshd.timer.at 03:30"), None);
-        let rules = include_str!("../../../examples/host-checks/50-clamv-host-checks.rules");
+        let rules = include_str!("../../../examples/host-checks/50-palisade-host-checks.rules");
         for a in ACTIONS {
-            assert!(a.unit.starts_with("clamv-"));
+            assert!(a.unit.starts_with("palisade-"));
             assert!(
                 rules.contains(a.unit),
                 "{} missing from the polkit rule",

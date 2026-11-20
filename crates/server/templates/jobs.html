@@ -1,5 +1,5 @@
 {% extends "shell.html" %}
-{% block title %}{{ nav.t("Jobs · ClamAV Web UI") }}{% endblock %}
+{% block title %}{{ nav.t("Jobs · Palisade") }}{% endblock %}
 {% block content %}
 <div class="page-head"><h1 class="h3">{{ nav.t("Jobs") }}</h1><span class="muted small">{{ total }} {{ nav.t("job(s)") }}{% if refresh %} {{ nav.t("· updating every 5 s") }}{% endif %}</span></div>
 <form method="get" action="/jobs" class="filter-bar" data-remember="jobs">

@@ -1,11 +1,11 @@
-//! clamv-webui: web UI for ClamAV clamd.
+//! palisade: web UI for ClamAV clamd.
 
 use std::process::ExitCode;
 
 use clap::Parser;
 
-use clamv_webui::config::{Cli, Command};
-use clamv_webui::{app, healthcheck, logging};
+use palisade::config::{Cli, Command};
+use palisade::{app, healthcheck, logging};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -30,7 +30,7 @@ async fn main() -> ExitCode {
         }
         Command::Agent => {
             logging::init(&cli.config);
-            match clamv_webui::agent::client::run(cli.config).await {
+            match palisade::agent::client::run(cli.config).await {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
                     tracing::error!(error = %e, "agent failed");
@@ -38,7 +38,7 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        Command::HostSetup(h) => match clamv_webui::hostsetup::run(&h).await {
+        Command::HostSetup(h) => match palisade::hostsetup::run(&h).await {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("host-setup failed: {e:#}");

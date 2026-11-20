@@ -1,4 +1,4 @@
-//! CrowdSec console. clamv signs in to a Local API as a watcher (a machine
+//! CrowdSec console. Palisade signs in to a Local API as a watcher (a machine
 //! added with `cscli machines add`), keeps the last week of alerts and every
 //! active decision in memory, and adds or removes bans when an admin asks.
 //! Nothing is stored in the database, so a restart re-reads the LAPI.
@@ -372,7 +372,7 @@ impl Console {
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::none())
-            .user_agent(concat!("clamv-webui/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("palisade/", env!("CARGO_PKG_VERSION")))
             .tls_backend_preconfigured(crate::webhook::client_tls(cfg.crowdsec_ca_file.as_deref())?)
             .build()?;
         Ok(Self {
@@ -697,10 +697,7 @@ impl Console {
     pub async fn ban(&self, b: &Ban, by: &str) -> anyhow::Result<()> {
         self.writable()?;
         let now = crate::timefmt::rfc3339(crate::db::now_ms());
-        let scenario = format!(
-            "manual '{}' from clamv-webui user {by}: {}",
-            b.kind, b.reason
-        );
+        let scenario = format!("manual '{}' from Palisade user {by}: {}", b.kind, b.reason);
         let body = json!([{
             "scenario": scenario,
             "scenario_hash": "",

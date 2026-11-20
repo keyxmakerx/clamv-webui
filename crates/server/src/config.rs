@@ -33,7 +33,7 @@ pub struct HostSetup {
     /// Where the host's / is mounted.
     #[arg(long, default_value = "/host")]
     pub root: std::path::PathBuf,
-    /// The uid clamv's containers run as.
+    /// The uid Palisade's containers run as.
     #[arg(long, default_value_t = 10001)]
     pub uid: u32,
     /// Take the units, scripts and polkit rule away again.
@@ -66,7 +66,7 @@ pub struct Config {
     )]
     pub listen: SocketAddr,
 
-    /// Log filter, e.g. `info` or `info,clamv_webui=debug`.
+    /// Log filter, e.g. `info` or `info,palisade=debug`.
     #[arg(long, env = "LOG_LEVEL", default_value = "info", global = true)]
     pub log_level: String,
 
@@ -238,7 +238,7 @@ pub struct Config {
     #[arg(
         long,
         env = "CROWDSEC_MACHINE_ID",
-        default_value = "clamv-webui",
+        default_value = "palisade",
         global = true
     )]
     pub crowdsec_machine_id: String,
@@ -655,7 +655,7 @@ impl Config {
         }
         Ok(format!(
             "sqlite://{}",
-            self.data_dir.join("clamv-webui.db").display()
+            self.data_dir.join("palisade.db").display()
         ))
     }
 

@@ -5,26 +5,26 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use clamv_webui::app::{AppState, router};
-use clamv_webui::auth::totp;
-use clamv_webui::auth::webauthn::b64u;
-use clamv_webui::auth::webauthn::testkit::SoftKey;
-use clamv_webui::config::Cli;
-use clamv_webui::db::Db;
 use clap::Parser;
 use http_body_util::BodyExt;
+use palisade::app::{AppState, router};
+use palisade::auth::totp;
+use palisade::auth::webauthn::b64u;
+use palisade::auth::webauthn::testkit::SoftKey;
+use palisade::config::Cli;
+use palisade::db::Db;
 use tower::ServiceExt;
 
 fn pw() -> &'static str {
     static PW: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    PW.get_or_init(clamv_webui::auth::token::random_secret)
+    PW.get_or_init(palisade::auth::token::random_secret)
 }
 
 async fn app(extra: &[&str]) -> (Router, Arc<AppState>) {
-    let key = std::env::temp_dir().join(format!("clamv-mfa-key-{}", clamv_webui::db::new_id()));
+    let key = std::env::temp_dir().join(format!("palisade-mfa-key-{}", palisade::db::new_id()));
     let key_s = key.to_str().expect("utf8").to_owned();
     let mut args = vec![
-        "clamv-webui",
+        "palisade",
         "--clamd-endpoint",
         "tcp://127.0.0.1:1",
         "--secret-key-file",
@@ -33,7 +33,7 @@ async fn app(extra: &[&str]) -> (Router, Arc<AppState>) {
     args.extend_from_slice(extra);
     let cli = Cli::parse_from(args);
     let db = Db::open("sqlite::memory:", 1).await.expect("db");
-    clamv_webui::auth::bootstrap::ensure_admin(&db, &std::env::temp_dir(), Some(pw()))
+    palisade::auth::bootstrap::ensure_admin(&db, &std::env::temp_dir(), Some(pw()))
         .await
         .expect("bootstrap");
     let admin = db
@@ -189,7 +189,7 @@ async fn totp_and_recovery_codes() {
     let key = between(&page, "<code class=\"text-break\">", "</code>").replace(' ', "");
     let sealed = between(&page, "name=\"sealed\" value=\"", "\"").to_owned();
     let secret = totp::unbase32(&key).expect("key");
-    let now = clamv_webui::db::now_ms() / 1000;
+    let now = palisade::db::now_ms() / 1000;
     // A wrong code keeps the setup open.
     let res = app
         .clone()
@@ -261,7 +261,7 @@ async fn totp_and_recovery_codes() {
     assert!(
         cookies(&res)
             .iter()
-            .any(|c| c.starts_with("clamv_session=") && !c.starts_with("clamv_session=;"))
+            .any(|c| c.starts_with("palisade_session=") && !c.starts_with("palisade_session=;"))
     );
     let res = sign_in(&app).await;
     let mfa = pair(&cookies(&res)[0]);
@@ -432,7 +432,7 @@ async fn passkeys_register_sign_in_and_second_step() {
     assert!(
         cookies(&res)
             .iter()
-            .any(|c| c.starts_with("clamv_session=") && c.len() > 20)
+            .any(|c| c.starts_with("palisade_session=") && c.len() > 20)
     );
     assert!(text(res).await.contains("/dashboard"));
     // Replaying the same answer fails (challenge spent).
@@ -527,10 +527,10 @@ async fn passkeys_register_sign_in_and_second_step() {
     let c = cookies(&res);
     assert!(
         c.iter()
-            .any(|c| c.starts_with("clamv_session=") && c.len() > 20)
+            .any(|c| c.starts_with("palisade_session=") && c.len() > 20)
     );
     assert!(
-        c.iter().any(|c| c.starts_with("clamv_mfa=;")),
+        c.iter().any(|c| c.starts_with("palisade_mfa=;")),
         "pending step cleared"
     );
 
@@ -781,8 +781,8 @@ async fn host_check_baselines_need_a_fresh_passkey() {
         1
     );
 
-    // There is no systemd for clamv here, so the jobs end with a host-check error, not a crash.
-    let f = clamv_webui::db::jobs::JobFilter {
+    // There is no systemd for Palisade here, so the jobs end with a host-check error, not a crash.
+    let f = palisade::db::jobs::JobFilter {
         kind: Some("HOSTCHECK".into()),
         ..Default::default()
     };
@@ -806,7 +806,7 @@ async fn host_check_baselines_need_a_fresh_passkey() {
     }
 
     // Firewall plans need the same passkey; a plan that closes SSH to everyone is refused.
-    use clamv_webui::firewall::{Proto, Rule};
+    use palisade::firewall::{Proto, Rule};
     let stepup = |host: String| {
         let app = app.clone();
         let session = session.clone();
@@ -881,7 +881,7 @@ async fn host_check_baselines_need_a_fresh_passkey() {
             .unwrap_or("")
             .contains("Sent to fw-host")
     );
-    let f = clamv_webui::db::jobs::JobFilter {
+    let f = palisade::db::jobs::JobFilter {
         kind: Some("FIREWALL".into()),
         ..Default::default()
     };
@@ -923,7 +923,7 @@ async fn language_is_picked_from_the_cookie_or_the_browser() {
         app.clone()
             .oneshot(get(
                 "/account/security",
-                &format!("{session}; clamv_lang=de"),
+                &format!("{session}; palisade_lang=de"),
             ))
             .await
             .expect("res"),
@@ -957,7 +957,7 @@ async fn language_is_picked_from_the_cookie_or_the_browser() {
         .expect("res");
     assert_eq!(res.status(), StatusCode::SEE_OTHER);
     let set = res.headers()[header::SET_COOKIE].to_str().expect("ascii");
-    assert!(set.starts_with("clamv_lang=en;") && set.contains("SameSite=Strict"));
+    assert!(set.starts_with("palisade_lang=en;") && set.contains("SameSite=Strict"));
 
     // An unknown choice clears it, falling back to the browser's language.
     let res = app
@@ -970,5 +970,5 @@ async fn language_is_picked_from_the_cookie_or_the_browser() {
         .await
         .expect("res");
     let set = res.headers()[header::SET_COOKIE].to_str().expect("ascii");
-    assert!(set.starts_with("clamv_lang=;") && set.contains("Max-Age=0"));
+    assert!(set.starts_with("palisade_lang=;") && set.contains("Max-Age=0"));
 }

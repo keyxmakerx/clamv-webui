@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use clamv_webui::db::{Db, new_id};
+use palisade::db::{Db, new_id};
 use sha2::{Digest, Sha256};
 
 fn root() -> PathBuf {
@@ -56,7 +56,7 @@ fn migrations_match_the_frozen_list() {
 /// rows, then open it with this build and check nothing was lost.
 #[tokio::test]
 async fn upgrades_a_first_release_database() {
-    let dir = std::env::temp_dir().join(format!("clamv-upgrade-{}", new_id()));
+    let dir = std::env::temp_dir().join(format!("palisade-upgrade-{}", new_id()));
     let only_first = dir.join("m");
     std::fs::create_dir_all(&only_first).expect("dir");
     std::fs::copy(

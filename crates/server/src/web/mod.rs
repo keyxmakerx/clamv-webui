@@ -948,9 +948,9 @@ async fn dashboard(
     )
 }
 
-/// Browser time-zone offset (minutes east of UTC) from the `clamv_tz` cookie, in ms.
+/// Browser time-zone offset (minutes east of UTC) from the `palisade_tz` cookie, in ms.
 pub fn tz_offset_ms(h: &HeaderMap) -> i64 {
-    session::cookie(h, "clamv_tz")
+    session::cookie(h, "palisade_tz")
         .and_then(|v| v.parse::<i64>().ok())
         .map_or(0, |m| m.clamp(-14 * 60, 14 * 60) * 60_000)
 }

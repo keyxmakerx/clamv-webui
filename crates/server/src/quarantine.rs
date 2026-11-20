@@ -253,7 +253,7 @@ pub async fn start(st: &AppState, detection: i64, by: &str) -> Result<String, St
         .ok_or_else(|| "Unknown detection.".to_owned())?;
     if d.path.contains(crate::watch::RAW_MARK) {
         return Err(
-            "That file's name is not readable text, so clamv cannot address it for quarantine."
+            "That file's name is not readable text, so Palisade cannot address it for quarantine."
                 .into(),
         );
     }
@@ -593,7 +593,7 @@ mod tests {
 
     #[tokio::test]
     async fn failed_copy_leaves_no_partial_file() {
-        let base = std::env::temp_dir().join(format!("clamv-qp-{}", crate::db::new_id()));
+        let base = std::env::temp_dir().join(format!("palisade-qp-{}", crate::db::new_id()));
         std::fs::create_dir_all(base.join("src")).expect("dir");
         // Reading a directory fails after the destination was created.
         let to = base.join("x.quarantined");
@@ -604,7 +604,7 @@ mod tests {
 
     #[tokio::test]
     async fn restore_and_delete_stay_in_bounds() {
-        let base = std::env::temp_dir().join(format!("clamv-q-{}", crate::db::new_id()));
+        let base = std::env::temp_dir().join(format!("palisade-q-{}", crate::db::new_id()));
         let root = base.join("root");
         let qdir = base.join("q");
         std::fs::create_dir_all(&root).expect("root");

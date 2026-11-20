@@ -1,14 +1,14 @@
 //! Runs against SQLite always, plus every URL in `TEST_DATABASE_URLS`
 //! (comma-separated; CI sets PostgreSQL, MySQL and MariaDB).
 
-use clamv_webui::db::{Db, new_id, now_ms};
+use palisade::db::{Db, new_id, now_ms};
 
 /// Tests share the external databases; open them one at a time.
 static OPEN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 async fn databases() -> Vec<Db> {
     let _guard = OPEN.lock().await;
-    let dir = std::env::temp_dir().join(format!("clamv-webui-test-{}", new_id()));
+    let dir = std::env::temp_dir().join(format!("palisade-test-{}", new_id()));
     std::fs::create_dir_all(&dir).expect("tmp dir");
     let mut urls = vec![format!("sqlite://{}", dir.join("t.db").display())];
     if let Ok(extra) = std::env::var("TEST_DATABASE_URLS") {
@@ -24,7 +24,7 @@ async fn databases() -> Vec<Db> {
     for url in urls {
         let db = Db::open(&url, 4)
             .await
-            .unwrap_or_else(|e| panic!("{}: {e}", clamv_webui::db::redact_url(&url)));
+            .unwrap_or_else(|e| panic!("{}: {e}", palisade::db::redact_url(&url)));
         out.push(db);
     }
     out
@@ -102,7 +102,7 @@ async fn portable_types_decode_everywhere() {
 
 #[tokio::test]
 async fn users_and_sessions() {
-    use clamv_webui::auth::Role;
+    use palisade::auth::Role;
     for db in databases().await {
         let kind = db.kind();
         let name = format!("u-{}", &new_id()[..8]);
@@ -194,7 +194,7 @@ async fn users_and_sessions() {
 
 #[tokio::test]
 async fn audit_round_trip() {
-    use clamv_webui::db::audit::AuditEntry;
+    use palisade::db::audit::AuditEntry;
     for db in databases().await {
         let kind = db.kind();
         let marker = new_id();
@@ -253,7 +253,7 @@ async fn endpoints_keep_one_default() {
 
 #[tokio::test]
 async fn jobs_claim_filter_and_prune() {
-    use clamv_webui::db::jobs::{JobFilter, NewJob, Outcome};
+    use palisade::db::jobs::{JobFilter, NewJob, Outcome};
     for db in databases().await {
         let kind = db.kind();
         sqlx::query(db.sql("DELETE FROM scan_jobs"))
@@ -348,8 +348,8 @@ async fn jobs_claim_filter_and_prune() {
 
 #[tokio::test]
 async fn tokens_and_audit_pages() {
-    use clamv_webui::db::audit::AuditEntry;
-    use clamv_webui::db::tokens::NewToken;
+    use palisade::db::audit::AuditEntry;
+    use palisade::db::tokens::NewToken;
     for db in databases().await {
         let kind = db.kind();
         let scopes = vec!["jobs:read".to_owned(), "bogus".to_owned()];
@@ -402,7 +402,7 @@ async fn tokens_and_audit_pages() {
 
 #[tokio::test]
 async fn schedules_claim_once() {
-    use clamv_webui::db::schedules::NewSchedule;
+    use palisade::db::schedules::NewSchedule;
     for db in databases().await {
         let kind = db.kind();
         let name = format!("s-{}", &new_id()[..8]);
@@ -444,17 +444,12 @@ async fn schedules_claim_once() {
 
 #[tokio::test]
 async fn identities_link_and_cascade() {
-    use clamv_webui::auth::Role;
+    use palisade::auth::Role;
     for db in databases().await {
         let kind = db.kind();
         let name = format!("sso:t-{}", &new_id()[..8]);
         let u = db
-            .create_user(
-                &name,
-                clamv_webui::db::users::NO_PASSWORD,
-                Role::Viewer,
-                false,
-            )
+            .create_user(&name, palisade::db::users::NO_PASSWORD, Role::Viewer, false)
             .await
             .expect("user");
         let principal = format!("oidc:{}", &new_id().replace('-', "")[..24]);
@@ -513,8 +508,8 @@ async fn processed_files_are_forgotten_by_folder() {
 
 #[tokio::test]
 async fn agents_claim_heartbeat_and_delete() {
-    use clamv_webui::db::agents::Heartbeat;
-    use clamv_webui::db::jobs::{NewJob, Outcome};
+    use palisade::db::agents::Heartbeat;
+    use palisade::db::jobs::{NewJob, Outcome};
     for db in databases().await {
         let kind = db.kind();
         let name = format!("ag-{}", &new_id()[..8]);
@@ -529,7 +524,7 @@ async fn agents_claim_heartbeat_and_delete() {
             "{kind:?}"
         );
         assert!(
-            db.agent_by_secret("clamv_agent_x")
+            db.agent_by_secret("palisade_agent_x")
                 .await
                 .expect("q")
                 .is_none()
@@ -608,7 +603,7 @@ async fn agents_claim_heartbeat_and_delete() {
 
 #[tokio::test]
 async fn second_factors_everywhere() {
-    use clamv_webui::auth::Role;
+    use palisade::auth::Role;
     for db in databases().await {
         let kind = db.kind();
         let name = format!("mfa-{}", &new_id()[..8]);
@@ -640,7 +635,7 @@ async fn second_factors_everywhere() {
 
         let raw = db.create_mfa_pending(&u.id, "UI").await.expect("pending");
         let p = db.mfa_pending(&raw).await.expect("q").expect("found");
-        for _ in 0..clamv_webui::db::mfa::PENDING_MAX_ATTEMPTS {
+        for _ in 0..palisade::db::mfa::PENDING_MAX_ATTEMPTS {
             assert!(db.count_mfa_attempt(&p.id_hash).await.expect("q"));
         }
         assert!(
@@ -687,8 +682,8 @@ async fn second_factors_everywhere() {
 
 #[tokio::test]
 async fn dashboard_and_detection_queries_everywhere() {
-    use clamv_webui::db::jobs::{JobFilter, NewJob, Outcome};
-    use clamv_webui::db::stats::DetectionFilter;
+    use palisade::db::jobs::{JobFilter, NewJob, Outcome};
+    use palisade::db::stats::DetectionFilter;
     for db in databases().await {
         let kind = db.kind();
         let tag = new_id()[..8].to_owned();
@@ -861,7 +856,7 @@ async fn canaries_everywhere() {
 
 #[tokio::test]
 async fn integrity_reports_everywhere() {
-    use clamv_webui::integrity::Report;
+    use palisade::integrity::Report;
     for db in databases().await {
         let kind = db.kind();
         let (agent, _) = db
@@ -875,7 +870,7 @@ async fn integrity_reports_everywhere() {
             summary: "s".into(),
             findings: vec!["changed: /etc/passwd".into()],
         };
-        let base = clamv_webui::db::now_ms();
+        let base = palisade::db::now_ms();
         assert!(
             db.add_integrity_report(Some(agent.id), &r("aide", base, false))
                 .await
@@ -922,10 +917,10 @@ async fn integrity_reports_everywhere() {
 
 #[tokio::test]
 async fn falco_alerts_everywhere() {
-    use clamv_webui::falco::Alert;
+    use palisade::falco::Alert;
     for db in databases().await {
         let kind = db.kind();
-        let base = clamv_webui::db::now_ms();
+        let base = palisade::db::now_ms();
         let a = Alert {
             at: base,
             priority: "error".into(),
@@ -953,7 +948,7 @@ async fn falco_alerts_everywhere() {
 
 #[tokio::test]
 async fn firewall_plans_are_per_host() {
-    use clamv_webui::firewall::{Proto, Rule};
+    use palisade::firewall::{Proto, Rule};
     for db in databases().await {
         let kind = db.kind();
         let (a, _) = db
@@ -997,7 +992,7 @@ async fn firewall_plans_are_per_host() {
 
 #[tokio::test]
 async fn quarantine_entries_move_through_states() {
-    use clamv_webui::db::quarantine as q;
+    use palisade::db::quarantine as q;
     for db in databases().await {
         let kind = db.kind();
         let path = format!("/w/{}/x.exe", &new_id()[..8]);
@@ -1036,7 +1031,7 @@ async fn quarantine_entries_move_through_states() {
 /// MySQL/MariaDB TEXT stops at 64 KB; results larger than that must still save.
 #[tokio::test]
 async fn large_results_store_on_every_backend() {
-    use clamv_webui::db::jobs::{self, JobFileError, NewJob, Outcome};
+    use palisade::db::jobs::{self, JobFileError, NewJob, Outcome};
     for db in databases().await {
         let kind = db.kind();
         let job = db

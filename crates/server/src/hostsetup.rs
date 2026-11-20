@@ -1,6 +1,6 @@
 //! `host-setup`: install the fixed host-check and firewall units from inside the image,
 //! so a host needs no checkout. It runs once as root with the host's / mounted; the
-//! clamv containers themselves stay unprivileged.
+//! Palisade containers themselves stay unprivileged.
 
 use std::path::{Path, PathBuf};
 
@@ -8,12 +8,12 @@ use anyhow::{Context, bail};
 
 use crate::config::HostSetup;
 
-const LIBEXEC: &str = "usr/local/libexec/clamv";
+const LIBEXEC: &str = "usr/local/libexec/palisade";
 const UNITS: &str = "etc/systemd/system";
-const POLKIT: &str = "etc/polkit-1/rules.d/50-clamv-host-checks.rules";
-const SYSUSERS: &str = "etc/sysusers.d/clamv.conf";
-const FIREWALL_DIR: &str = "var/lib/clamv/firewall";
-const TIMER_DIR: &str = "var/lib/clamv/timers";
+const POLKIT: &str = "etc/polkit-1/rules.d/50-palisade-host-checks.rules";
+const SYSUSERS: &str = "etc/sysusers.d/palisade.conf";
+const FIREWALL_DIR: &str = "var/lib/palisade/firewall";
+const TIMER_DIR: &str = "var/lib/palisade/timers";
 
 macro_rules! ex {
     ($name:literal) => {
@@ -34,19 +34,19 @@ const SCRIPTS: [(&str, &str); 6] = [
 ];
 
 const UNIT_FILES: [(&str, &str); 10] = [
-    ex!("clamv-timer-set.service"),
-    ex!("clamv-aide-check.service"),
-    ex!("clamv-aide-check.timer"),
-    ex!("clamv-aide-accept.service"),
-    ex!("clamv-rkhunter-check.service"),
-    ex!("clamv-rkhunter-check.timer"),
-    ex!("clamv-rkhunter-propupd.service"),
-    ex!("clamv-firewall-snapshot.service"),
-    ex!("clamv-firewall-apply.service"),
-    ex!("clamv-firewall-remove.service"),
+    ex!("palisade-timer-set.service"),
+    ex!("palisade-aide-check.service"),
+    ex!("palisade-aide-check.timer"),
+    ex!("palisade-aide-accept.service"),
+    ex!("palisade-rkhunter-check.service"),
+    ex!("palisade-rkhunter-check.timer"),
+    ex!("palisade-rkhunter-propupd.service"),
+    ex!("palisade-firewall-snapshot.service"),
+    ex!("palisade-firewall-apply.service"),
+    ex!("palisade-firewall-remove.service"),
 ];
 
-const RULES: &str = include_str!("../../../examples/host-checks/50-clamv-host-checks.rules");
+const RULES: &str = include_str!("../../../examples/host-checks/50-palisade-host-checks.rules");
 
 /// Every file this installs, relative to the host's /, with its mode.
 fn files(uid: u32) -> Vec<(PathBuf, String, u32)> {
@@ -60,7 +60,7 @@ fn files(uid: u32) -> Vec<(PathBuf, String, u32)> {
     v.push((PathBuf::from(POLKIT), RULES.to_owned(), 0o644));
     v.push((
         PathBuf::from(SYSUSERS),
-        format!("# clamv-webui's containers run as this uid; its polkit rule names this user.\nu clamv {uid} \"clamv-webui\" - /usr/sbin/nologin\n"),
+        format!("# Palisade's containers run as this uid; its polkit rule names this user.\nu palisade {uid} \"palisade\" - /usr/sbin/nologin\n"),
         0o644,
     ));
     v
@@ -69,7 +69,7 @@ fn files(uid: u32) -> Vec<(PathBuf, String, u32)> {
 /// Who holds a name or uid in the host's passwd.
 fn passwd(root: &Path, uid: u32) -> (Option<u32>, Option<String>) {
     let text = std::fs::read_to_string(root.join("etc/passwd")).unwrap_or_default();
-    let mut clamv = None;
+    let mut palisade = None;
     let mut holder = None;
     for line in text.lines() {
         let f: Vec<&str> = line.split(':').collect();
@@ -79,14 +79,14 @@ fn passwd(root: &Path, uid: u32) -> (Option<u32>, Option<String>) {
         let Ok(u) = f[2].parse::<u32>() else {
             continue;
         };
-        if f[0] == "clamv" {
-            clamv = Some(u);
+        if f[0] == "palisade" {
+            palisade = Some(u);
         }
         if u == uid {
             holder = Some(f[0].to_owned());
         }
     }
-    (clamv, holder)
+    (palisade, holder)
 }
 
 fn write(root: &Path, rel: &Path, body: &str, mode: u32) -> anyhow::Result<()> {
@@ -95,7 +95,7 @@ fn write(root: &Path, rel: &Path, body: &str, mode: u32) -> anyhow::Result<()> {
     let parent = dest.parent().context("no parent")?;
     std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     let tmp = parent.join(format!(
-        ".{}.clamv-tmp",
+        ".{}.palisade-tmp",
         rel.file_name().and_then(|n| n.to_str()).unwrap_or("f")
     ));
     std::fs::write(&tmp, body).with_context(|| format!("write {}", tmp.display()))?;
@@ -136,13 +136,13 @@ pub async fn run(h: &HostSetup) -> anyhow::Result<()> {
     if h.remove {
         return remove(h, &bus).await;
     }
-    let (clamv, holder) = passwd(&h.root, h.uid);
-    match (clamv, holder.as_deref()) {
+    let (palisade, holder) = passwd(&h.root, h.uid);
+    match (palisade, holder.as_deref()) {
         (Some(u), _) if u != h.uid => bail!(
-            "the host already has a clamv user with uid {u}; pass --uid {u} and run clamv's containers with --user {u}"
+            "the host already has a palisade user with uid {u}; pass --uid {u} and run Palisade's containers with --user {u}"
         ),
         (None, Some(other)) => bail!(
-            "uid {} belongs to {other} on this host; pick another with --uid and run clamv's containers as that uid",
+            "uid {} belongs to {other} on this host; pick another with --uid and run Palisade's containers as that uid",
             h.uid
         ),
         _ => {}
@@ -150,7 +150,7 @@ pub async fn run(h: &HostSetup) -> anyhow::Result<()> {
     if let Err(why) = polkit_ok(&h.root) {
         bail!(
             "{why}. Managed units need polkit 0.106 or newer (JavaScript rules), so nothing was installed. \
-             clamv still reads AIDE and rkhunter reports you mount into it."
+             Palisade still reads AIDE and rkhunter reports you mount into it."
         );
     }
     println!("Installing into {}:", h.root.display());
@@ -164,20 +164,24 @@ pub async fn run(h: &HostSetup) -> anyhow::Result<()> {
         std::fs::create_dir_all(&p)?;
         std::os::unix::fs::chown(&p, Some(h.uid), Some(0))?;
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o750))?;
-        println!("  /{d} (owned by clamv, 0750)");
+        println!("  /{d} (owned by palisade, 0750)");
     }
     for t in ["aide", "rkhunter"] {
-        std::fs::create_dir_all(h.root.join(UNITS).join(format!("clamv-{t}-check.timer.d")))?;
+        std::fs::create_dir_all(
+            h.root
+                .join(UNITS)
+                .join(format!("palisade-{t}-check.timer.d")),
+        )?;
     }
-    imp::reload(&bus, clamv.is_none().then_some(h.root.as_path())).await?;
+    imp::reload(&bus, palisade.is_none().then_some(h.root.as_path())).await?;
     if passwd(&h.root, h.uid).0 != Some(h.uid) {
         bail!(
-            "systemd-sysusers did not add the clamv user; add it by hand with uid {}",
+            "systemd-sysusers did not add the palisade user; add it by hand with uid {}",
             h.uid
         );
     }
     println!(
-        "Done. Mount /run/dbus/system_bus_socket (read-only), /{FIREWALL_DIR} and /{TIMER_DIR} (read-write) into clamv and its agents (the commented volume lines in the compose files), then recreate the container."
+        "Done. Mount /run/dbus/system_bus_socket (read-only), /{FIREWALL_DIR} and /{TIMER_DIR} (read-write) into Palisade and its agents (the commented volume lines in the compose files), then recreate the container."
     );
     for n in notes(&h.root) {
         println!("Note: {n}");
@@ -268,12 +272,12 @@ async fn remove(h: &HostSetup, bus: &str) -> anyhow::Result<()> {
         let _ = std::fs::remove_file(
             h.root
                 .join(UNITS)
-                .join(format!("clamv-{t}-check.timer.d/clamv-time.conf")),
+                .join(format!("palisade-{t}-check.timer.d/palisade-time.conf")),
         );
     }
     imp::reload(bus, None).await?;
     println!(
-        "Done. The clamv user, /var/lib/clamv and the AIDE and rkhunter packages stay; remove them by hand if you want."
+        "Done. The palisade user, /var/lib/palisade and the AIDE and rkhunter packages stay; remove them by hand if you want."
     );
     Ok(())
 }
@@ -307,7 +311,7 @@ mod imp {
             for _ in 0..20 {
                 tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                 if std::fs::read_to_string(root.join("etc/passwd"))
-                    .is_ok_and(|p| p.lines().any(|l| l.starts_with("clamv:")))
+                    .is_ok_and(|p| p.lines().any(|l| l.starts_with("palisade:")))
                 {
                     break;
                 }
@@ -317,15 +321,15 @@ mod imp {
         Ok(())
     }
 
-    /// Stop the timers and take clamv's firewall table away before the units go.
+    /// Stop the timers and take Palisade's firewall table away before the units go.
     pub async fn stop(bus: &str) {
         let Ok(c) = connect(bus).await else {
             return;
         };
         for (m, u) in [
-            ("StopUnit", "clamv-aide-check.timer"),
-            ("StopUnit", "clamv-rkhunter-check.timer"),
-            ("StartUnit", "clamv-firewall-remove.service"),
+            ("StopUnit", "palisade-aide-check.timer"),
+            ("StopUnit", "palisade-rkhunter-check.timer"),
+            ("StartUnit", "palisade-firewall-remove.service"),
         ] {
             let _ = c
                 .call_method(Some(DEST), PATH, Some(MANAGER), m, &(u, "replace"))
@@ -360,13 +364,13 @@ mod tests {
         }
         assert!(
             f.iter()
-                .any(|(p, b, _)| p.ends_with("clamv.conf") && b.contains("u clamv 10001 "))
+                .any(|(p, b, _)| p.ends_with("palisade.conf") && b.contains("u palisade 10001 "))
         );
     }
 
     #[test]
     fn notes_name_what_the_host_lacks() {
-        let d = std::env::temp_dir().join(format!("clamv-notes-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("palisade-notes-{}", std::process::id()));
         std::fs::create_dir_all(d.join("usr/bin")).expect("usr/bin");
         assert_eq!(notes(&d).len(), 3);
         std::fs::create_dir_all(d.join("usr/sbin")).expect("usr/sbin");
@@ -388,7 +392,7 @@ mod tests {
         ] {
             assert_eq!(polkit_version_ok(v), ok, "{v}");
         }
-        let d = std::env::temp_dir().join(format!("clamv-polkit-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("palisade-polkit-{}", std::process::id()));
         std::fs::create_dir_all(d.join("var/lib/dpkg")).expect("dpkg");
         assert!(polkit_ok(&d).is_err());
         std::fs::write(
@@ -408,7 +412,7 @@ mod tests {
 
     #[test]
     fn reads_passwd_holders() {
-        let d = std::env::temp_dir().join(format!("clamv-passwd-{}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("palisade-passwd-{}", std::process::id()));
         std::fs::create_dir_all(d.join("etc")).expect("etc");
         std::fs::write(
             d.join("etc/passwd"),

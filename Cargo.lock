@@ -483,7 +483,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "clamv-webui"
+name = "palisade"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -495,7 +495,7 @@ dependencies = [
  "bcrypt",
  "ciborium",
  "clamd",
- "clamv-webui",
+ "palisade",
  "clap",
  "futures-core",
  "http-body-util",

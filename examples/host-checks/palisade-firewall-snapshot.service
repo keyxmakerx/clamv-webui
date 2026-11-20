@@ -1,15 +1,15 @@
-# clamv: read the host firewall; one fixed script, no traffic, writes only /var/lib/clamv/firewall.
+# Palisade: read the host firewall; one fixed script, no traffic, writes only /var/lib/palisade/firewall.
 [Unit]
-Description=clamv firewall: read the host firewall
-ConditionPathExists=/usr/local/libexec/clamv/firewall-snapshot
+Description=Palisade firewall: read the host firewall
+ConditionPathExists=/usr/local/libexec/palisade/firewall-snapshot
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/libexec/clamv/firewall-snapshot
+ExecStart=/usr/local/libexec/palisade/firewall-snapshot
 ProtectSystem=strict
-RuntimeDirectory=clamv-firewall
+RuntimeDirectory=palisade-firewall
 RuntimeDirectoryMode=0700
-ReadWritePaths=/var/lib/clamv/firewall
+ReadWritePaths=/var/lib/palisade/firewall
 PrivateTmp=yes
 IPAddressDeny=any
 RestrictAddressFamilies=AF_UNIX AF_NETLINK

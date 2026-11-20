@@ -7,10 +7,10 @@ use axum::body::Body;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, Request, StatusCode, header};
 use axum::routing::{delete, get, post};
-use clamv_webui::app::{AppState, router};
-use clamv_webui::config::Cli;
-use clamv_webui::db::Db;
 use clap::Parser;
+use palisade::app::{AppState, router};
+use palisade::config::Cli;
+use palisade::db::Db;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -37,7 +37,7 @@ async fn login(
 ) -> (StatusCode, axum::Json<Value>) {
     let mut f = f.lock().expect("lock");
     f.logins += 1;
-    if b["machine_id"] != "clamv-webui" || b["password"] != f.password.as_str() {
+    if b["machine_id"] != "palisade" || b["password"] != f.password.as_str() {
         return (
             StatusCode::UNAUTHORIZED,
             axum::Json(json!({"code": 401, "message": "incorrect Username or Password"})),
@@ -98,8 +98,8 @@ async fn add(
     let mut a = b[0].clone();
     let id = 100 + i64::try_from(f.posted.len()).expect("n");
     a["id"] = json!(id);
-    a["machine_id"] = json!("clamv-webui");
-    a["created_at"] = json!(clamv_webui::timefmt::rfc3339(clamv_webui::db::now_ms()));
+    a["machine_id"] = json!("palisade");
+    a["created_at"] = json!(palisade::timefmt::rfc3339(palisade::db::now_ms()));
     a["decisions"][0]["id"] = json!(id + 1000);
     f.posted.push(b[0].clone());
     f.alerts.push(a);
@@ -148,7 +148,7 @@ fn alert(id: i64, ip: &str, cn: &str, scenario: &str, machine: &str, decisions: 
     json!({
         "id": id, "scenario": scenario, "machine_id": machine, "events_count": 5, "simulated": false,
         "message": format!("Ip {ip} performed '{scenario}'"),
-        "created_at": clamv_webui::timefmt::rfc3339(clamv_webui::db::now_ms() - 600_000),
+        "created_at": palisade::timefmt::rfc3339(palisade::db::now_ms() - 600_000),
         "source": {"scope": "Ip", "value": ip, "ip": ip, "cn": cn, "as_name": "EXAMPLE-AS", "as_number": "64500", "latitude": 52.3, "longitude": 4.9},
         "decisions": decisions,
         "events": [{"meta": [{"key": "service", "value": "ssh"}, {"key": "target_user", "value": "root"}]}],
@@ -157,8 +157,8 @@ fn alert(id: i64, ip: &str, cn: &str, scenario: &str, machine: &str, decisions: 
 
 async fn fake_lapi() -> (String, Shared) {
     let shared: Shared = Arc::new(Mutex::new(Fake {
-        password: clamv_webui::auth::token::random_secret(),
-        token: clamv_webui::auth::token::random_secret(),
+        password: palisade::auth::token::random_secret(),
+        token: palisade::auth::token::random_secret(),
         alerts: vec![
             alert(
                 1,
@@ -198,13 +198,13 @@ async fn fake_lapi() -> (String, Shared) {
 }
 
 async fn app_with(extra: &[&str]) -> (Router, Arc<AppState>, String) {
-    let mut args = vec!["clamv-webui", "--clamd-endpoint", "tcp://127.0.0.1:1"];
+    let mut args = vec!["palisade", "--clamd-endpoint", "tcp://127.0.0.1:1"];
     args.extend_from_slice(extra);
     let cli = Cli::parse_from(args);
     let db = Db::open("sqlite::memory:", 1).await.expect("db");
     let dir = std::env::temp_dir();
-    let pw = clamv_webui::auth::token::random_secret();
-    clamv_webui::auth::bootstrap::ensure_admin(&db, &dir, Some(&pw))
+    let pw = palisade::auth::token::random_secret();
+    palisade::auth::bootstrap::ensure_admin(&db, &dir, Some(&pw))
         .await
         .expect("bootstrap");
     let admin = db
@@ -220,7 +220,7 @@ async fn app_with(extra: &[&str]) -> (Router, Arc<AppState>, String) {
     (
         router(st.clone(), &cli.config),
         st,
-        format!("clamv_session={raw}|{}", s.csrf_token),
+        format!("palisade_session={raw}|{}", s.csrf_token),
     )
 }
 
@@ -270,7 +270,7 @@ async fn console_reads_alerts_and_manages_decisions() {
     let (url, fake) = fake_lapi().await;
     let pw = fake.lock().expect("lock").password.clone();
     let (app, st, c) = app_with(&["--crowdsec-lapi-url", &url, "--crowdsec-password", &pw]).await;
-    clamv_webui::crowdsec::tick(&st, true).await;
+    palisade::crowdsec::tick(&st, true).await;
     let s = st.crowdsec.status();
     assert!(s.up, "{:?}", s.error);
 
@@ -411,7 +411,7 @@ async fn read_only_wrong_password_and_unset() {
         "true",
     ])
     .await;
-    clamv_webui::crowdsec::tick(&st, true).await;
+    palisade::crowdsec::tick(&st, true).await;
     let s = st.crowdsec.status();
     assert!(!s.up);
     assert!(s.error.as_deref().unwrap_or("").contains("refused machine"));
@@ -443,17 +443,17 @@ async fn read_only_wrong_password_and_unset() {
 async fn bad_lapi_urls_are_refused() {
     for u in ["ftp://x", "http://user:pw@crowdsec:8080", "not a url"] {
         let cli = Cli::parse_from([
-            "clamv-webui",
+            "palisade",
             "--crowdsec-lapi-url",
             u,
             "--crowdsec-password",
             "x",
         ]);
         assert!(
-            clamv_webui::crowdsec::Console::from_config(&cli.config).is_err(),
+            palisade::crowdsec::Console::from_config(&cli.config).is_err(),
             "{u}"
         );
     }
-    let cli = Cli::parse_from(["clamv-webui", "--crowdsec-lapi-url", "http://crowdsec:8080"]);
-    assert!(clamv_webui::crowdsec::Console::from_config(&cli.config).is_err());
+    let cli = Cli::parse_from(["palisade", "--crowdsec-lapi-url", "http://crowdsec:8080"]);
+    assert!(palisade::crowdsec::Console::from_config(&cli.config).is_err());
 }

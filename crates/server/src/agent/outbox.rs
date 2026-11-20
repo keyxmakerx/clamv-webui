@@ -218,7 +218,7 @@ mod tests {
 
     #[test]
     fn items_survive_a_restart_in_order() {
-        let dir = std::env::temp_dir().join(format!("clamv-q-{}", crate::db::new_id()));
+        let dir = std::env::temp_dir().join(format!("palisade-q-{}", crate::db::new_id()));
         let q = Outbox::open(Some(dir.clone())).expect("open");
         q.push(&ev(1));
         q.push(&Item::Result {

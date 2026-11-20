@@ -6,12 +6,12 @@ use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
 use base64::Engine;
-use clamv_webui::app::{AppState, router};
-use clamv_webui::auth::Role;
-use clamv_webui::config::Cli;
-use clamv_webui::db::Db;
-use clamv_webui::db::tokens::NewToken;
 use clap::Parser;
+use palisade::app::{AppState, router};
+use palisade::auth::Role;
+use palisade::config::Cli;
+use palisade::db::Db;
+use palisade::db::tokens::NewToken;
 use serde_json::Value;
 use tower::ServiceExt;
 
@@ -22,16 +22,16 @@ struct T {
 }
 
 async fn setup(extra: &[&str]) -> T {
-    let mut args = vec!["clamv-webui", "--clamd-endpoint", "tcp://127.0.0.1:1"];
+    let mut args = vec!["palisade", "--clamd-endpoint", "tcp://127.0.0.1:1"];
     args.extend_from_slice(extra);
     let cli = Cli::parse_from(args);
     let db = Db::open("sqlite::memory:", 1).await.expect("db");
-    clamv_webui::app::seed_endpoint(&db, &cli.config)
+    palisade::app::seed_endpoint(&db, &cli.config)
         .await
         .expect("seed");
     let st = Arc::new(AppState::new(cli.config.clone(), db));
-    let pw = clamv_webui::auth::token::random_secret();
-    let h = clamv_webui::auth::password::hash(&pw).expect("hash");
+    let pw = palisade::auth::token::random_secret();
+    let h = palisade::auth::password::hash(&pw).expect("hash");
     for (name, role) in [
         ("viewer", Role::Viewer),
         ("op", Role::Operator),
@@ -265,7 +265,7 @@ async fn admin_session_issues_tokens() {
             .expect("session");
     let req = |body: &str, csrf: &str| {
         Request::post("/api/v1/tokens")
-            .header(header::COOKIE, format!("clamv_session={raw}"))
+            .header(header::COOKIE, format!("palisade_session={raw}"))
             .header("sec-fetch-site", "same-origin")
             .header("X-CSRF-TOKEN", csrf)
             .header(header::CONTENT_TYPE, "application/json")
@@ -298,7 +298,7 @@ async fn admin_session_issues_tokens() {
     let (_, _, list) = call(
         &t.app,
         Request::get("/api/v1/tokens")
-            .header(header::COOKIE, format!("clamv_session={raw}"))
+            .header(header::COOKIE, format!("palisade_session={raw}"))
             .body(Body::empty())
             .expect("req"),
     )

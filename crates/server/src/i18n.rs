@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 /// Cookie holding the chosen language code.
-pub const COOKIE: &str = "clamv_lang";
+pub const COOKIE: &str = "palisade_lang";
 
 /// (code, name in that language, catalog).
 pub const LANGS: &[(&str, &str, &str)] = &[

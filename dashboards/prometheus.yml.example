@@ -5,11 +5,11 @@ global:
 rule_files:
   - /etc/prometheus/rules/clamav-alerts.yml
 scrape_configs:
-  - job_name: clamav-webui
+  - job_name: palisade
     metrics_path: /metrics
     scheme: http  # https when TLS is on; add tls_config.ca_file for a self-signed cert
     static_configs:
-      - targets: ["clamav-webui:8080"]
+      - targets: ["palisade:8080"]
     authorization:
       type: Bearer
       credentials_file: /etc/prometheus/secrets/clamav_metrics_token  # same value as METRICS_TOKEN

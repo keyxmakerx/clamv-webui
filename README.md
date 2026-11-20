@@ -1,8 +1,8 @@
-# ClamAV Web UI
+# Palisade
 
-[![CI](https://github.com/keyxmakerx/clamv-webui/actions/workflows/rust.yml/badge.svg)](https://github.com/keyxmakerx/clamv-webui/actions/workflows/rust.yml)
+[![CI](https://github.com/keyxmakerx/palisade/actions/workflows/rust.yml/badge.svg)](https://github.com/keyxmakerx/palisade/actions/workflows/rust.yml)
 [![License: LGPL-2.1-or-later](https://img.shields.io/badge/license-LGPL--2.1--or--later-blue)](LICENSE)
-[![Image](https://img.shields.io/badge/image-ghcr.io%2Fkeyxmakerx%2Fclamv--webui-2496ED?logo=docker&logoColor=white)](https://github.com/keyxmakerx/clamv-webui/pkgs/container/clamv-webui)
+[![Image](https://img.shields.io/badge/image-ghcr.io%2Fkeyxmakerx%2Fpalisade-2496ED?logo=docker&logoColor=white)](https://github.com/keyxmakerx/palisade/pkgs/container/palisade)
 
 A small, self-hosted web console and API for [ClamAV](https://www.clamav.net/). Scan uploads and folders, schedule and watch them, and see every host's results in one place. Written in Rust, shipped as one static binary in a distroless image.
 
@@ -42,11 +42,11 @@ docker compose up -d
 2. On first start an `admin` account is created. Its password is written to `data/bootstrap-admin-password`, which is owned by UID 10001, so open it as root.
 3. Sign in, choose a new password, then delete that file.
 
-clamd downloads its signatures on first start, which takes a few minutes. Until then the dashboard shows the endpoint as unreachable. If the container keeps restarting, `docker compose logs clamv-webui` names the cause.
+clamd downloads its signatures on first start, which takes a few minutes. Until then the dashboard shows the endpoint as unreachable. If the container keeps restarting, `docker compose logs palisade` names the cause.
 
 Passkeys need HTTPS. Set `TLS_SELF_SIGNED=true`, or put a reverse proxy in front ([guide](docs/REVERSE_PROXY.md)) and set `PUBLIC_URL`. To use a clamd you already run, start from `docker-compose.external-clamd.yml` instead.
 
-Lost the admin password? Run `docker compose exec clamv-webui /app/clamv-webui reset-admin`. It writes a new one to a file and prints only the file's path.
+Lost the admin password? Run `docker compose exec palisade /app/palisade reset-admin`. It writes a new one to a file and prints only the file's path.
 
 ## Agents
 
@@ -70,12 +70,12 @@ Each agent scans only its own `SCAN_ROOTS`, and does only what its host allows i
 ## Building
 
 ```sh
-cargo build --release      # binary at target/release/clamv-webui
+cargo build --release      # binary at target/release/palisade
 cargo test                 # SQLite; set TEST_DATABASE_URLS to also test the other databases
-docker build -t clamv-webui .
+docker build -t palisade .
 ```
 
-CI publishes `ghcr.io/keyxmakerx/clamv-webui:latest` from `main`. Release steps and migration rules are in [Configuration](docs/CONFIGURATION.md#building-and-releases).
+CI publishes `ghcr.io/keyxmakerx/palisade:latest` from `main`. Release steps and migration rules are in [Configuration](docs/CONFIGURATION.md#building-and-releases).
 
 ## License
 

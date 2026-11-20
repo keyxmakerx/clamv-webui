@@ -95,7 +95,7 @@ pub fn is_refresh(h: &axum::http::HeaderMap) -> bool {
     h.get(REFRESH_HEADER).is_some_and(|v| v.as_bytes() == b"1")
 }
 
-pub const REFRESH_HEADER: &str = "x-clamv-refresh";
+pub const REFRESH_HEADER: &str = "x-palisade-refresh";
 
 #[cfg(test)]
 mod tests {

@@ -728,7 +728,7 @@ func oneOf(value string, allowed ...string) bool {
 	return false
 }
 
-const helpText = `clamctl - ClamAV Web UI CLI
+const helpText = `clamctl - Palisade CLI
 
 Configuration and authentication:
   clamctl config set-server https://clamav.example.com

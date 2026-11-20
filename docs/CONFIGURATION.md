@@ -1,6 +1,6 @@
 # Configuration
 
-Every option is an environment variable (or a `--flag`; run `clamv-webui --help`). Secrets also take a `*_FILE` variant for Docker secrets, which wins over the plain variable.
+Every option is an environment variable (or a `--flag`; run `palisade --help`). Secrets also take a `*_FILE` variant for Docker secrets, which wins over the plain variable.
 
 
 Back to the [README](../README.md). How the parts fit together: [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -48,7 +48,7 @@ Real-time watching sees writes made on the same machine (bind mounts included, N
 
 Canary files: add them per host on the **Canaries** page (this server and each agent, up to 50 each), or list them in `CANARY_FILES`. Put a tempting decoy (say `/srv/share/finance/passwords.csv`) somewhere nothing legitimate reads; the page can write the decoy for you if the folder is writable from the container, and it never overwrites or deletes a file. Keep canaries outside scanned folders (the page refuses those), since a scan opening one would trip it. Each row shows whether the host could arm it and when it was last touched. Alerts repeat at most once a minute per file, and a deleted canary is watched again once it is back.
 
-To have alerts name who touched a canary, add the auditd rule the page shows (`-w <file> -p rwxa -k clamv_canary`) on the host and mount `/var/log/audit` read-only into the container; the alert then reads, for example, "opened by /usr/bin/cat (uid 1000, login uid 1000, pid 4242)".
+To have alerts name who touched a canary, add the auditd rule the page shows (`-w <file> -p rwxa -k palisade_canary`) on the host and mount `/var/log/audit` read-only into the container; the alert then reads, for example, "opened by /usr/bin/cat (uid 1000, login uid 1000, pid 4242)".
 
 ## Web, sessions and TLS
 
@@ -85,28 +85,28 @@ Destinations: a plain `https://…` URL gets the JSON event, and Discord webhook
 | Variable | Default | Purpose |
 |---|---|---|
 | `CROWDSEC_LAPI_URL` | unset | Local API, e.g. `http://crowdsec:8080`; turns on the CrowdSec pages |
-| `CROWDSEC_MACHINE_ID` | `clamv-webui` | Watcher added with `cscli machines add clamv-webui --password "$(cat crowdsec_pw)"` |
+| `CROWDSEC_MACHINE_ID` | `palisade` | Watcher added with `cscli machines add palisade --password "$(cat crowdsec_pw)"` |
 | `CROWDSEC_PASSWORD(_FILE)` | unset | That watcher's password |
 | `CROWDSEC_CA_FILE` | unset | Extra CA for an https LAPI |
 | `CROWDSEC_INCLUDE_CAPI` | `false` | Also show the community blocklist (large) |
 | `CROWDSEC_READ_ONLY` | `false` | Hide the ban and unban buttons |
 | `CROWDSEC_LOOKBACK_HOURS` | `168` | Hours of alerts kept in memory (nothing is stored in the database) |
 
-clamv refreshes every minute and re-reads the whole window hourly. Bans are sent the way `cscli decisions add` sends them, so every bouncer applies them. Deleting alerts needs CrowdSec's `trusted_ips`, so clamv doesn't offer it. A LAPI that stops answering is logged (`crowdsec.lapi_down`) and notified, and so is its recovery.
+Palisade refreshes every minute and re-reads the whole window hourly. Bans are sent the way `cscli decisions add` sends them, so every bouncer applies them. Deleting alerts needs CrowdSec's `trusted_ips`, so Palisade doesn't offer it. A LAPI that stops answering is logged (`crowdsec.lapi_down`) and notified, and so is its recovery.
 
 ## Managed host checks and firewall
 
 Docker alone covers scans, canaries, CrowdSec and reading reports. Managed AIDE and rkhunter and the Firewall page also need a one-time setup on each host, which the image does itself:
 
 ```sh
-docker run --rm --user 0 -v /:/host ghcr.io/keyxmakerx/clamv-webui:latest host-setup
+docker run --rm --user 0 -v /:/host ghcr.io/keyxmakerx/palisade:latest host-setup
 ```
 
-It adds a `clamv` user with the containers' uid (10001, or `--uid`), the units `clamv-aide-check`, `clamv-aide-accept`, `clamv-rkhunter-check`, `clamv-rkhunter-propupd`, `clamv-firewall-snapshot`, `clamv-firewall-apply`, `clamv-firewall-remove` and `clamv-timer-set` (each one fixed script, read-only system, no network, few capabilities), daily timers, `/var/lib/clamv/firewall` and `/var/lib/clamv/timers`, and a polkit rule that lets `clamv` start those units and switch the two timers, and nothing else. It refuses hosts with polkit older than 0.106, which then stay on report reading, and ends with a note for anything else the host lacks (AIDE, rkhunter, nftables). Hosts set up before this release need `host-setup` again. `host-setup --remove` takes it away again. Without Docker, `sudo examples/host-checks/install.sh` does the same. AIDE and rkhunter themselves are host packages.
+It adds a `palisade` user with the containers' uid (10001, or `--uid`), the units `palisade-aide-check`, `palisade-aide-accept`, `palisade-rkhunter-check`, `palisade-rkhunter-propupd`, `palisade-firewall-snapshot`, `palisade-firewall-apply`, `palisade-firewall-remove` and `palisade-timer-set` (each one fixed script, read-only system, no network, few capabilities), daily timers, `/var/lib/palisade/firewall` and `/var/lib/palisade/timers`, and a polkit rule that lets `palisade` start those units and switch the two timers, and nothing else. It refuses hosts with polkit older than 0.106, which then stay on report reading, and ends with a note for anything else the host lacks (AIDE, rkhunter, nftables). Hosts set up before this release need `host-setup` again. `host-setup --remove` takes it away again. Without Docker, `sudo examples/host-checks/install.sh` does the same. AIDE and rkhunter themselves are host packages.
 
-Then mount `/run/dbus/system_bus_socket` read-only and `/var/lib/clamv/firewall` and `/var/lib/clamv/timers` read-write into the clamv or agent container. The Integrity page then sets each timer's daily time (HH:MM, or empty for a random time). Reports still reach clamv through `AIDE_LOG` and `RKHUNTER_LOG`.
+Then mount `/run/dbus/system_bus_socket` read-only and `/var/lib/palisade/firewall` and `/var/lib/palisade/timers` read-write into the Palisade or agent container. The Integrity page then sets each timer's daily time (HH:MM, or empty for a random time). Reports still reach Palisade through `AIDE_LOG` and `RKHUNTER_LOG`.
 
-The firewall plan only narrows: each rule lets the listed networks reach a port and drops everyone else. On a host running ufw, clamv adds rules commented `clamv` above the host's own; with firewalld, rich rules in the default zone, saved once confirmed; otherwise its own `inet clamv` table at priority -5, after established traffic and loopback. It removes only what it added. Ports published by Docker go through Docker's own chains first and are best limited in compose. clamv refuses a plan that closes SSH to everyone or blocks its own port for your address, and iptables-legacy rules, which nftables cannot override, are flagged.
+The firewall plan only narrows: each rule lets the listed networks reach a port and drops everyone else. On a host running ufw, Palisade adds rules commented `palisade` above the host's own; with firewalld, rich rules in the default zone, saved once confirmed; otherwise its own `inet palisade` table at priority -5, after established traffic and loopback. It removes only what it added. Ports published by Docker go through Docker's own chains first and are best limited in compose. Palisade refuses a plan that closes SSH to everyone or blocks its own port for your address, and iptables-legacy rules, which nftables cannot override, are flagged.
 
 ## Quarantine
 
@@ -176,8 +176,8 @@ Each user picks a language under **Account**; otherwise the browser's language i
 - Webhook delivery pins the resolved address, refuses private and metadata ranges unless allowed, follows no redirects, and never logs the URL.
 - OIDC uses PKCE, state and nonce, and only asymmetric signatures. LDAP requires TLS.
 - The CrowdSec watcher password is never logged. Admins add bans; their own address, loopback and anything wider than /8 (IPv4) or /32 (IPv6) is refused, and `CROWDSEC_READ_ONLY` removes writes.
-- Managed host checks never run as root inside clamv: systemd starts fixed units on a polkit allow-list, the agent refuses any action outside it too, and a baseline change needs a fresh passkey assertion bound to that action and host.
-- The firewall units accept only the inside of clamv's own table: the apply script reads the plan only if clamv's own user owns the file, accepts only the line shapes clamv generates (one input chain: listed networks reach a port, everyone else is dropped; no NAT, marks or other hooks), refuses table, ruleset, flush, delete and similar keywords, checks the plan in an empty network namespace where it must create exactly `inet clamv`, keeps the previous table, and restores it after 90 s unless the hash is confirmed. clamv confirms only once a new connection gets through, and every apply or removal is logged (`firewall.apply`, `firewall.removed`), audited and needs a passkey.
+- Managed host checks never run as root inside Palisade: systemd starts fixed units on a polkit allow-list, the agent refuses any action outside it too, and a baseline change needs a fresh passkey assertion bound to that action and host.
+- The firewall units accept only the inside of Palisade's own table: the apply script reads the plan only if Palisade's own user owns the file, accepts only the line shapes Palisade generates (one input chain: listed networks reach a port, everyone else is dropped; no NAT, marks or other hooks), refuses table, ruleset, flush, delete and similar keywords, checks the plan in an empty network namespace where it must create exactly `inet palisade`, keeps the previous table, and restores it after 90 s unless the hash is confirmed. Palisade confirms only once a new connection gets through, and every apply or removal is logged (`firewall.apply`, `firewall.removed`), audited and needs a passkey.
 - Agents act only on what their own host allows (`AGENT_ALLOW`), which the server cannot change, and rate-limit each kind of job.
 - Quarantine is off by default; it only moves files clamd confirms infected, restores only to the original path, and restore or delete needs a passkey.
 - Agent tokens are stored hashed, can be rotated or disabled, and only reach the agent endpoints. Results from an agent are size-limited and cleaned before they are stored, and each agent may send at most 1200 events a minute.
@@ -187,12 +187,12 @@ Report vulnerabilities privately through GitHub security advisories.
 ## Building and releases
 
 ```sh
-cargo build --release      # binary at target/release/clamv-webui
+cargo build --release      # binary at target/release/palisade
 cargo test                 # SQLite; set TEST_DATABASE_URLS to also test other databases
-docker build -t clamv-webui .
+docker build -t palisade .
 ```
 
-CI builds and tests on every push, checks dependencies with `cargo deny`, runs CodeQL and Trivy, starts the image once, and publishes `ghcr.io/keyxmakerx/clamv-webui:latest` (amd64) plus a short commit tag for rollback.
+CI builds and tests on every push, checks dependencies with `cargo deny`, runs CodeQL and Trivy, starts the image once, and publishes `ghcr.io/keyxmakerx/palisade:latest` (amd64) plus a short commit tag for rollback.
 
 Releases: set `version` in `Cargo.toml`, merge, then push a tag `vX.Y.Z` on that commit. CI checks the tag matches, publishes `:X.Y.Z` and `:X.Y`, and creates the GitHub release that the dashboard's update notice looks for. Compose files stay on `:latest`.
 

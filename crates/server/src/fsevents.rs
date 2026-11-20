@@ -270,7 +270,7 @@ mod tests {
     use super::*;
 
     fn tmp(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("clamv-{tag}-{}", crate::db::new_id()));
+        let d = std::env::temp_dir().join(format!("palisade-{tag}-{}", crate::db::new_id()));
         std::fs::create_dir_all(&d).expect("mkdir");
         d
     }

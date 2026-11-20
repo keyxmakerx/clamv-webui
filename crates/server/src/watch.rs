@@ -378,7 +378,7 @@ mod tests {
     #[test]
     fn non_utf8_names_are_walked_and_round_trip() {
         use std::os::unix::ffi::OsStrExt;
-        let dir = std::env::temp_dir().join(format!("clamv-raw-{}", crate::db::new_id()));
+        let dir = std::env::temp_dir().join(format!("palisade-raw-{}", crate::db::new_id()));
         std::fs::create_dir_all(&dir).expect("mkdir");
         let bad = dir.join(std::ffi::OsStr::from_bytes(b"bad\xff.exe"));
         std::fs::write(&bad, b"x").expect("write");

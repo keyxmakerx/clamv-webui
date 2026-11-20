@@ -110,7 +110,7 @@ async fn register_options(
         "handle": handle,
         "publicKey": {
             "challenge": challenge,
-            "rp": { "id": rp_id, "name": "ClamAV Web UI" },
+            "rp": { "id": rp_id, "name": "Palisade" },
             "user": { "id": b64u(u.id.as_bytes()), "name": u.username, "displayName": u.username },
             "pubKeyCredParams": [
                 { "type": "public-key", "alg": webauthn::ALG_ES256 },

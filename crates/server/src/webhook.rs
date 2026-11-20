@@ -392,7 +392,7 @@ impl Target {
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(15))
-            .user_agent(concat!("clamv-webui/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!("palisade/", env!("CARGO_PKG_VERSION")))
             .tls_backend_preconfigured(tls());
         if let Some(d) = self.url.domain() {
             b = b.resolve_to_addrs(d, &addrs);
@@ -509,7 +509,7 @@ fn tag(e: &Event) -> &'static str {
 /// One line for a notification title.
 fn title(e: &Event) -> String {
     let t = match (e.event, e.verdict.as_str()) {
-        ("test", _) => "Test from clamv-webui".to_owned(),
+        ("test", _) => "Test from palisade".to_owned(),
         ("canary.tripped", _) => format!("Canary file touched on {}", e.endpoint),
         ("eicar.control_failed", _) => format!("EICAR check failed on {}", e.endpoint),
         ("falco.alert", _) => format!("Falco: {} on {}", e.target, e.endpoint),
@@ -555,7 +555,7 @@ fn discord_text(e: &Event) -> String {
             .replace('`', "'")
     };
     let head = match (e.event, e.verdict.as_str()) {
-        ("test", _) => "Test message from clamv-webui.".to_owned(),
+        ("test", _) => "Test message from palisade.".to_owned(),
         ("canary.tripped", _) => format!(
             "**Canary file touched** on `{}`: `{}` ({}). Someone may be inside.",
             clean(&e.endpoint),
@@ -573,7 +573,7 @@ fn discord_text(e: &Event) -> String {
             clean(&e.target)
         ),
         ("crowdsec.lapi_down", _) => format!(
-            "**CrowdSec LAPI unreachable** at `{}`: {}. Ban lists in clamv are stale.",
+            "**CrowdSec LAPI unreachable** at `{}`: {}. Ban lists in Palisade are stale.",
             clean(&e.target),
             clean(e.error.as_deref().unwrap_or("no answer"))
         ),
@@ -1018,7 +1018,7 @@ mod tests {
     #[test]
     fn ignored_signatures_mute_only_pure_matches() {
         let cfg = crate::config::Cli::try_parse_from([
-            "clamv-webui",
+            "palisade",
             "--webhook-url",
             "https://hooks.example/x",
             "--webhook-ignore-signatures",
@@ -1038,7 +1038,7 @@ mod tests {
     #[test]
     fn several_destinations_capped() {
         let parse = |u: &str| {
-            let c = crate::config::Cli::try_parse_from(["clamv-webui", "--webhook-url", u])
+            let c = crate::config::Cli::try_parse_from(["palisade", "--webhook-url", u])
                 .expect("parse")
                 .config;
             Target::from_config(&c)

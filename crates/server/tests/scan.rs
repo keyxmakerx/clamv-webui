@@ -6,11 +6,11 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use clamv_webui::app::{AppState, router};
-use clamv_webui::config::Cli;
-use clamv_webui::db::Db;
-use clamv_webui::db::jobs::JobFilter;
 use clap::Parser;
+use palisade::app::{AppState, router};
+use palisade::config::Cli;
+use palisade::db::Db;
+use palisade::db::jobs::JobFilter;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tower::ServiceExt;
@@ -25,15 +25,15 @@ async fn app(extra: &[&str]) -> (Router, Arc<AppState>, String, String) {
 
 async fn app_on(port: u16, extra: &[&str]) -> (Router, Arc<AppState>, String, String) {
     let ep = format!("tcp://127.0.0.1:{port}");
-    let mut args = vec!["clamv-webui", "--clamd-endpoint", ep.as_str()];
+    let mut args = vec!["palisade", "--clamd-endpoint", ep.as_str()];
     args.extend_from_slice(extra);
     let cli = Cli::parse_from(args);
     let db = Db::open("sqlite::memory:", 1).await.expect("db");
-    let pw = clamv_webui::auth::token::random_secret();
-    clamv_webui::auth::bootstrap::ensure_admin(&db, &std::env::temp_dir(), Some(&pw))
+    let pw = palisade::auth::token::random_secret();
+    palisade::auth::bootstrap::ensure_admin(&db, &std::env::temp_dir(), Some(&pw))
         .await
         .expect("bootstrap");
-    clamv_webui::app::seed_endpoint(&db, &cli.config)
+    palisade::app::seed_endpoint(&db, &cli.config)
         .await
         .expect("seed");
     let st = Arc::new(AppState::new(cli.config.clone(), db));
@@ -55,7 +55,7 @@ async fn app_on(port: u16, extra: &[&str]) -> (Router, Arc<AppState>, String, St
     (
         router(st.clone(), &cli.config),
         st,
-        format!("clamv_session={raw}"),
+        format!("palisade_session={raw}"),
         s.csrf_token,
     )
 }
@@ -170,12 +170,12 @@ async fn oversized_upload_is_a_limit_error() {
 
 #[tokio::test]
 async fn path_scans_keep_every_result() {
-    let base = std::env::temp_dir().join(format!("clamv-scan-{}", clamv_webui::db::new_id()));
+    let base = std::env::temp_dir().join(format!("palisade-scan-{}", palisade::db::new_id()));
     let root = base.join("media");
     std::fs::create_dir_all(root.join("tv")).expect("mkdir");
     let roots = root.to_str().expect("utf8").to_owned();
     let (app, st, c, t) = app(&["--scan-roots", &roots]).await;
-    clamv_webui::scan::start(st.clone()).await;
+    palisade::scan::start(st.clone()).await;
 
     let outside = format!("_csrf={t}&path={}", base.display());
     let res = app
@@ -255,12 +255,12 @@ async fn dropped_upload_does_not_stay_running() {
 
 #[tokio::test]
 async fn huge_results_are_capped_when_stored() {
-    let base = std::env::temp_dir().join(format!("clamv-many-{}", clamv_webui::db::new_id()));
+    let base = std::env::temp_dir().join(format!("palisade-many-{}", palisade::db::new_id()));
     let root = base.join("media");
     std::fs::create_dir_all(root.join("many")).expect("mkdir");
     let roots = root.to_str().expect("utf8").to_owned();
     let (app, st, c, t) = app(&["--scan-roots", &roots]).await;
-    clamv_webui::scan::start(st.clone()).await;
+    palisade::scan::start(st.clone()).await;
     let res = app
         .clone()
         .oneshot(form(
@@ -274,18 +274,15 @@ async fn huge_results_are_capped_when_stored() {
     let loc = res.headers()[header::LOCATION].to_str().expect("loc");
     let job = wait_finished(&st, loc.trim_start_matches("/jobs/")).await;
     assert_eq!(job.verdict.as_deref(), Some("VIRUS_FOUND"));
-    assert_eq!(
-        job.detections.len(),
-        clamv_webui::db::jobs::MAX_STORED_LINES
-    );
+    assert_eq!(job.detections.len(), palisade::db::jobs::MAX_STORED_LINES);
     assert_eq!(job.results_omitted, 500);
     let _ = std::fs::remove_dir_all(&base);
 }
 
 #[tokio::test]
 async fn quarantine_leftovers_are_settled_at_start() {
-    use clamv_webui::db::quarantine as q;
-    let base = std::env::temp_dir().join(format!("clamv-qs-{}", clamv_webui::db::new_id()));
+    use palisade::db::quarantine as q;
+    let base = std::env::temp_dir().join(format!("palisade-qs-{}", palisade::db::new_id()));
     let (root, qdir) = (base.join("root"), base.join("q"));
     std::fs::create_dir_all(&root).expect("root");
     std::fs::create_dir_all(&qdir).expect("q");
@@ -316,7 +313,7 @@ async fn quarantine_leftovers_are_settled_at_start() {
         .expect("item");
     std::fs::write(qdir.join(format!("{}.quarantined", b.id)), b"X5").expect("partial");
 
-    clamv_webui::quarantine::settle(&st, true).await;
+    palisade::quarantine::settle(&st, true).await;
     let a = st.db.quarantine_item(&a.id).await.expect("q").expect("a");
     assert_eq!(a.state, q::HELD);
     assert_eq!(a.size_bytes, Some(3));
@@ -337,8 +334,8 @@ async fn quarantine_leftovers_are_settled_at_start() {
 
 #[tokio::test]
 async fn lost_agent_quarantine_jobs_release_the_entry() {
-    use clamv_webui::db::jobs::NewJob;
-    use clamv_webui::db::quarantine as q;
+    use palisade::db::jobs::NewJob;
+    use palisade::db::quarantine as q;
     let (_app, st, _c, _t) = app(&[]).await;
     let (agent, _) = st.db.create_agent("nas", "admin").await.expect("agent");
     let item = st
@@ -366,7 +363,7 @@ async fn lost_agent_quarantine_jobs_release_the_entry() {
         .await
         .expect("link");
     // Still running on the agent: left alone.
-    clamv_webui::quarantine::settle(&st, false).await;
+    palisade::quarantine::settle(&st, false).await;
     let i = st
         .db
         .quarantine_item(&item.id)
@@ -375,9 +372,9 @@ async fn lost_agent_quarantine_jobs_release_the_entry() {
         .expect("i");
     assert_eq!(i.state, q::PENDING);
     // The server gives up on the job (agent lost) without a result.
-    let o = clamv_webui::scan::failure(clamv_webui::scan::SCAN_FAILED, "lost");
+    let o = palisade::scan::failure(palisade::scan::SCAN_FAILED, "lost");
     st.db.finish_job(&job.id, &o).await.expect("finish");
-    clamv_webui::quarantine::settle(&st, false).await;
+    palisade::quarantine::settle(&st, false).await;
     let i = st
         .db
         .quarantine_item(&item.id)
@@ -421,7 +418,7 @@ async fn send(
     app.oneshot(page_get(&to, &cookie)).await
 }
 
-async fn wait_finished(st: &AppState, id: &str) -> clamv_webui::db::jobs::Job {
+async fn wait_finished(st: &AppState, id: &str) -> palisade::db::jobs::Job {
     for _ in 0..50 {
         let j = st.db.job(id).await.expect("q").expect("job");
         if j.status == "FINISHED" {
@@ -434,12 +431,12 @@ async fn wait_finished(st: &AppState, id: &str) -> clamv_webui::db::jobs::Job {
 
 #[tokio::test]
 async fn schedules_run_with_eicar_control() {
-    let base = std::env::temp_dir().join(format!("clamv-sched-{}", clamv_webui::db::new_id()));
+    let base = std::env::temp_dir().join(format!("palisade-sched-{}", palisade::db::new_id()));
     let root = base.join("media");
     std::fs::create_dir_all(root.join("movies")).expect("mkdir");
     let roots = root.to_str().expect("utf8").to_owned();
     let (app, st, c, t) = app(&["--scan-roots", &roots]).await;
-    clamv_webui::scan::start(st.clone()).await;
+    palisade::scan::start(st.clone()).await;
     let bad = format!(
         "_csrf={t}&name=n&cron=99+*+*+*+*&paths={}/movies&eicar=1",
         root.display()
@@ -512,7 +509,7 @@ async fn schedules_run_with_eicar_control() {
 
 #[tokio::test]
 async fn eicar_control_failure_is_recorded() {
-    let base = std::env::temp_dir().join(format!("clamv-ctl-{}", clamv_webui::db::new_id()));
+    let base = std::env::temp_dir().join(format!("palisade-ctl-{}", palisade::db::new_id()));
     std::fs::create_dir_all(&base).expect("mkdir");
     let roots = base.to_str().expect("utf8").to_owned();
     let (_app, st, _c, _t) = app(&["--scan-roots", &roots]).await;
@@ -524,7 +521,7 @@ async fn eicar_control_failure_is_recorded() {
         .expect("ep");
     let sch = st
         .db
-        .create_schedule(clamv_webui::db::schedules::NewSchedule {
+        .create_schedule(palisade::db::schedules::NewSchedule {
             name: "s",
             cron: "@daily",
             paths: std::slice::from_ref(&roots),
@@ -537,7 +534,7 @@ async fn eicar_control_failure_is_recorded() {
         })
         .await
         .expect("schedule");
-    let ok = clamv_webui::schedule::control(&st, &sch, &dead).await;
+    let ok = palisade::schedule::control(&st, &sch, &dead).await;
     assert!(!ok);
     let j = st
         .db
@@ -552,7 +549,7 @@ async fn eicar_control_failure_is_recorded() {
 
 #[tokio::test]
 async fn schedules_take_zone_window_and_exclusions() {
-    let base = std::env::temp_dir().join(format!("clamv-sx-{}", clamv_webui::db::new_id()));
+    let base = std::env::temp_dir().join(format!("palisade-sx-{}", palisade::db::new_id()));
     let media = base.join("media");
     for d in ["tv/Downloads/x", "tv/Shows", "movies"] {
         std::fs::create_dir_all(media.join(d)).expect("mkdir");
@@ -606,7 +603,7 @@ async fn schedules_take_zone_window_and_exclusions() {
     assert_eq!(s.time_zone.as_deref(), Some("Europe/Berlin"));
     assert_eq!(s.window, Some((22 * 60, 6 * 60)));
     // A run scans around the exclusion: movies, tv/Shows and tv/notes.txt, not tv/Downloads.
-    let n = clamv_webui::schedule::run(&st, &s, "manual")
+    let n = palisade::schedule::run(&st, &s, "manual")
         .await
         .expect("run");
     let (jobs, _) = st
@@ -627,16 +624,16 @@ async fn schedules_take_zone_window_and_exclusions() {
 
 #[tokio::test]
 async fn closed_windows_drop_queued_paths() {
-    let base = std::env::temp_dir().join(format!("clamv-sw-{}", clamv_webui::db::new_id()));
+    let base = std::env::temp_dir().join(format!("palisade-sw-{}", palisade::db::new_id()));
     std::fs::create_dir_all(&base).expect("mkdir");
     let roots = base.to_str().expect("utf8").to_owned();
     let (_app, st, _c, _t) = app(&["--scan-roots", &roots]).await;
-    let now_min = (clamv_webui::db::now_ms() / 60_000).rem_euclid(1440);
+    let now_min = (palisade::db::now_ms() / 60_000).rem_euclid(1440);
     // A window that closed a minute ago (UTC), opened two hours before.
     let window = Some(((now_min + 1440 - 120) % 1440, (now_min + 1440 - 1) % 1440));
     let s = st
         .db
-        .create_schedule(clamv_webui::db::schedules::NewSchedule {
+        .create_schedule(palisade::db::schedules::NewSchedule {
             name: "w",
             cron: "0 0 1 1 *",
             paths: std::slice::from_ref(&roots),
@@ -651,7 +648,7 @@ async fn closed_windows_drop_queued_paths() {
         .expect("schedule");
     let job = st
         .db
-        .create_job(clamv_webui::db::jobs::NewJob {
+        .create_job(palisade::db::jobs::NewJob {
             kind: "PATH",
             target: &roots,
             endpoint_id: None,
@@ -668,12 +665,12 @@ async fn closed_windows_drop_queued_paths() {
         st.db
             .sql("UPDATE scan_jobs SET submitted_at = ? WHERE id = ?"),
     )
-    .bind(clamv_webui::db::now_ms() - 30 * 60_000)
+    .bind(palisade::db::now_ms() - 30 * 60_000)
     .bind(&job.id)
     .execute(st.db.pool())
     .await
     .expect("backdate");
-    clamv_webui::schedule::tick(&st).await.expect("tick");
+    palisade::schedule::tick(&st).await.expect("tick");
     let j = st.db.job(&job.id).await.expect("q").expect("job");
     assert_eq!(j.status, "FINISHED");
     assert_eq!(j.error_code.as_deref(), Some("WINDOW_CLOSED"));
@@ -682,7 +679,7 @@ async fn closed_windows_drop_queued_paths() {
 
 #[tokio::test]
 async fn watcher_queues_new_files_once() {
-    let base = std::env::temp_dir().join(format!("clamv-watch-{}", clamv_webui::db::new_id()));
+    let base = std::env::temp_dir().join(format!("palisade-watch-{}", palisade::db::new_id()));
     let dir = base.join("downloads");
     std::fs::create_dir_all(dir.join("sub")).expect("mkdir");
     let old = dir.join("old.bin");
@@ -715,13 +712,13 @@ async fn watcher_queues_new_files_once() {
         .set_modified(past)
         .expect("mtime");
     std::fs::write(dir.join("fresh.bin"), b"still copying").expect("write");
-    assert_eq!(clamv_webui::watch::pass(&st).await, 1);
+    assert_eq!(palisade::watch::pass(&st).await, 1);
     assert_eq!(
-        clamv_webui::watch::pass(&st).await,
+        palisade::watch::pass(&st).await,
         0,
         "not queued twice while pending"
     );
-    clamv_webui::scan::start(st.clone()).await;
+    palisade::scan::start(st.clone()).await;
     let (jobs, _) = st
         .db
         .list_jobs(&JobFilter::default(), 0, 10)
@@ -738,7 +735,7 @@ async fn watcher_queues_new_files_once() {
         .expect("recorded");
     assert_eq!(rec.verdict, "VIRUS_FOUND", "recorded after the scan (N6)");
     assert_eq!(
-        clamv_webui::watch::pass(&st).await,
+        palisade::watch::pass(&st).await,
         0,
         "unchanged files are not rescanned"
     );
@@ -754,7 +751,7 @@ async fn watcher_queues_new_files_once() {
             .expect("open")
             .set_modified(past)
             .expect("mtime");
-        assert_eq!(clamv_webui::watch::pass(&st).await, 1);
+        assert_eq!(palisade::watch::pass(&st).await, 1);
         st.runner.poke();
         let (jobs, _) = st
             .db
@@ -765,11 +762,7 @@ async fn watcher_queues_new_files_once() {
         assert!(job.target.contains("//raw:"), "{}", job.target);
         assert_eq!(job.verdict.as_deref(), Some("VIRUS_FOUND"));
         assert!(job.detections.contains_key(&job.target));
-        assert_eq!(
-            clamv_webui::watch::pass(&st).await,
-            0,
-            "recorded once scanned"
-        );
+        assert_eq!(palisade::watch::pass(&st).await, 0, "recorded once scanned");
     }
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -831,7 +824,7 @@ async fn webhook_reports_alerts_only() {
         "127.0.0.1/32",
     ])
     .await;
-    clamv_webui::webhook::spawn(st.clone());
+    palisade::webhook::spawn(st.clone());
     let res = app
         .clone()
         .oneshot(upload(
@@ -864,7 +857,7 @@ async fn webhook_reports_alerts_only() {
 #[tokio::test]
 async fn alerts_reach_every_destination() {
     let (port, mut rx) = hook_receiver().await;
-    let urls = format!("http://127.0.0.1:{port}/hook,ntfy+http://127.0.0.1:{port}/clamv");
+    let urls = format!("http://127.0.0.1:{port}/hook,ntfy+http://127.0.0.1:{port}/palisade");
     let (_app, st, _, _) = app(&[
         "--webhook-url",
         &urls,
@@ -877,8 +870,8 @@ async fn alerts_reach_every_destination() {
     let a = rx.recv().await.expect("json");
     let b = rx.recv().await.expect("ntfy");
     assert_eq!(a["event"], "test");
-    assert_eq!(b["topic"], "clamv");
-    assert_eq!(b["title"], "Test from clamv-webui");
+    assert_eq!(b["topic"], "palisade");
+    assert_eq!(b["title"], "Test from palisade");
     assert!(
         st.notifier
             .last_each()
@@ -895,17 +888,17 @@ async fn webhook_refuses_private_addresses() {
     let err = st.notifier.test().await.expect_err("blocked");
     assert!(err.contains("not allowed"), "{err}");
     assert!(!err.contains("/hook"), "URL is not echoed");
-    let bad = Cli::try_parse_from(["clamv-webui", "--webhook-url", "ftp://x/y"]).expect("parse");
-    assert!(clamv_webui::webhook::Target::from_config(&bad.config).is_err());
-    let creds = Cli::try_parse_from(["clamv-webui", "--webhook-url", "https://u:p@example.com/"])
+    let bad = Cli::try_parse_from(["palisade", "--webhook-url", "ftp://x/y"]).expect("parse");
+    assert!(palisade::webhook::Target::from_config(&bad.config).is_err());
+    let creds = Cli::try_parse_from(["palisade", "--webhook-url", "https://u:p@example.com/"])
         .expect("parse");
-    assert!(clamv_webui::webhook::Target::from_config(&creds.config).is_err());
+    assert!(palisade::webhook::Target::from_config(&creds.config).is_err());
 }
 
 #[tokio::test]
 async fn metrics_need_the_token_and_count_scans() {
     let (app, st, c, t) = app(&["--metrics-token", "0123456789abcdef-test"]).await;
-    clamv_webui::metrics::spawn(st.clone());
+    palisade::metrics::spawn(st.clone());
     tokio::time::sleep(Duration::from_millis(300)).await;
     let scrape = |auth: Option<&str>| {
         let mut b = Request::get("/metrics");
@@ -964,7 +957,7 @@ async fn metrics_need_the_token_and_count_scans() {
 
 #[tokio::test]
 async fn clamd_conf_excludes_and_is_shown() {
-    let base = std::env::temp_dir().join(format!("clamv-conf-{}", clamv_webui::db::new_id()));
+    let base = std::env::temp_dir().join(format!("palisade-conf-{}", palisade::db::new_id()));
     let dir = base.join("data");
     std::fs::create_dir_all(dir.join("cache")).expect("mkdir");
     let dir = std::fs::canonicalize(&dir).expect("real");
@@ -1007,7 +1000,7 @@ async fn clamd_conf_excludes_and_is_shown() {
         .set_modified(past)
         .expect("mtime");
     st.db.create_watch(&roots, None).await.expect("watch");
-    assert_eq!(clamv_webui::watch::pass(&st).await, 0);
+    assert_eq!(palisade::watch::pass(&st).await, 0);
     let res = app
         .clone()
         .oneshot(
@@ -1037,7 +1030,7 @@ async fn body(res: axum::response::Response) -> String {
 #[cfg(target_os = "linux")]
 #[tokio::test]
 async fn realtime_scans_files_as_they_are_written() {
-    let base = std::env::temp_dir().join(format!("clamv-rt-{}", clamv_webui::db::new_id()));
+    let base = std::env::temp_dir().join(format!("palisade-rt-{}", palisade::db::new_id()));
     let dir = base.join("incoming");
     std::fs::create_dir_all(&dir).expect("mkdir");
     let roots = base.to_str().expect("utf8").to_owned();
@@ -1047,8 +1040,8 @@ async fn realtime_scans_files_as_they_are_written() {
         .await
         .expect("res");
     assert_eq!(res.status(), StatusCode::OK);
-    clamv_webui::scan::start(st.clone()).await;
-    clamv_webui::watch::spawn_realtime(st.clone());
+    palisade::scan::start(st.clone()).await;
+    palisade::watch::spawn_realtime(st.clone());
     tokio::time::sleep(Duration::from_millis(500)).await;
     // Fresh files (no settle time) are scanned without a polling pass.
     std::fs::write(dir.join("payload.com"), EICAR).expect("write");
@@ -1073,7 +1066,7 @@ async fn realtime_scans_files_as_they_are_written() {
     );
     assert_eq!(job.verdict.as_deref(), Some("VIRUS_FOUND"));
     assert_eq!(
-        clamv_webui::watch::pass(&st).await,
+        palisade::watch::pass(&st).await,
         0,
         "recorded, not rescanned"
     );
@@ -1085,7 +1078,7 @@ async fn realtime_scans_files_as_they_are_written() {
 async fn touching_a_canary_alerts() {
     let (port, mut rx) = hook_receiver().await;
     let url = format!("http://127.0.0.1:{port}/hook");
-    let dir = std::env::temp_dir().join(format!("clamv-canary-{}", clamv_webui::db::new_id()));
+    let dir = std::env::temp_dir().join(format!("palisade-canary-{}", palisade::db::new_id()));
     std::fs::create_dir_all(&dir).expect("mkdir");
     let decoy = dir.join("passwords.kdbx");
     std::fs::write(&decoy, b"decoy").expect("write");
@@ -1099,8 +1092,8 @@ async fn touching_a_canary_alerts() {
         &decoy_s,
     ])
     .await;
-    clamv_webui::webhook::spawn(st.clone());
-    clamv_webui::canary::spawn(st.clone());
+    palisade::webhook::spawn(st.clone());
+    palisade::canary::spawn(st.clone());
     let _ = std::fs::read(&decoy).expect("read");
     let body = tokio::time::timeout(Duration::from_secs(10), rx.recv())
         .await
@@ -1123,12 +1116,12 @@ fn page_get(uri: &str, cookie: &str) -> Request<Body> {
 
 #[tokio::test]
 async fn detections_dashboard_and_search() {
-    let base = std::env::temp_dir().join(format!("clamv-det-{}", clamv_webui::db::new_id()));
+    let base = std::env::temp_dir().join(format!("palisade-det-{}", palisade::db::new_id()));
     let root = base.join("media");
     std::fs::create_dir_all(root.join("tv")).expect("mkdir");
     let roots = root.to_str().expect("utf8").to_owned();
     let (app, st, c, t) = app(&["--scan-roots", &roots]).await;
-    clamv_webui::scan::start(st.clone()).await;
+    palisade::scan::start(st.clone()).await;
     let res = app
         .clone()
         .oneshot(form(

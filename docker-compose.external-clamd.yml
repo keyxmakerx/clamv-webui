@@ -1,8 +1,8 @@
 # UI only: joins an existing network and uses a clamd it does not own.
 services:
-  clamv-webui:
-    image: ghcr.io/keyxmakerx/clamv-webui:latest
-    container_name: clamv-webui
+  palisade:
+    image: ghcr.io/keyxmakerx/palisade:latest
+    container_name: palisade
     restart: unless-stopped
     mem_limit: 512m  # caps memory if sign-ins or scans spike
     environment:
@@ -43,8 +43,8 @@ services:
       # - /var/log/audit:/var/log/audit:ro  # lets canary alerts name who touched them
       # - /var/log/falco:/var/log/falco:ro  # Falco JSON alerts (json_output + file_output)
       # - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket:ro  # managed AIDE/rkhunter and firewall (after host-setup)
-      # - /var/lib/clamv/firewall:/var/lib/clamv/firewall  # firewall snapshots and plans (after host-setup)
-      # - /var/lib/clamv/timers:/var/lib/clamv/timers  # AIDE/rkhunter timer times (after host-setup)
+      # - /var/lib/palisade/firewall:/var/lib/palisade/firewall  # firewall snapshots and plans (after host-setup)
+      # - /var/lib/palisade/timers:/var/lib/palisade/timers  # AIDE/rkhunter timer times (after host-setup)
       - /documents:/documents:ro
       - /games:/games:ro
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the native clamctl CLI and MCP server against the Rust server and a synthetic clamd.
 
-Needs target/release/clamv-webui (or CLAMV_WEBUI_BIN), cli/dist/linux_amd64/clamctl
+Needs target/release/palisade (or PALISADE_BIN), cli/dist/linux_amd64/clamctl
 (or CLAMCTL_BIN) and Go on PATH. Everything lives in a temporary directory.
 """
 from pathlib import Path
@@ -75,7 +75,7 @@ class ClamdServer(socketserver.ThreadingTCPServer):
 
 
 def main():
-    server_bin = Path(os.environ.get("CLAMV_WEBUI_BIN", ROOT / "target/release/clamv-webui"))
+    server_bin = Path(os.environ.get("PALISADE_BIN", ROOT / "target/release/palisade"))
     binary = Path(os.environ.get("CLAMCTL_BIN", ROOT / "cli/dist/linux_amd64/clamctl"))
     if not server_bin.is_file() or not binary.is_file():
         raise SystemExit("Build the server (cargo build --release) and the CLI before running this check.")

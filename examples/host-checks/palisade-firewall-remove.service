@@ -1,0 +1,25 @@
+# Palisade: remove only what Palisade wrote to the firewall; one fixed script, no traffic.
+[Unit]
+Description=Palisade firewall: remove Palisade's rules
+ConditionPathExists=/usr/local/libexec/palisade/firewall-remove
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/palisade/firewall-remove
+ProtectSystem=strict
+RuntimeDirectory=palisade-firewall
+RuntimeDirectoryMode=0700
+StateDirectory=palisade-firewall
+StateDirectoryMode=0700
+ReadWritePaths=/var/lib/palisade/firewall -/etc/ufw -/lib/ufw -/run
+PrivateTmp=yes
+IPAddressDeny=any
+RestrictAddressFamilies=AF_UNIX AF_NETLINK AF_INET AF_INET6
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native

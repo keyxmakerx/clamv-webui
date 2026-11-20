@@ -5,12 +5,12 @@ use std::sync::Arc;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use clamv_webui::app::{AppState, router};
-use clamv_webui::config::Cli;
-use clamv_webui::db::Db;
-use clamv_webui::db::jobs::{self, Job, NewJob};
-use clamv_webui::db::tokens::NewToken;
 use clap::Parser;
+use palisade::app::{AppState, router};
+use palisade::config::Cli;
+use palisade::db::Db;
+use palisade::db::jobs::{self, Job, NewJob};
+use palisade::db::tokens::NewToken;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -21,18 +21,18 @@ struct T {
 
 async fn setup() -> T {
     let cli = Cli::parse_from([
-        "clamv-webui",
+        "palisade",
         "--clamd-endpoint",
         "tcp://127.0.0.1:1",
         "--scan-roots",
         "/tmp",
     ]);
     let db = Db::open("sqlite::memory:", 1).await.expect("db");
-    clamv_webui::app::seed_endpoint(&db, &cli.config)
+    palisade::app::seed_endpoint(&db, &cli.config)
         .await
         .expect("seed");
     // review-only: API tokens need their creator to exist as an enabled admin (#7).
-    db.create_user("admin", "x", clamv_webui::auth::Role::Admin, false)
+    db.create_user("admin", "x", palisade::auth::Role::Admin, false)
         .await
         .expect("admin");
     let st = Arc::new(AppState::new(cli.config.clone(), db));
@@ -150,7 +150,7 @@ async fn late_results_finish_jobs_given_up_on_and_cancel_stops_agents() {
     // A job the server gave up on (agent away) still takes the result.
     let j = queue(&t.st, "PATH", "/data/a", agent.id).await;
     t.st.db.claim_agent_jobs(agent.id, 1).await.expect("claim");
-    let lost = clamv_webui::scan::failure(clamv_webui::agent::AGENT_LOST, "gone");
+    let lost = palisade::scan::failure(palisade::agent::AGENT_LOST, "gone");
     assert!(
         t.st.db
             .finish_job_if(&j.id, jobs::RUNNING, &lost)
@@ -170,7 +170,7 @@ async fn late_results_finish_jobs_given_up_on_and_cancel_stops_agents() {
     let r = queue(&t.st, "PATH", "/data/b", agent.id).await;
     t.st.db.claim_agent_jobs(agent.id, 1).await.expect("claim");
     let r = t.st.db.job(&r.id).await.expect("q").expect("j");
-    clamv_webui::cancel::cancel(&t.st, &r, "op")
+    palisade::cancel::cancel(&t.st, &r, "op")
         .await
         .expect("cancel");
     let (s, b) = call(
@@ -189,7 +189,7 @@ async fn late_results_finish_jobs_given_up_on_and_cancel_stops_agents() {
     let c = t.st.db.job(&r.id).await.expect("q").expect("j");
     assert_eq!(c.error_code.as_deref(), Some("CANCELLED"));
     assert!(
-        clamv_webui::cancel::cancel(&t.st, &c, "op").await.is_err(),
+        palisade::cancel::cancel(&t.st, &c, "op").await.is_err(),
         "once"
     );
 }
@@ -378,7 +378,7 @@ async fn api_targets_agents_and_schedules() {
     }
 
     // Prometheus has a series per agent.
-    let text = clamv_webui::metrics::render(&t.st).await;
+    let text = palisade::metrics::render(&t.st).await;
     assert!(
         text.contains("clamav_agent_up{agent=\"nas\"} 1"),
         "agent metric"
@@ -388,10 +388,10 @@ async fn api_targets_agents_and_schedules() {
 #[tokio::test]
 async fn job_page_cancels_a_queued_job() {
     let t = setup().await;
-    let h = clamv_webui::auth::password::hash("x-long-password-1").expect("hash");
+    let h = palisade::auth::password::hash("x-long-password-1").expect("hash");
     let u =
         t.st.db
-            .create_user("op", &h, clamv_webui::auth::Role::Operator, false)
+            .create_user("op", &h, palisade::auth::Role::Operator, false)
             .await
             .expect("user");
     let (raw, s) =
@@ -399,7 +399,7 @@ async fn job_page_cancels_a_queued_job() {
             .create_session(&u.id, 3_600_000, None, None)
             .await
             .expect("session");
-    let cookie = format!("clamv_session={raw}");
+    let cookie = format!("palisade_session={raw}");
     let (agent, _) = t.st.db.create_agent("nas", "admin").await.expect("agent");
     let j = queue(&t.st, "PATH", "/data/x", agent.id).await;
     let page = Request::get(format!("/jobs/{}", j.id))

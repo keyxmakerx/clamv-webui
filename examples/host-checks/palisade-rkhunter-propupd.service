@@ -1,22 +1,21 @@
-# clamv: rkhunter check; sees host network state, cannot send traffic.
+# Palisade: record current file properties as rkhunter's baseline (needs a passkey in Palisade).
 [Unit]
-Description=clamv host check: rkhunter
+Description=Palisade host check: update rkhunter properties
 ConditionPathExists=/usr/bin/rkhunter
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/rkhunter --check --skip-keypress --nocolors --report-warnings-only
-# 1 means warnings were found, which is a result, not a failure.
-SuccessExitStatus=1
+ExecStart=/usr/bin/rkhunter --propupd --nocolors
 Nice=19
 IOSchedulingClass=idle
 ProtectSystem=strict
 ReadWritePaths=/var/lib/rkhunter /var/log
 PrivateTmp=yes
+PrivateNetwork=yes
 IPAddressDeny=any
-RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictAddressFamilies=AF_UNIX
 NoNewPrivileges=yes
-CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH
 ProtectKernelTunables=yes
 ProtectControlGroups=yes
 ProtectClock=yes

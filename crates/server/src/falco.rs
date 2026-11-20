@@ -266,7 +266,7 @@ mod tests {
 
     #[tokio::test]
     async fn follows_new_lines_only_and_survives_rotation() {
-        let d = std::env::temp_dir().join(format!("clamv-falco-{}", crate::db::new_id()));
+        let d = std::env::temp_dir().join(format!("palisade-falco-{}", crate::db::new_id()));
         std::fs::create_dir_all(&d).expect("mkdir");
         let f = d.join("events.json");
         let line = |rule: &str, p: &str| {

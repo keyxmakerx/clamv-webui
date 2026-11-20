@@ -33,9 +33,9 @@
   // The server buckets charts by this offset.
   function syncTzCookie() {
     var off = offsetMinutes(zone(prefs()));
-    var cur = (document.cookie.match(/(?:^|; )clamv_tz=([^;]*)/) || [])[1];
+    var cur = (document.cookie.match(/(?:^|; )palisade_tz=([^;]*)/) || [])[1];
     if (cur !== String(off)) {
-      document.cookie = "clamv_tz=" + off + "; Path=/; Max-Age=31536000; SameSite=Strict" + (location.protocol === "https:" ? "; Secure" : "");
+      document.cookie = "palisade_tz=" + off + "; Path=/; Max-Age=31536000; SameSite=Strict" + (location.protocol === "https:" ? "; Secure" : "");
       return cur !== undefined || off !== 0;
     }
     return false;
@@ -138,7 +138,7 @@
   }
 
   // ---- background refresh: swap only the parts marked data-refresh-region ----
-  // Sent with X-Clamv-Refresh so the server does not count it as activity,
+  // Sent with X-Palisade-Refresh so the server does not count it as activity,
   // and the idle sign-out still happens on an open tab.
   function initRefresh() {
     var timer = null;
@@ -160,7 +160,7 @@
       // Pause in a hidden tab, except where a check must keep going
       // (a firewall apply rolls back unless this page confirms it in time).
       if (document.hidden && !document.querySelector("[data-refresh-region][data-refresh-hidden]")) return;
-      fetch(location.href, { headers: { "X-Clamv-Refresh": "1" }, credentials: "same-origin", cache: "no-store" })
+      fetch(location.href, { headers: { "X-Palisade-Refresh": "1" }, credentials: "same-origin", cache: "no-store" })
         .then(function (r) {
           // Signed out (idle limit or elsewhere): load the page properly.
           if (r.redirected && new URL(r.url).pathname !== location.pathname) { location.reload(); return null; }

@@ -516,11 +516,8 @@ mod tests {
     use tower::ServiceExt;
 
     async fn test_app() -> Router {
-        let cli = crate::config::Cli::parse_from([
-            "clamv-webui",
-            "--clamd-endpoint",
-            "tcp://127.0.0.1:1",
-        ]);
+        let cli =
+            crate::config::Cli::parse_from(["palisade", "--clamd-endpoint", "tcp://127.0.0.1:1"]);
         let db = Db::open("sqlite::memory:", 1).await.expect("db");
         seed_endpoint(&db, &cli.config).await.expect("seed");
         router(Arc::new(AppState::new(cli.config.clone(), db)), &cli.config)

@@ -1,6 +1,6 @@
-# clamv: AIDE check; read-only system, no network, report to /var/log/aide/aide.log.
+# Palisade: AIDE check; read-only system, no network, report to /var/log/aide/aide.log.
 [Unit]
-Description=clamv host check: AIDE
+Description=Palisade host check: AIDE
 ConditionPathExists=/usr/bin/aide
 
 [Service]

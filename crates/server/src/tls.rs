@@ -101,7 +101,7 @@ fn self_signed(dir: &Path, names: &[String]) -> anyhow::Result<(PathBuf, PathBuf
     let mut params = rcgen::CertificateParams::new(wanted.clone())?;
     params
         .distinguished_name
-        .push(rcgen::DnType::CommonName, "clamv-webui");
+        .push(rcgen::DnType::CommonName, "palisade");
     // Ten years from today: a private-network certificate that clamctl and agents pin.
     let year: i32 = crate::timefmt::rfc3339(now)
         .get(..4)
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn self_signed_is_reused_until_names_change() {
-        let dir = std::env::temp_dir().join(format!("clamv-tls-{}", crate::db::new_id()));
+        let dir = std::env::temp_dir().join(format!("palisade-tls-{}", crate::db::new_id()));
         let (c, k) = self_signed(&dir, &["nas".into()]).expect("gen");
         let fp = fingerprint(&c).expect("fp");
         assert_eq!(fp.len(), 95);
