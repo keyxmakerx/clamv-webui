@@ -12,7 +12,8 @@
 
 <h2 class="h5 mt-3">{{ host_name }}</h2>
 <section class="card mt-2"><div class="card-body">
-{% if !has_snapshot %}<p class="muted mb-2">{{ nav.t("No snapshot from this host yet. It needs the Palisade firewall units (") }}<code>host-setup</code>{{ nav.t(") and") }} <code>{{ dir }}</code> {{ nav.t("mounted read-write.") }}</p>
+{% if !has_snapshot && host.is_empty() && !dir_mounted %}{% let g = crate::web::setup::guide("host-setup") %}{% include "_empty.html" %}
+{% else if !has_snapshot %}<p class="muted mb-2">{{ nav.t("No snapshot from this host yet. It needs the Palisade firewall units (") }}<code>host-setup</code>{{ nav.t(") and") }} <code>{{ dir }}</code> {{ nav.t("mounted read-write.") }}</p>
 {% else %}
 <dl class="row small mb-2">
 <dt class="col-sm-3">{{ nav.t("Read") }}</dt><dd class="col-sm-9">{{ read }} {{ nav.t("ago") }}</dd>

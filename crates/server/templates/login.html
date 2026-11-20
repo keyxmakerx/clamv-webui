@@ -8,6 +8,7 @@
 <p class="muted">{{ crate::i18n::tr("Sign in to manage scans and endpoints.") }}</p>
 {% if let Some(msg) = error %}<div class="alert alert-danger" role="alert">{{ msg }}</div>{% endif %}
 {% if let Some(msg) = info %}<div class="alert alert-info" role="status">{{ msg }}</div>{% endif %}
+{% if let Some(f) = first_run %}<div class="alert alert-secondary small first-run" role="note"><strong>First sign-in?</strong> Use the username <code>admin</code> and the one-time password Palisade wrote to <code class="text-break">{{ f.file }}</code>{% if let Some(h) = f.host_file %} (on the host: <code>{{ h }}</code> next to <code>docker-compose.yml</code>){% endif %}. The file belongs to UID 10001, so open it as root. Palisade then asks you for a new password and deletes the file. On a fresh install, <code>BOOTSTRAP_ADMIN_PASSWORD</code> sets this first password instead.</div>{% endif %}
 <form method="post" action="/login">
 {% if ldap %}<label for="source" class="form-label">{{ crate::i18n::tr("Account") }}</label>
 <select class="form-select mb-3" name="source" id="source"><option value="">{{ crate::i18n::tr("Local account") }}</option><option value="ldap"{% if source == "ldap" %} selected{% endif %}>{{ crate::i18n::tr("Directory (LDAP)") }}</option></select>{% endif %}

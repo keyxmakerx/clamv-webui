@@ -130,7 +130,12 @@ async fn sign_in(app: &Router) -> axum::response::Response {
 async fn totp_and_recovery_codes() {
     let (app, st) = app(&[]).await;
     let res = sign_in(&app).await;
-    assert_eq!(res.headers()[header::LOCATION], "/dashboard", "no 2FA yet");
+    // An admin lands on Setup while it is not done (clamd is unreachable here).
+    assert_eq!(
+        res.headers()[header::LOCATION],
+        "/admin/setup",
+        "no 2FA yet"
+    );
     let session = pair(&cookies(&res)[0]);
 
     // Enrol: the page shows the key; confirm with a code from it.
@@ -434,7 +439,7 @@ async fn passkeys_register_sign_in_and_second_step() {
             .iter()
             .any(|c| c.starts_with("palisade_session=") && c.len() > 20)
     );
-    assert!(text(res).await.contains("/dashboard"));
+    assert!(text(res).await.contains("/admin/setup"));
     // Replaying the same answer fails (challenge spent).
     let res = app
         .clone()

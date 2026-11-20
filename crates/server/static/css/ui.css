@@ -165,3 +165,18 @@ table.table-stack .d-flex{flex-wrap:wrap}
 .confirm-box{position:absolute;right:0;top:calc(100% + 0px);z-index:30;width:max-content;max-width:min(320px,85vw);box-shadow:var(--shadow);background:var(--bg1)}
 @media(max-width:700px){.edit,.confirm{display:block}.edit-form,.confirm-box{position:static;width:auto;max-width:none}}
 button.nav-btn{text-align:left;color:var(--text);font:inherit;font-weight:600}
+/* Setup checklist and "not set up yet" panels. */
+.setup-list{padding:0}
+.setup-row{border-bottom:1px solid var(--border);padding:10px 16px}
+.setup-row:last-child{border-bottom:0}
+.setup-row>summary{cursor:pointer;display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px}
+.setup-row>summary .badge{min-width:7.5em}
+.setup-detail{flex-basis:100%;color:var(--muted)}
+@media(min-width:900px){.setup-detail{flex-basis:auto;flex:1}}
+.setup-fix{padding:8px 0 4px}
+.setup-snippet-wrap{position:relative}
+.setup-snippet{background:var(--card2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:.8rem;white-space:pre;overflow-x:auto;margin-bottom:.5rem}
+.setup-copy{position:absolute;top:6px;right:6px}
+.setup-copy.copied{border-color:var(--success);color:var(--success)}
+.setup-steps{padding-left:1.2rem}
+.empty-state{border-style:dashed}

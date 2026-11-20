@@ -267,7 +267,26 @@
       }
       var f = ev.target.closest("[data-forget]");
       if (f) set("filters:" + f.getAttribute("data-forget"), null);
+      // Copy a setup snippet: data-copy names the element whose text to copy.
+      var c = ev.target.closest("[data-copy]");
+      if (c) {
+        var src = document.getElementById(c.getAttribute("data-copy"));
+        if (src && navigator.clipboard) {
+          navigator.clipboard.writeText(src.textContent).then(function () {
+            c.classList.add("copied");
+            setTimeout(function () { c.classList.remove("copied"); }, 1500);
+          }, function () { /* clipboard refused; the text stays selectable */ });
+        }
+      }
     });
+    // A link to a Setup row (#key) opens that row.
+    function openHash() {
+      var id = location.hash.slice(1);
+      var d = id && document.getElementById(id);
+      if (d && d.tagName === "DETAILS") d.open = true;
+    }
+    window.addEventListener("hashchange", openHash);
+    openHash();
     initPrefs();
     stackTables(document);
     initRefresh();

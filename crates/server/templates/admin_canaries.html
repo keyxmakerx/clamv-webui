@@ -13,8 +13,9 @@
 <div class="col-md-2"><label class="form-check-label small"><input class="form-check-input" type="checkbox" name="create" value="1" checked> {{ nav.t("write a decoy if missing") }}</label></div>
 <div class="col-md-2"><button class="btn btn-primary w-100" type="submit">{{ nav.t("Add") }}</button></div>
 </form>
+<p class="small muted mt-2 mb-0">{{ server }} {{ nav.t("and every agent can have up to 50.") }}</p>
 </div></section>
-<section class="card mt-3"><div class="card-body table-responsive">
+{% if rows.is_empty() %}{% let g = crate::web::setup::guide("canaries") %}{% include "_empty.html" %}{% else %}<section class="card mt-3"><div class="card-body table-responsive">
 <table class="table table-sm align-middle">
 <thead><tr><th>{{ nav.t("Host") }}</th><th>{{ nav.t("File") }}</th><th>{{ nav.t("State") }}</th><th>{{ nav.t("Last touched") }}</th><th><span class="visually-hidden">{{ nav.t("Actions") }}</span></th></tr></thead>
 <tbody>
@@ -33,7 +34,7 @@
 <div class="mt-2"><button class="btn btn-sm btn-primary" type="submit">{{ nav.t("Save") }}</button></div>
 </form></details>
 <form method="post" action="/admin/canaries/{{ r.id }}/delete"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-danger" type="submit">{{ nav.t("Remove") }}</button></form></div>{% endif %}</td>
-</tr>{% else %}<tr><td colspan="5" class="muted">{{ nav.t("No canaries yet.") }} {{ server }} {{ nav.t("and every agent can have up to 50.") }}</td></tr>{% endfor %}
+</tr>{% endfor %}
 </tbody></table>
-</div></section>
+</div></section>{% endif %}
 {% endblock %}

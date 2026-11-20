@@ -3,6 +3,8 @@
 {% block content %}
 <div class="page-head"><h1 class="h3">{{ nav.t("Dashboard") }}</h1>
 <nav class="seg" aria-label="{{ nav.t("Time range") }}">{% let opts = [("24h", nav.t("24 h")), ("7d", nav.t("7 days")), ("30d", nav.t("30 days"))] %}{% for (v, l) in opts %}<a class="seg-btn{% if range == *v %} active{% endif %}" href="/dashboard?range={{ v }}"{% if range == *v %} aria-current="page"{% endif %}>{{ l }}</a>{% endfor %}</nav></div>
+{% if let Some(b) = setup %}<div class="alert alert-warning d-flex align-items-center flex-wrap gap-2 setup-banner" role="status"><i class="fa-solid fa-clipboard-check" aria-hidden="true"></i><span><a class="alert-link" href="/admin/setup">{{ b.text() }}</a> <span class="small">({{ b.titles }})</span></span>
+<form method="post" action="/admin/setup/dismiss" class="ms-auto"><input type="hidden" name="_csrf" value="{{ nav.csrf }}"><button class="btn btn-sm btn-outline-secondary" type="submit">Hide until something new comes up</button></form></div>{% endif %}
 {% if let Some(up) = update %}<div class="alert alert-info d-flex align-items-center gap-2"><i class="fa-solid fa-circle-up" aria-hidden="true"></i><span>{{ nav.t("Version") }} {{ up.version }} {{ nav.t("is out (running") }} {{ crate::VERSION }}).</span><a href="{{ up.url }}" rel="noopener noreferrer" target="_blank">{{ nav.t("Release notes") }}</a></div>{% endif %}
 <div id="r-dash" data-refresh-region data-refresh="60">
 <div class="kpi-grid">

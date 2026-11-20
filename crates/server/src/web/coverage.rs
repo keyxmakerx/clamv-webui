@@ -42,7 +42,22 @@ pub struct Threat {
     pub name: &'static str,
     pub what: &'static str,
     pub cells: Vec<Cell>,
+    /// The Setup row that turns this protection on.
+    pub setup: &'static str,
 }
+
+/// The Setup row for each of THREATS, in the same order.
+const SETUP: [&str; 9] = [
+    "schedules",
+    "watch",
+    "canaries",
+    "schedules",
+    "signatures",
+    "integrity",
+    "falco",
+    "crowdsec",
+    "host-setup",
+];
 
 pub struct Host {
     pub name: String,
@@ -464,6 +479,7 @@ async fn page(State(st): State<Arc<AppState>>, auth: Auth) -> Response {
             name,
             what,
             cells: hosts.iter().map(|h| h.items[i].1.clone()).collect(),
+            setup: SETUP[i],
         })
         .collect();
     render(
