@@ -54,6 +54,8 @@ pub struct AppState {
     pub firewalls: crate::firewall::Snapshots,
     /// Passkey confirmations in flight: challenge handle to (user, host, action, expiry).
     pub stepups: std::sync::Mutex<std::collections::HashMap<String, Stepup>>,
+    /// File-system facts for the Setup page and the sign-in hint.
+    pub setup_fs: crate::web::setup::FsCache,
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +111,7 @@ impl AppState {
                 .iter()
                 .filter_map(|c| crate::webhook::Cidr::parse(c).ok())
                 .collect(),
+            setup_fs: crate::web::setup::FsCache::new(&cfg),
             sealer: crate::auth::sealed::Sealer::new(
                 cfg.secret_key_file
                     .clone()
@@ -377,6 +380,7 @@ pub async fn serve(cfg: Config) -> anyhow::Result<()> {
     crate::hostchecks::spawn(state.clone());
     crate::firewall::spawn(state.clone());
     spawn_clamd_wait(state.clone());
+    crate::web::setup::spawn_fs_refresh(state.clone());
     let app = router(state, &cfg).into_make_service_with_connect_info::<std::net::SocketAddr>();
     let scheme = if cfg.tls_enabled() { "https" } else { "http" };
     tracing::info!(listen = %cfg.listen, scheme, clamd = %cfg.clamd_endpoint, data_dir = %cfg.data_dir.display(), version = env!("CARGO_PKG_VERSION"), "started");

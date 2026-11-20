@@ -242,10 +242,10 @@ pub(crate) struct FirstRun {
 
 /// Set only while the generated password file is still there.
 pub(crate) fn first_run(st: &AppState) -> Option<FirstRun> {
-    let f = crate::auth::bootstrap::file(&st.cfg.data_dir);
-    f.is_file().then(|| FirstRun {
-        file: f.display().to_string(),
-    })
+    st.setup_fs
+        .get()
+        .bootstrap_file
+        .map(|file| FirstRun { file })
 }
 
 #[derive(Deserialize)]
@@ -595,6 +595,7 @@ async fn change_password(
     // The generated password no longer works; do not leave it on disk.
     if u.must_change_password && u.username == "admin" {
         crate::auth::bootstrap::forget(&st.cfg.data_dir);
+        st.setup_fs.bootstrap_removed();
     }
     st.db
         .audit(AuditEntry {

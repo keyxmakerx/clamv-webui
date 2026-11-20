@@ -1627,6 +1627,8 @@ async fn first_admin_sign_in_explains_the_password_file_and_lands_on_setup() {
     let file = palisade::auth::bootstrap::reset_admin(&st.db, &dir)
         .await
         .expect("reset");
+    // The server notices the file within 15 s; a test asks at once.
+    palisade::web::setup::refresh_fs(&st).await;
     let one_time = std::fs::read_to_string(&file)
         .expect("file")
         .trim()

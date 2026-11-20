@@ -22,6 +22,7 @@ use super::session::Auth;
 use super::{Nav, error_page, render};
 use crate::app::AppState;
 use crate::auth::Role;
+use crate::config::Config;
 use crate::db::now_ms;
 use crate::db::users::User;
 
@@ -606,6 +607,105 @@ impl Report {
     }
 }
 
+/// File-system facts for the checks, gathered off the request path: a hung mount never
+/// stalls a page, and no request ever drives a file-system call.
+#[derive(Clone)]
+pub struct FsFacts {
+    data_dir: (Health, String),
+    backups: (Health, String),
+    /// The one-time admin password file, while it exists.
+    pub bootstrap_file: Option<String>,
+    falco: (Health, String),
+    audit: (Health, String),
+    integrity: (Health, String),
+}
+
+impl FsFacts {
+    fn checking() -> Self {
+        let c = || (Health::Pending, "Checking...".to_owned());
+        Self {
+            data_dir: c(),
+            backups: c(),
+            bootstrap_file: None,
+            falco: c(),
+            audit: c(),
+            integrity: c(),
+        }
+    }
+
+    /// Read everything once. Blocking: call it from a thread or `spawn_blocking`.
+    pub fn gather(cfg: &Config) -> Self {
+        let boot = crate::auth::bootstrap::file(&cfg.data_dir);
+        Self {
+            data_dir: data_dir(&cfg.data_dir),
+            backups: backups(cfg),
+            bootstrap_file: boot.is_file().then(|| boot.display().to_string()),
+            falco: readable_file(&cfg.falco_events, "FALCO_EVENTS"),
+            audit: readable_file(Path::new(crate::canary::AUDIT_LOG), "the auditd log"),
+            integrity: integrity(cfg),
+        }
+    }
+}
+
+/// The latest `FsFacts`, refreshed in the background.
+pub struct FsCache(std::sync::RwLock<FsFacts>);
+
+impl FsCache {
+    /// Gather once at start, giving up after two seconds (rows then say "Checking...").
+    pub fn new(cfg: &Config) -> Self {
+        let c = cfg.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(FsFacts::gather(&c));
+        });
+        let first = rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap_or_else(|_| FsFacts::checking());
+        Self(std::sync::RwLock::new(first))
+    }
+
+    pub fn get(&self) -> FsFacts {
+        self.0
+            .read()
+            .map(|f| f.clone())
+            .unwrap_or_else(|_| FsFacts::checking())
+    }
+
+    fn set(&self, f: FsFacts) {
+        if let Ok(mut g) = self.0.write() {
+            *g = f;
+        }
+    }
+
+    /// The one-time password file was just removed.
+    pub fn bootstrap_removed(&self) {
+        if let Ok(mut g) = self.0.write() {
+            g.bootstrap_file = None;
+        }
+    }
+}
+
+/// Gather again now (a few seconds at most) and keep the result.
+pub async fn refresh_fs(st: &AppState) {
+    let c = st.cfg.clone();
+    let job = tokio::task::spawn_blocking(move || FsFacts::gather(&c));
+    if let Ok(Ok(f)) = tokio::time::timeout(Duration::from_secs(5), job).await {
+        st.setup_fs.set(f);
+    }
+}
+
+/// Keep `FsFacts` fresh while the server runs.
+pub fn spawn_fs_refresh(st: Arc<AppState>) {
+    tokio::spawn(async move {
+        let mut t = tokio::time::interval(Duration::from_secs(15));
+        t.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            t.tick().await;
+            refresh_fs(&st).await;
+        }
+    });
+}
+
 /// What the check knows about the request it answers.
 pub struct Ctx {
     /// Host header as sent.
@@ -635,10 +735,11 @@ pub async fn evaluate(st: &AppState, ctx: &Ctx) -> Report {
     rows.push(row("signatures", Required, s, d));
     let (s, d) = scan_roots(st).await;
     rows.push(row("scan-roots", Required, s, d));
-    let (s, d) = data_dir(st).await;
+    let fs = st.setup_fs.get();
+    let (s, d) = fs.data_dir.clone();
     rows.push(row("data-dir", Required, s, d));
     let admins = st.db.list_users().await.unwrap_or_default();
-    let (s, d) = admin(st, &admins);
+    let (s, d) = admin(st, &fs, &admins);
     rows.push(row("admin", Required, s, d));
 
     let (s, d) = two_factor(st, &admins).await;
@@ -651,22 +752,22 @@ pub async fn evaluate(st: &AppState, ctx: &Ctx) -> Report {
     rows.push(row("schedules", Recommended, s, d));
     let (s, d) = alerts(st);
     rows.push(row("alerts", Recommended, s, d));
-    let (s, d) = backups(st).await;
+    let (s, d) = fs.backups.clone();
     rows.push(row("backups", Recommended, s, d));
 
     let (s, d) = quarantine(st);
     rows.push(row("quarantine", Optional, s, d));
     let (s, d) = crowdsec(st);
     rows.push(row("crowdsec", Optional, s, d));
-    let (s, d) = integrity(st).await;
+    let (s, d) = fs.integrity.clone();
     rows.push(row("integrity", Optional, s, d));
     let (s, d) = host_setup(st);
     rows.push(row("host-setup", Optional, s, d));
-    let (s, d) = readable_file(&st.cfg.falco_events, "FALCO_EVENTS").await;
+    let (s, d) = fs.falco.clone();
     rows.push(row("falco", Optional, s, d));
     let (s, d) = canaries(st).await;
     rows.push(row("canaries", Optional, s, d));
-    let (s, d) = readable_file(Path::new(crate::canary::AUDIT_LOG), "the auditd log").await;
+    let (s, d) = fs.audit.clone();
     rows.push(row("auditd", Optional, s, d));
     let (s, d) = watch(st).await;
     rows.push(row("watch", Optional, s, d));
@@ -915,37 +1016,26 @@ async fn scan_roots(st: &AppState) -> (Health, String) {
     }
 }
 
-async fn data_dir(st: &AppState) -> (Health, String) {
-    let dir = st.cfg.data_dir.clone();
+fn data_dir(dir: &Path) -> (Health, String) {
     let shown = dir.display().to_string();
-    let job = tokio::task::spawn_blocking(move || {
-        let probe = dir.join(".setup-write-test");
-        let r = std::fs::write(&probe, b"");
-        let _ = std::fs::remove_file(&probe);
-        r
-    });
-    match tokio::time::timeout(FS_PROBE, job).await {
-        Ok(Ok(Ok(()))) => (Health::Ok, format!("{shown} is writable.")),
-        Ok(Ok(Err(e))) => (
+    let probe = dir.join(".setup-write-test");
+    let r = std::fs::write(&probe, b"");
+    let _ = std::fs::remove_file(&probe);
+    match r {
+        Ok(()) => (Health::Ok, format!("{shown} is writable.")),
+        Err(e) => (
             Health::Broken,
             format!(
                 "{shown} is not writable ({e}); new settings, sessions and keys cannot be saved."
             ),
         ),
-        _ => (
-            Health::Broken,
-            format!("{shown} did not answer within a second."),
-        ),
     }
 }
 
-fn admin(st: &AppState, users: &[User]) -> (Health, String) {
+fn admin(st: &AppState, fs: &FsFacts, users: &[User]) -> (Health, String) {
     let mut issues = Vec::new();
-    if crate::auth::bootstrap::file(&st.cfg.data_dir).exists() {
-        issues.push(format!(
-            "The one-time password file {} is still there",
-            crate::auth::bootstrap::file(&st.cfg.data_dir).display()
-        ));
+    if let Some(f) = fs.bootstrap_file.as_deref() {
+        issues.push(format!("The one-time password file {f} is still there"));
     }
     if users
         .iter()
@@ -1140,50 +1230,36 @@ fn alerts(st: &AppState) -> (Health, String) {
     }
 }
 
-async fn backups(st: &AppState) -> (Health, String) {
-    let dir = st.cfg.data_dir.clone();
-    let names = tokio::time::timeout(
-        FS_PROBE,
-        tokio::task::spawn_blocking(move || {
-            let mut v: Vec<String> = std::fs::read_dir(&dir)
-                .map(|it| {
-                    it.filter_map(Result::ok)
-                        .filter_map(|e| {
-                            let n = e.file_name().to_string_lossy().into_owned();
-                            if n.starts_with('.') {
-                                return None;
-                            }
-                            let dir = e.file_type().is_ok_and(|t| t.is_dir());
-                            Some(if dir { format!("{n}/") } else { n })
-                        })
-                        .collect()
+fn backups(cfg: &Config) -> (Health, String) {
+    let mut names: Vec<String> = std::fs::read_dir(&cfg.data_dir)
+        .map(|it| {
+            it.filter_map(Result::ok)
+                .filter_map(|e| {
+                    let n = e.file_name().to_string_lossy().into_owned();
+                    if n.starts_with('.') {
+                        return None;
+                    }
+                    let dir = e.file_type().is_ok_and(|t| t.is_dir());
+                    Some(if dir { format!("{n}/") } else { n })
                 })
-                .unwrap_or_default();
-            v.sort();
-            v.truncate(12);
-            v
-        }),
-    )
-    .await
-    .ok()
-    .and_then(Result::ok)
-    .unwrap_or_default();
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names.truncate(12);
     let holds = if names.is_empty() {
         String::new()
     } else {
         format!(" It holds {}.", names.join(", "))
     };
-    let db = if st.cfg.database_url.is_some() || st.cfg.database_url_file.is_some() {
+    let db = if cfg.database_url.is_some() || cfg.database_url_file.is_some() {
         " The database is external: back it up too."
     } else {
         ""
     };
     (
         Health::Note,
-        format!(
-            "Back up {} regularly.{holds}{db}",
-            st.cfg.data_dir.display()
-        ),
+        format!("Back up {} regularly.{holds}{db}", cfg.data_dir.display()),
     )
 }
 
@@ -1245,37 +1321,28 @@ fn crowdsec(st: &AppState) -> (Health, String) {
 }
 
 /// A mounted log or file Palisade reads.
-async fn readable_file(p: &Path, what: &str) -> (Health, String) {
-    let p2 = p.to_path_buf();
-    let r = tokio::time::timeout(
-        FS_PROBE,
-        tokio::task::spawn_blocking(move || match std::fs::File::open(&p2) {
-            Ok(_) => Ok(()),
-            Err(e) => Err(e.kind()),
-        }),
-    )
-    .await;
-    match r {
-        Ok(Ok(Ok(()))) => (Health::Ok, format!("Reading {}.", p.display())),
-        Ok(Ok(Err(std::io::ErrorKind::NotFound))) => (
+fn readable_file(p: &Path, what: &str) -> (Health, String) {
+    match std::fs::File::open(p).map_err(|e| e.kind()) {
+        Ok(_) => (Health::Ok, format!("Reading {}.", p.display())),
+        Err(std::io::ErrorKind::NotFound) => (
             Health::Off,
             format!("Nothing mounted at {} ({what}).", p.display()),
         ),
-        Ok(Ok(Err(std::io::ErrorKind::PermissionDenied))) => (
+        Err(std::io::ErrorKind::PermissionDenied) => (
             Health::Broken,
             format!("{} is mounted but UID 10001 may not read it.", p.display()),
         ),
-        _ => (Health::Broken, format!("{} cannot be read.", p.display())),
+        Err(_) => (Health::Broken, format!("{} cannot be read.", p.display())),
     }
 }
 
-async fn integrity(st: &AppState) -> (Health, String) {
+fn integrity(cfg: &Config) -> (Health, String) {
     let mut ok = Vec::new();
     let mut bad = Vec::new();
     let mut paths = Vec::new();
-    for (tool, p) in crate::integrity::sources(&st.cfg) {
+    for (tool, p) in crate::integrity::sources(cfg) {
         paths.push(p.display().to_string());
-        match readable_file(&p, tool).await {
+        match readable_file(&p, tool) {
             (Health::Ok, _) => ok.push(tool),
             (Health::Off, _) => {}
             (_, d) => bad.push(d),
